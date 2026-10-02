@@ -1,0 +1,65 @@
+@prefix ub: <http://example.edu/univ#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+ub:CS a ub:Department ;
+    ub:name "Computer Science" .
+
+ub:Math a ub:Department ;
+    ub:name "Mathematics" .
+
+ub:Alice a ub:Student ;
+    ub:name "Alice" ;
+    ub:age "20"^^xsd:integer ;
+    ub:email "alice@example.edu" ;
+    ub:memberOf ub:CS ;
+    ub:takes ub:CS101 , ub:CS102 .
+
+ub:Bob a ub:Student ;
+    ub:name "Bob" ;
+    ub:age "22"^^xsd:integer ;
+    ub:email "bob@example.edu" ;
+    ub:memberOf ub:CS ;
+    ub:takes ub:CS101 .
+
+ub:Cara a ub:Student ;
+    ub:name "Cara" ;
+    ub:age "19"^^xsd:integer ;
+    ub:email "cara@example.edu" ;
+    ub:memberOf ub:Math ;
+    ub:takes ub:MA201 .
+
+ub:Dana a ub:Professor ;
+    ub:name "Dana" ;
+    ub:age "45"^^xsd:integer ;
+    ub:email "dana@example.edu" ;
+    ub:worksFor ub:CS ;
+    ub:teaches ub:CS101 .
+
+ub:Evan a ub:Professor ;
+    ub:name "Evan" ;
+    ub:age "38"^^xsd:integer ;
+    ub:email "evan@example.edu" ;
+    ub:worksFor ub:CS ;
+    ub:teaches ub:CS102 .
+
+ub:Fay a ub:Professor ;
+    ub:name "Fay" ;
+    ub:age "51"^^xsd:integer ;
+    ub:email "fay@example.edu" ;
+    ub:worksFor ub:Math ;
+    ub:teaches ub:MA201 .
+
+ub:CS101 a ub:Course ;
+    ub:name "Intro to Databases" ;
+    ub:credits "3"^^xsd:integer ;
+    ub:offeredBy ub:CS .
+
+ub:CS102 a ub:Course ;
+    ub:name "Operating Systems" ;
+    ub:credits "4"^^xsd:integer ;
+    ub:offeredBy ub:CS .
+
+ub:MA201 a ub:Course ;
+    ub:name "Linear Algebra" ;
+    ub:credits "3"^^xsd:integer ;
+    ub:offeredBy ub:Math .

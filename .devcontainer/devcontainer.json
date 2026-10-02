@@ -1,0 +1,15 @@
+{
+  "name": "ontodb",
+  "build": { "dockerfile": "Dockerfile" },
+  "postCreateCommand": "cmake --preset dev && cmake --build --preset dev && ln -sfn build/dev/compile_commands.json compile_commands.json",
+  "customizations": {
+    "vscode": {
+      "extensions": ["llvm-vs-code-extensions.vscode-clangd"],
+      "settings": {
+        "cmake.useCMakePresets": "always",
+        "cmake.configurePreset": "dev",
+        "clangd.arguments": ["--compile-commands-dir=${workspaceFolder}/build/dev"]
+      }
+    }
+  }
+}

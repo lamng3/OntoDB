@@ -1,0 +1,97 @@
+# University graph. Rows are a multiset unless the header is "query order".
+data tiny.ttl
+
+query student-names
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ?s a ub:Student ; ub:name ?name . }
+----
+"Alice"
+"Bob"
+"Cara"
+
+query older-than-21
+PREFIX ub: <http://example.edu/univ#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?name WHERE {
+  ?s a ub:Student ; ub:name ?name ; ub:age ?age .
+  FILTER (?age > "21"^^xsd:integer)
+}
+----
+"Bob"
+
+query takes-databases
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE {
+  ?s ub:name ?name ; ub:takes ub:CS101 .
+}
+----
+"Alice"
+"Bob"
+
+query advisors-of-courses
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?student ?professor WHERE {
+  ?s a ub:Student ; ub:name ?student ; ub:takes ?course .
+  ?p ub:teaches ?course ; ub:name ?professor .
+}
+----
+"Alice"	"Dana"
+"Alice"	"Evan"
+"Bob"	"Dana"
+"Cara"	"Fay"
+
+query credits-at-least-3
+PREFIX ub: <http://example.edu/univ#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+SELECT ?name WHERE {
+  ?c a ub:Course ; ub:name ?name ; ub:credits ?credits .
+  FILTER (?credits >= "3"^^xsd:integer)
+}
+----
+"Intro to Databases"
+"Operating Systems"
+"Linear Algebra"
+
+query student-department
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name ?dept WHERE {
+  ?s a ub:Student ; ub:name ?name ; ub:memberOf ?d .
+  ?d ub:name ?dept .
+}
+----
+"Alice"	"Computer Science"
+"Bob"	"Computer Science"
+"Cara"	"Mathematics"
+
+query not-alice
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE {
+  ?s a ub:Student ; ub:name ?name .
+  FILTER (?name != "Alice")
+}
+----
+"Bob"
+"Cara"
+
+query empty-match
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ?s ub:name ?name ; ub:memberOf ub:CS . FILTER (?name = "Nobody") }
+----
+
+update add-gina
+PREFIX ub: <http://example.edu/univ#>
+INSERT DATA { ub:Gina a ub:Student ; ub:name "Gina" . }
+----
+inserted 2 triples
+
+query gina-is-a-student
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ub:Gina ub:name ?name . }
+----
+"Gina"
+
+update drop-gina-name
+PREFIX ub: <http://example.edu/univ#>
+DELETE DATA { ub:Gina ub:name "Gina" . }
+----
+deleted 1 triple
