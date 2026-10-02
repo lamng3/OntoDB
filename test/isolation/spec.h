@@ -42,8 +42,8 @@ class IsolationDriver {
  public:
   virtual ~IsolationDriver() = default;
   virtual void Submit(int session, const std::string& step, const std::string& text) = 0;
-  virtual auto Poll(int session, std::chrono::milliseconds timeout)
-      -> std::optional<std::string> = 0;
+  virtual auto Poll(int session,
+                    std::chrono::milliseconds timeout) -> std::optional<std::string> = 0;
 };
 
 struct RunReport {
@@ -51,8 +51,8 @@ struct RunReport {
   std::string message;
 };
 
-auto RunPermutation(const Spec& spec, const Permutation& perm, IsolationDriver* driver)
-    -> RunReport;
+auto RunPermutation(const Spec& spec, const Permutation& perm,
+                    IsolationDriver* driver) -> RunReport;
 
 class ScriptedDriver : public IsolationDriver {
  public:

@@ -38,8 +38,8 @@ class LogRecord {
   static auto Begin(txn_id_t txn) -> LogRecord;
   static auto Commit(txn_id_t txn) -> LogRecord;
   static auto Abort(txn_id_t txn) -> LogRecord;
-  static auto Update(txn_id_t txn, page_id_t page, bool is_insert, const Triple& triple)
-      -> LogRecord;
+  static auto Update(txn_id_t txn, page_id_t page, bool is_insert,
+                     const Triple& triple) -> LogRecord;
   static auto Clr(txn_id_t txn, page_id_t page, bool is_insert, const Triple& triple,
                   lsn_t undo_next) -> LogRecord;
   static auto Checkpoint(const std::vector<txn_id_t>& active) -> LogRecord;

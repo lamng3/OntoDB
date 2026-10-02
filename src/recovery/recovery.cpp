@@ -34,8 +34,8 @@ auto LogRecord::Abort(txn_id_t txn) -> LogRecord {
   record.txn_id_ = txn;
   return record;
 }
-auto LogRecord::Update(txn_id_t txn, page_id_t page, bool is_insert, const Triple& triple)
-    -> LogRecord {
+auto LogRecord::Update(txn_id_t txn, page_id_t page, bool is_insert,
+                       const Triple& triple) -> LogRecord {
   LogRecord record;
   record.type_ = LogRecordType::kUpdate;
   record.txn_id_ = txn;
