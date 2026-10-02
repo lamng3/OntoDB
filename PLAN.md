@@ -4,7 +4,7 @@ Build a triple store one sitting at a time. Each item names the files, what they
 
 A stub throws `NotImplementedException("PLAN x.y: Class::Method")`. When your item passes, delete the `DISABLED_` prefix on its tests so they run in CI. `scripts/status` counts an item only after that prefix is gone and the tests pass. Orientation items 0.1 and 0.3 are already enabled and do not count toward the percentage.
 
-Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database Internals*, chapters 2–6; Mohan et al., ARIES; Neumann and Weikum, RDF-3X; Weiss et al., Hexastore.
+Reading, used throughout: Alex Petrov, *Database Internals*, chapters 2–6; Mohan et al., ARIES; Neumann and Weikum, RDF-3X; Weiss et al., Hexastore; the SPARQL 1.1 Query Language.
 
 ## Phase 0 — Orientation
 
@@ -100,7 +100,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** The promise is moved into the queue. Do not touch it on the caller thread after `Schedule`.
 
-**Read:** BusTub disk scheduler.
+**Read:** Petrov, chapter 2, on moving I/O off the query thread.
 
 ### 1.3 LRUKReplacer
 
@@ -116,7 +116,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Infinite distance is larger than every finite distance, so a frame touched once is thrown out before a frame touched `k` times.
 
-**Read:** 15-445 buffer pool lecture; BusTub LRU-K.
+**Read:** O'Neil, O'Neil, and Weikum, "The LRU-K Page Replacement Algorithm"; Petrov, chapter 3.
 
 ### 1.4 BufferPoolManager
 
@@ -132,7 +132,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** The replacer only sees unpinned frames. A pin count and a latch are different things; the latch arrives in 1.5.
 
-**Read:** Petrov, chapter 3; BusTub buffer pool.
+**Read:** Petrov, chapter 3.
 
 ### 1.5 Page guards
 
@@ -148,7 +148,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** The scaffold's `Drop` only clears pointers. Replace it. Unpinning twice is a bug the pin-count tests catch.
 
-**Read:** BusTub page guard.
+**Read:** Petrov, chapter 3, on pinning. A guard is one pin plus a latch, both released in the destructor.
 
 ### 1.6 Inspection
 
@@ -194,7 +194,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** A zeroed page is not a valid header until you initialize the root to `INVALID_PAGE_ID`. Page 0 can be a real page id, so do not use 0 as the empty sentinel.
 
-**Read:** Petrov, chapter 4; BusTub B+ tree page.
+**Read:** Petrov, chapter 4; Comer, "The Ubiquitous B-Tree".
 
 ### 2.2 ToString, ToDot, invariants
 
@@ -210,7 +210,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Write the checker before insert. A broken split is much easier to see as a failed invariant than as a wrong query.
 
-**Read:** BusTub B+ tree printer.
+**Read:** The Graphviz DOT language, enough to emit one node per page and one edge per child.
 
 ### 2.3 Point search
 
@@ -226,7 +226,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** A freshly allocated header page is zeros. Treat that as empty only after you have defined how an empty root is stored (see 2.1).
 
-**Read:** BusTub `GetValue`.
+**Read:** Petrov, chapter 4, the lookup walk from the root to a leaf.
 
 ### 2.4 Insert and split
 
@@ -242,7 +242,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Copy up, not copy down, or the opposite, but pick one and test the parent separator against the leaf. The crash point runs only after those pages agree.
 
-**Read:** Petrov, chapter 4; BusTub insert.
+**Read:** Petrov, chapter 4, splits and the separator copied to the parent.
 
 ### 2.5 Iterators
 
@@ -258,7 +258,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Drop the current leaf before pinning the sibling, or a 3-frame pool deadlocks on a tall tree. Do not hold the parent.
 
-**Read:** BusTub index iterator.
+**Read:** Petrov, chapter 4, leaf sibling pointers.
 
 ### 2.6 Bulk load
 
@@ -274,7 +274,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Bulk load is not a loop of `Insert`. One pass over the sorted array builds full leaves and links them, then one pass builds each level above.
 
-**Read:** RDF-3X bulk load; BusTub bulk load if you want a tuple version of the same idea.
+**Read:** RDF-3X, bulk construction of the permutations.
 
 ### 2.7 Delete
 
@@ -320,7 +320,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Store the length with the bytes. An empty string is a real record.
 
-**Read:** BusTub table page, as a slotted-page reference. Your records are strings, not tuples.
+**Read:** Petrov, chapter 3, slotted pages. The records here are byte strings.
 
 ### 3.2 Disk dictionary
 
@@ -352,7 +352,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Page 0 is a reasonable home. Initialize it before the first read so a zeroed page is not mistaken for root 0.
 
-**Read:** BusTub catalog, only as a picture of a metadata page.
+**Read:** A metadata page that maps a name to a root page id. Initialize it so a zeroed page is not root 0.
 
 ### 3.4 Indexed store, SPO only
 
@@ -430,7 +430,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** `Init` on the inner executor is the moment you have the outer row. Pass that row in. Do not change the store interface.
 
-**Read:** BusTub nested loop index join, the rebinding half.
+**Read:** Graefe, "Query Evaluation Techniques for Large Databases", index nested-loop join. The inner scan is reopened with the outer row bound.
 
 ### 4.2 Index nested-loop join
 
@@ -446,7 +446,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** This is 4.1 plus a store that uses the prefix. On the memory backend the probe can still be a filtered scan.
 
-**Read:** BusTub index nested-loop join.
+**Read:** RDF-3X, index nested loops over a permutation prefix.
 
 ### 4.3 Hash join
 
@@ -462,7 +462,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Hash `term_id_t`, not spellings. A slot that is `INVALID_TERM_ID` is not a key.
 
-**Read:** BusTub hash join.
+**Read:** Graefe, hash join. Hash `term_id_t`, not spellings.
 
 ### 4.4 Distinct, limit, offset
 
@@ -478,7 +478,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Distinct is on the projected row, not on the triple. Offset skips before limit counts.
 
-**Read:** BusTub limit and distinct, if you want a shape. The logic is small.
+**Read:** Distinct is a set of projected rows. Offset skips, then limit counts.
 
 ### 4.5 Sort
 
@@ -540,7 +540,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** `PatternCount` can scan. It does not have to be clever. The estimator in 5.2 is what has to be fast.
 
-**Read:** 15-445 query optimization lecture, the catalog statistics part.
+**Read:** Selinger et al., "Access Path Selection in a Relational Database Management System", the catalog statistics.
 
 ### 5.2 Cardinality
 
@@ -572,7 +572,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Enumerate bushy plans only after left-deep works. The test checks rows, not which order you picked. The experiment checks the order.
 
-**Read:** Selinger et al., Access Path Selection; 15-445 optimizer lecture.
+**Read:** Selinger et al., "Access Path Selection in a Relational Database Management System".
 
 ### 5.4 Join algorithm
 
@@ -588,7 +588,7 @@ Reading, used throughout: CMU 15-445 lectures and BusTub; Alex Petrov, *Database
 
 **Hints:** Swap the plan node, not the executor, in this item. The factory already knows the node type.
 
-**Read:** 15-445, choosing a join algorithm.
+**Read:** Selinger et al., choosing among nested loop, index nested loop, and hash join.
 
 ### 5.5 Explain analyze
 
@@ -682,7 +682,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** The optimistic attempt that splits must release the leaf and start over. Two threads splitting the same leaf is the bug TSan and the invariant checker both catch.
 
-**Read:** 15-445 concurrency control lecture on latch crabbing; BusTub crabbing.
+**Read:** Bayer and Schkolnick, "Concurrency of Operations on B-Trees"; Graefe, "A Survey of B-Tree Locking Techniques".
 
 ### 7.2 Transactions
 
@@ -698,7 +698,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** The write set is temporary. Plan 8.4 replaces it. Keep the undo order newest-first or an insert-then-delete pair restores the wrong triple.
 
-**Read:** 15-445 transaction lecture.
+**Read:** Gray and Reuter, *Transaction Processing*, the transaction chapter.
 
 ### 7.3 Lock manager
 
@@ -714,7 +714,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** Shared locks are compatible with each other. Exclusive is compatible with nothing, including the other transaction's intention locks. The waiting thread is the one inside `Lock`, so the reason must be set before you wait.
 
-**Read:** 15-445 lock manager; Gray et al. on intention locks, if you want the original matrix.
+**Read:** Gray, Lorie, Putzolu, and Traiger, "Granularity of Locks and Degrees of Consistency in a Shared Data Base".
 
 ### 7.4 Strict 2PL and isolation
 
@@ -746,7 +746,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** Aborting the younger one is a choice you can explain. Aborting a random one will fail the spec, which starts session 1 first so it has the smaller id.
 
-**Read:** 15-445 deadlock detection.
+**Read:** Gray and Reuter, waits-for deadlock detection.
 
 ### 7.6 Phantoms
 
@@ -762,7 +762,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** Repeatable read is supposed to allow the phantom. Do not "fix" that spec by holding a predicate lock in every isolation level. Only serializable gets the extra mechanism.
 
-**Read:** 15-445 phantom lecture; any description of next-key locks.
+**Read:** Eswaran et al., "The Notions of Consistency and Predicate Locks"; next-key locks in Gray and Reuter.
 
 **Experiment:** Two sessions, `\session`. A dirty read under `ru`, then the same schedule blocked under `rc`. Plot throughput against thread count for a mixed read/insert load, with and without optimistic crabbing.
 
@@ -808,7 +808,7 @@ Phase 7 checks run under the `tsan` preset.
 
 **Hints:** The group-commit test starts the threads together. If every commit flushes alone, the count will not be smaller.
 
-**Read:** 15-445 logging lecture; BusTub log manager.
+**Read:** Mohan et al., ARIES, the log and group commit; Petrov, chapter 5.
 
 ### 8.3 WAL
 

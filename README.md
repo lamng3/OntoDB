@@ -1,8 +1,10 @@
 # ontodb
 
-A small RDF/SPARQL database for learning storage, query execution, and recovery. The module names match [BusTub](https://github.com/cmu-db/bustub) where the idea is the same. The data is triples instead of tuples.
+ontodb is a standalone RDF/SPARQL database for learning storage, query execution, and recovery. Terms are dictionary-encoded, and triples are the records.
 
-The memory backend loads Turtle and answers a read subset plus `INSERT DATA` and `DELETE DATA`. Everything else is a stub that throws `NotImplementedException` with a plan id. `PLAN.md` is the course. `docs/architecture.md` is the map of one query and one insert.
+The memory backend loads Turtle and answers a read subset plus `INSERT DATA` and `DELETE DATA`. Everything else is a stub that throws `NotImplementedException` with a plan id. `PLAN.md` is the build order. `docs/architecture.md` is the map of one query and one insert.
+
+Study notes for each component — the SPARQL engine, the optimizer, the B+ tree, write-ahead logging, and ARIES — are at <https://lamng3.github.io/ontodb-docs/>. They are meant to be read on a phone.
 
 ## Codespaces
 
