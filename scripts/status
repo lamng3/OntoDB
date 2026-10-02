@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from items import ITEMS, PROGRESS  # noqa: E402
+from items import FEATURES, ITEMS, PROGRESS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,25 +57,12 @@ def main():
                 return False
         return True
 
-    labels = {
-        "0": "orientation",
-        "1": "disk and buffer",
-        "2": "B+ tree",
-        "3": "RDF storage",
-        "4": "execution",
-        "5": "planning",
-        "6": "scale",
-        "7": "concurrency",
-        "8": "recovery",
-    }
-    current = None
-    for item_id, _, _, _ in ITEMS:
-        phase = item_id.split(".", 1)[0]
-        if phase != current:
-            current = phase
-            print(f"phase {phase}  {labels[phase]}")
-        state = "pass" if done(item_id) else "todo"
-        print(f"  {item_id}  {state}")
+    by_id = {item_id: (done(item_id)) for item_id, _, _, _ in ITEMS}
+    for name, label, members in FEATURES:
+        print(f"{name}  {label}")
+        for item_id in members:
+            state = "pass" if by_id[item_id] else "todo"
+            print(f"  {item_id}  {state}")
     finished = sum(1 for item_id, _, _, _ in PROGRESS if done(item_id))
     total = len(PROGRESS)
     percent = 0 if total == 0 else round(100 * finished / total)

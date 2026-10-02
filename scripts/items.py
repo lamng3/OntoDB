@@ -53,14 +53,31 @@ ITEMS = [
 
 PROGRESS = [item for item in ITEMS if item[0] not in ("0.1", "0.3")]
 
+# Feature name, label, item ids. Order is the build order.
+FEATURES = [
+    ("shell", "SPARQL shell", ("0.1", "0.3")),
+    ("key", "Triple key", ("0.2",)),
+    ("buffer", "Buffer pool", ("1.1", "1.2", "1.3", "1.4", "1.5", "1.6")),
+    ("index", "B+ tree", ("2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7")),
+    ("storage", "RDF storage", ("3.1", "3.2", "3.3", "3.4", "3.5", "3.6")),
+    ("execution", "Query execution", ("4.1", "4.2", "4.3", "4.4", "4.5", "4.6")),
+    ("optimizer", "Optimizer", ("5.1", "5.2", "5.3", "5.4", "5.5")),
+    ("load", "Bulk load", ("6.1", "6.2")),
+    ("concurrency", "Concurrency", ("7.1", "7.2", "7.3", "7.4", "7.5", "7.6")),
+    ("recovery", "Recovery", ("8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7")),
+]
+
 
 def select(token):
     if token in {item[0] for item in ITEMS}:
         return [item for item in ITEMS if item[0] == token]
-    phase = token.split(".", 1)[0]
-    chosen = [item for item in ITEMS if item[0].split(".", 1)[0] == phase]
+    for name, _, members in FEATURES:
+        if token == name:
+            return [item for item in ITEMS if item[0] in members]
+    chosen = [item for item in ITEMS if item[0].split(".", 1)[0] == token]
     if not chosen:
-        raise SystemExit(f"unknown item or phase: {token}")
+        names = ", ".join(name for name, _, _ in FEATURES)
+        raise SystemExit(f"unknown feature or item: {token}\nfeatures: {names}")
     return chosen
 
 
