@@ -129,8 +129,8 @@ auto CanonicalIri(std::string_view iri) -> std::string {
   return out;
 }
 
-auto CanonicalLiteral(std::string_view lex, std::string_view datatype_iri, std::string_view lang)
-    -> std::string {
+auto CanonicalLiteral(std::string_view lex, std::string_view datatype_iri,
+                      std::string_view lang) -> std::string {
   std::string out;
   out.push_back('"');
   out += EscapeLiteral(lex);

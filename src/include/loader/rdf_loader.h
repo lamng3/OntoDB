@@ -19,8 +19,8 @@ struct LoadStats {
 // `triples` counts statements in the file, including ones already stored.
 class RdfLoader {
  public:
-  auto Load(const std::filesystem::path& path, Dictionary& dictionary, TripleStore& store) const
-      -> LoadStats;
+  auto Load(const std::filesystem::path& path, Dictionary& dictionary,
+            TripleStore& store) const -> LoadStats;
 };
 
 }  // namespace ontodb

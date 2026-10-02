@@ -36,8 +36,8 @@ struct AstFilter {
   std::unique_ptr<AstFilter> rhs;
 
   static auto Compare(Op op, AstTerm left, AstTerm right) -> std::unique_ptr<AstFilter>;
-  static auto And(std::unique_ptr<AstFilter> lhs, std::unique_ptr<AstFilter> rhs)
-      -> std::unique_ptr<AstFilter>;
+  static auto And(std::unique_ptr<AstFilter> lhs,
+                  std::unique_ptr<AstFilter> rhs) -> std::unique_ptr<AstFilter>;
   auto Text() const -> std::string;
 };
 

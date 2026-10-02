@@ -255,8 +255,8 @@ auto Validate(const Spec& spec) -> std::string {
   return {};
 }
 
-auto RunPermutation(const Spec& spec, const Permutation& perm, IsolationDriver* driver)
-    -> RunReport {
+auto RunPermutation(const Spec& spec, const Permutation& perm,
+                    IsolationDriver* driver) -> RunReport {
   for (const auto& step : perm.steps) {
     const int session = Spec::SessionOf(step);
     driver->Submit(session, step, spec.StepText(step));

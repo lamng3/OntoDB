@@ -42,8 +42,8 @@ class LockManager {
   LockManager() = default;
   ~LockManager();
 
-  auto Lock(Transaction* txn, const LockResource& resource, LockMode mode, SessionState* session)
-      -> bool;
+  auto Lock(Transaction* txn, const LockResource& resource, LockMode mode,
+            SessionState* session) -> bool;
   auto Unlock(Transaction* txn, const LockResource& resource) -> bool;
   void UnlockAll(Transaction* txn);
   void StartDeadlockDetection();

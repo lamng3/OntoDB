@@ -10,8 +10,8 @@ namespace ontodb {
 
 class ExecutorFactory {
  public:
-  static auto Create(const AbstractPlanNode* plan, ExecutorContext* ctx)
-      -> std::unique_ptr<AbstractExecutor>;
+  static auto Create(const AbstractPlanNode* plan,
+                     ExecutorContext* ctx) -> std::unique_ptr<AbstractExecutor>;
 };
 
 }  // namespace ontodb

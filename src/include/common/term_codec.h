@@ -13,8 +13,8 @@ namespace ontodb {
 auto EscapeLiteral(std::string_view lex) -> std::string;
 auto UnescapeLiteral(std::string_view lex) -> std::string;
 auto CanonicalIri(std::string_view iri) -> std::string;
-auto CanonicalLiteral(std::string_view lex, std::string_view datatype_iri, std::string_view lang)
-    -> std::string;
+auto CanonicalLiteral(std::string_view lex, std::string_view datatype_iri,
+                      std::string_view lang) -> std::string;
 auto CanonicalBlank(std::string_view id) -> std::string;
 
 struct ParsedTerm {

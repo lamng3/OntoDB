@@ -99,8 +99,8 @@ void SessionPool::Start(int session, const Job& job) {
   worker->cv.notify_all();
 }
 
-auto SessionPool::WaitFor(int session, std::chrono::milliseconds timeout)
-    -> std::optional<std::string> {
+auto SessionPool::WaitFor(int session,
+                          std::chrono::milliseconds timeout) -> std::optional<std::string> {
   Worker* worker = nullptr;
   {
     std::lock_guard<std::mutex> guard(mu_);

@@ -288,19 +288,12 @@ auto Shell::Evaluate(const std::string& line, SessionState& session) -> std::str
                                                           : "hash")
         << '\n';
     const char* isolation = "rc";
-    switch (config.isolation) {
-      case IsolationLevel::kReadUncommitted:
-        isolation = "ru";
-        break;
-      case IsolationLevel::kReadCommitted:
-        isolation = "rc";
-        break;
-      case IsolationLevel::kRepeatableRead:
-        isolation = "rr";
-        break;
-      case IsolationLevel::kSerializable:
-        isolation = "ser";
-        break;
+    if (config.isolation == IsolationLevel::kReadUncommitted) {
+      isolation = "ru";
+    } else if (config.isolation == IsolationLevel::kRepeatableRead) {
+      isolation = "rr";
+    } else if (config.isolation == IsolationLevel::kSerializable) {
+      isolation = "ser";
     }
     out << "isolation " << isolation;
     return out.str();

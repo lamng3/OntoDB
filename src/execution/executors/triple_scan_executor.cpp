@@ -13,8 +13,8 @@ auto TripleScanExecutor::Vacuous() const -> bool {
   return empty(pattern.subject) && empty(pattern.predicate) && empty(pattern.object);
 }
 
-auto TripleScanExecutor::BindPosition(const BoundTerm& term, term_id_t value, Row* row) const
-    -> bool {
+auto TripleScanExecutor::BindPosition(const BoundTerm& term, term_id_t value,
+                                      Row* row) const -> bool {
   if (!term.is_variable) {
     return value == term.id;
   }

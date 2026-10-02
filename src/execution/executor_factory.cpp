@@ -12,8 +12,8 @@
 
 namespace ontodb {
 
-auto ExecutorFactory::Create(const AbstractPlanNode* plan, ExecutorContext* ctx)
-    -> std::unique_ptr<AbstractExecutor> {
+auto ExecutorFactory::Create(const AbstractPlanNode* plan,
+                             ExecutorContext* ctx) -> std::unique_ptr<AbstractExecutor> {
   switch (plan->GetType()) {
     case PlanType::kTripleScan:
       return std::make_unique<TripleScanExecutor>(ctx, static_cast<const TripleScanPlan*>(plan));

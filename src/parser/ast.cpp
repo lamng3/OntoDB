@@ -35,8 +35,8 @@ auto AstFilter::Compare(Op op, AstTerm left, AstTerm right) -> std::unique_ptr<A
   return node;
 }
 
-auto AstFilter::And(std::unique_ptr<AstFilter> lhs, std::unique_ptr<AstFilter> rhs)
-    -> std::unique_ptr<AstFilter> {
+auto AstFilter::And(std::unique_ptr<AstFilter> lhs,
+                    std::unique_ptr<AstFilter> rhs) -> std::unique_ptr<AstFilter> {
   auto node = std::make_unique<AstFilter>();
   node->op = Op::kAnd;
   node->lhs = std::move(lhs);
