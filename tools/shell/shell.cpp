@@ -38,7 +38,7 @@ auto Lower(std::string text) -> std::string {
   return text;
 }
 
-void TrackLine(std::string_view line, int* depth, bool* in_string, char* quote) {
+void TrackLine(std::string_view line, int* depth, bool* in_string, char* quote, bool* saw_group) {
   bool in_iri = false;
   for (size_t i = 0; i < line.size(); i++) {
     const char c = line[i];
@@ -72,6 +72,7 @@ void TrackLine(std::string_view line, int* depth, bool* in_string, char* quote) 
     }
     if (c == '{') {
       ++*depth;
+      *saw_group = true;
     } else if (c == '}') {
       --*depth;
     }
@@ -80,7 +81,7 @@ void TrackLine(std::string_view line, int* depth, bool* in_string, char* quote) 
 
 auto HelpText() -> const char* {
   return "\\load <file>              load Turtle, N-Triples, or RDF/XML\n"
-         "SELECT / INSERT / DELETE   a SPARQL query or update\n"
+         "SELECT / INSERT / DELETE   SPARQL, run when the { } group closes\n"
          "\\explain <q>              print the plan\n"
          "\\explain analyze <q>      estimated vs actual rows (PLAN 5.5)\n"
          "\\stats                    page reads/writes, buffer hits/misses\n"
@@ -123,6 +124,7 @@ void Shell::Run() {
   int depth = 0;
   bool in_string = false;
   char quote = 0;
+  bool saw_group = false;
   std::string line;
   while (true) {
     if (pending.empty()) {
@@ -132,6 +134,9 @@ void Shell::Run() {
       break;
     }
     const std::string trimmed = Trim(line);
+    if (trimmed == "\\quit" || trimmed == "\\q") {
+      return;
+    }
     if (pending.empty() && trimmed.empty()) {
       continue;
     }
@@ -145,8 +150,8 @@ void Shell::Run() {
       pending.push_back('\n');
     }
     pending += line;
-    TrackLine(line, &depth, &in_string, &quote);
-    if (depth > 0 || in_string) {
+    TrackLine(line, &depth, &in_string, &quote, &saw_group);
+    if (depth > 0 || in_string || !saw_group) {
       continue;
     }
     if (!Dispatch(pending)) {
@@ -154,6 +159,7 @@ void Shell::Run() {
     }
     pending.clear();
     depth = 0;
+    saw_group = false;
   }
 }
 

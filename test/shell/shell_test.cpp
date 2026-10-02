@@ -32,6 +32,18 @@ TEST(ShellSmoke, LoadTinyAndQuery) {
   EXPECT_NE(out.find("\"Cara\""), std::string::npos);
 }
 
+TEST(ShellSmoke, PrefixOnItsOwnLine) {
+  const auto script = "\\load " + test::DataFile("tiny.ttl").string() +
+                      "\nPREFIX ub: <http://example.edu/univ#>\n"
+                      "SELECT ?name WHERE {\n"
+                      "  ?s a ub:Student ; ub:name ?name .\n"
+                      "}\n\\quit\n";
+  const auto out = RunScript(script);
+  EXPECT_NE(out.find("\"Alice\""), std::string::npos);
+  EXPECT_NE(out.find("\"Bob\""), std::string::npos);
+  EXPECT_NE(out.find("\"Cara\""), std::string::npos);
+}
+
 TEST(Shell, ExplainStatsSetAndUnbuiltCommands) {
   const auto out = RunScript(
       "\\stats\n\\set pool_size 8\n\\set join nlj\n\\set isolation rr\n\\set\n"

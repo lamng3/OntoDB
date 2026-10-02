@@ -2,6 +2,7 @@ build/
 .cache/
 .DS_Store
 data/downloads/
+benchmarks/**/raw/
 cmake-build-*/
 compile_commands.json
 *.o

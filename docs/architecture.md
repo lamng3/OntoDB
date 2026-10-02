@@ -1,6 +1,6 @@
 # Architecture
 
-ontodb is a teaching RDF store. A query is a pipeline of small types. A committed insert is the same pipeline plus the log. The files below are the ones each path actually touches.
+ontodb is a SPARQL store. A query is a pipeline of small types. A committed insert is the same pipeline plus the log. The files below are the ones each path actually touches.
 
 ## One query
 
