@@ -1,0 +1,38 @@
+@prefix pizza: <http://www.co-ode.org/ontologies/pizza/pizza.owl#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+
+pizza:Pizza a owl:Class ;
+    rdfs:label "Pizza" .
+
+pizza:NamedPizza rdfs:subClassOf pizza:Pizza ;
+    rdfs:label "NamedPizza" .
+
+pizza:MargheritaPizza rdfs:subClassOf pizza:NamedPizza ;
+    rdfs:label "Margherita" ;
+    pizza:hasTopping pizza:MozzarellaTopping , pizza:TomatoTopping .
+
+pizza:AmericanPizza rdfs:subClassOf pizza:NamedPizza ;
+    rdfs:label "American" ;
+    pizza:hasTopping pizza:MozzarellaTopping , pizza:PeperoniSausageTopping .
+
+pizza:Topping a owl:Class .
+pizza:CheeseTopping rdfs:subClassOf pizza:Topping .
+pizza:VegetableTopping rdfs:subClassOf pizza:Topping .
+pizza:MeatTopping rdfs:subClassOf pizza:Topping .
+
+pizza:MozzarellaTopping rdfs:subClassOf pizza:CheeseTopping ;
+    pizza:hasSpiciness pizza:Mild .
+
+pizza:TomatoTopping rdfs:subClassOf pizza:VegetableTopping ;
+    pizza:hasSpiciness pizza:Mild .
+
+pizza:PeperoniSausageTopping rdfs:subClassOf pizza:MeatTopping ;
+    pizza:hasSpiciness pizza:Hot .
+
+pizza:Spiciness a owl:Class .
+pizza:Mild a pizza:Spiciness ;
+    rdfs:label "Mild" .
+pizza:Hot a pizza:Spiciness ;
+    rdfs:label "Hot" .

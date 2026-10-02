@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Print pass/todo for every plan item and the implementation progress."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from items import ITEMS, PROGRESS  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    env = os.environ.copy()
+    home = str(Path.home())
+    env["PATH"] = f"{home}/bin:/opt/homebrew/bin:{env.get('PATH', '')}"
+    subprocess.run(["cmake", "--preset", "dev"], cwd=ROOT, env=env, check=True)
+    subprocess.run(["cmake", "--build", "--preset", "dev"], cwd=ROOT, env=env, check=True)
+    report = ROOT / "build" / "dev" / "status.json"
+    binary = ROOT / "build" / "dev" / "ontodb_test"
+    subprocess.run(
+        [str(binary), "--gtest_also_run_disabled_tests", f"--gtest_output=json:{report}", "--gtest_brief=1"],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    doc = json.loads(report.read_text())
+    by_suite = {}
+    for suite in doc.get("testsuites", []):
+        by_suite.setdefault(suite["name"], []).extend(suite.get("testsuite", []))
+
+    def tests_for(item_id):
+        if item_id == "0.1":
+            names = ("ShellSmoke", "QueryHarness")
+        elif item_id == "0.3":
+            names = ("ExplainSmoke",)
+        else:
+            prefix = "P" + item_id.replace(".", "_") + "_"
+            names = tuple(name for name in by_suite if name.startswith(prefix))
+        found = []
+        for name in names:
+            found.extend((name, test) for test in by_suite.get(name, []))
+        return found
+
+    def done(item_id):
+        found = tests_for(item_id)
+        if not found:
+            return False
+        for _, test in found:
+            if test["name"].startswith("DISABLED_"):
+                return False
+            if test.get("failures") or test.get("result") == "SKIPPED":
+                return False
+        return True
+
+    labels = {
+        "0": "orientation",
+        "1": "disk and buffer",
+        "2": "B+ tree",
+        "3": "RDF storage",
+        "4": "execution",
+        "5": "planning",
+        "6": "scale",
+        "7": "concurrency",
+        "8": "recovery",
+    }
+    current = None
+    for item_id, _, _, _ in ITEMS:
+        phase = item_id.split(".", 1)[0]
+        if phase != current:
+            current = phase
+            print(f"phase {phase}  {labels[phase]}")
+        state = "pass" if done(item_id) else "todo"
+        print(f"  {item_id}  {state}")
+    finished = sum(1 for item_id, _, _, _ in PROGRESS if done(item_id))
+    total = len(PROGRESS)
+    percent = 0 if total == 0 else round(100 * finished / total)
+    print(f"progress: {finished}/{total} ({percent}%)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

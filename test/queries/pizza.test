@@ -1,0 +1,37 @@
+data pizza.ttl
+
+query named-pizzas
+PREFIX pizza: <http://www.co-ode.org/ontologies/pizza/pizza.owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?name WHERE { ?p rdfs:subClassOf pizza:NamedPizza ; rdfs:label ?name . }
+----
+"Margherita"
+"American"
+
+query margherita-toppings
+PREFIX pizza: <http://www.co-ode.org/ontologies/pizza/pizza.owl#>
+SELECT ?topping WHERE { pizza:MargheritaPizza pizza:hasTopping ?topping . }
+----
+<http://www.co-ode.org/ontologies/pizza/pizza.owl#MozzarellaTopping>
+<http://www.co-ode.org/ontologies/pizza/pizza.owl#TomatoTopping>
+
+query hot-topping
+PREFIX pizza: <http://www.co-ode.org/ontologies/pizza/pizza.owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?label WHERE {
+  ?t pizza:hasSpiciness pizza:Hot ; rdfs:subClassOf pizza:MeatTopping .
+  pizza:Hot rdfs:label ?label .
+}
+----
+"Hot"
+
+query cheese-under-topping
+PREFIX pizza: <http://www.co-ode.org/ontologies/pizza/pizza.owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT ?pizza WHERE {
+  ?pizza pizza:hasTopping ?t .
+  ?t rdfs:subClassOf pizza:CheeseTopping .
+  FILTER (?pizza != pizza:AmericanPizza)
+}
+----
+<http://www.co-ode.org/ontologies/pizza/pizza.owl#MargheritaPizza>

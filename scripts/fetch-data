@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Download Pizza or generate LUBM(1). Usage: scripts/fetch-data pizza|lubm"""
+
+import shutil
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+from urllib.request import urlretrieve
+
+ROOT = Path(__file__).resolve().parents[1]
+DOWNLOADS = ROOT / "data" / "downloads"
+PIZZA_URL = "https://raw.githubusercontent.com/owlcs/pizza-ontology/master/pizza.owl"
+UBA_URL = "http://swat.cse.lehigh.edu/projects/lubm/uba1.7.zip"
+
+
+def fetch(url, dest):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    print(f"get {url}")
+    urlretrieve(url, dest)
+
+
+def pizza():
+    dest = DOWNLOADS / "pizza.owl"
+    fetch(PIZZA_URL, dest)
+    print(dest)
+
+
+def lubm():
+    archive = DOWNLOADS / "uba1.7.zip"
+    fetch(UBA_URL, archive)
+    unpacked = DOWNLOADS / "lubm" / "uba"
+    if unpacked.exists():
+        shutil.rmtree(unpacked)
+    with zipfile.ZipFile(archive) as zipped:
+        zipped.extractall(unpacked)
+    classes = None
+    for path in unpacked.rglob("Generator.class"):
+        parts = path.relative_to(unpacked).parts
+        if "edu" not in parts:
+            continue
+        classes = unpacked.joinpath(*parts[: parts.index("edu")])
+        break
+    if classes is None:
+        raise SystemExit("UBA zip has no Generator.class")
+    out = DOWNLOADS / "lubm"
+    out.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "java",
+            "-cp",
+            str(classes),
+            "edu.lehigh.swat.bench.uba.Generator",
+            "-univ",
+            "1",
+            "-index",
+            "0",
+            "-seed",
+            "0",
+        ],
+        cwd=out,
+        check=True,
+    )
+    produced = out / "University0_0.owl"
+    if not produced.exists():
+        raise SystemExit(f"generator did not write {produced}")
+    print(produced)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm"):
+        print("usage: scripts/fetch-data pizza|lubm", file=sys.stderr)
+        return 2
+    if sys.argv[1] == "pizza":
+        pizza()
+    else:
+        lubm()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

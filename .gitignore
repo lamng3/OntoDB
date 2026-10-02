@@ -1,0 +1,9 @@
+build/
+.cache/
+.DS_Store
+data/downloads/
+cmake-build-*/
+compile_commands.json
+*.o
+*.dSYM/
+.vscode/

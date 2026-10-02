@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Build and run one plan item or a whole phase. Prints the next item."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from items import next_item, select  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("usage: scripts/check <item|phase>", file=sys.stderr)
+        return 2
+    chosen = select(sys.argv[1])
+    presets = []
+    for _, _, _, tsan in chosen:
+        preset = "tsan" if tsan else "dev"
+        if preset not in presets:
+            presets.append(preset)
+    env = os.environ.copy()
+    home = str(Path.home())
+    env["PATH"] = f"{home}/bin:/opt/homebrew/bin:{env.get('PATH', '')}"
+    for preset in presets:
+        subprocess.run(["cmake", "--preset", preset], cwd=ROOT, env=env, check=True)
+        subprocess.run(["cmake", "--build", "--preset", preset], cwd=ROOT, env=env, check=True)
+    failed = False
+    first_bad = None
+    for item, filt, disabled, tsan in chosen:
+        binary = ROOT / ("build/tsan" if tsan else "build/dev") / "ontodb_test"
+        report = ROOT / "build" / ("tsan" if tsan else "dev") / f"check-{item}.json"
+        cmd = [str(binary), f"--gtest_filter={filt}", f"--gtest_output=json:{report}", "--gtest_brief=1"]
+        if disabled:
+            cmd.append("--gtest_also_run_disabled_tests")
+        proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
+        doc = json.loads(report.read_text())
+        seen = 0
+        item_failed = False
+        for suite in doc.get("testsuites", []):
+            for test in suite.get("testsuite", []):
+                seen += 1
+                name = f"{suite['name']}.{test['name']}"
+                bad = bool(test.get("failures")) or test.get("result") == "SKIPPED"
+                print(f"{name}  {'FAIL' if bad else 'PASS'}")
+                item_failed = item_failed or bad
+        if seen == 0:
+            print(f"{item}  FAIL  (no tests matched {filt})")
+            item_failed = True
+        print(f"{item}  {'fail' if item_failed else 'pass'}")
+        if item_failed and proc.stdout:
+            print(proc.stdout)
+        if item_failed:
+            failed = True
+            first_bad = first_bad or item
+    print(f"next: {first_bad or next_item(chosen[-1][0])}")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

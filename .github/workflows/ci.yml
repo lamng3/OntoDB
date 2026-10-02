@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: asan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libraptor2-dev graphviz
+      - name: Configure and build
+        run: cmake --preset dev && cmake --build --preset dev
+      - name: Test
+        run: ./build/dev/ontodb_test
+
+  tsan:
+    name: tsan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libraptor2-dev
+      - name: Configure and build
+        run: cmake --preset tsan && cmake --build --preset tsan
+      - name: Test
+        run: ./build/tsan/ontodb_test
+
+  format:
+    name: format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Check formatting
+        run: |
+          files=$(find src tools test -type f \( -name '*.h' -o -name '*.cpp' \))
+          clang-format --dry-run -Werror $files
+
+  tidy:
+    name: tidy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang clang-tidy cmake ninja-build pkg-config libraptor2-dev
+      - name: Configure
+        run: cmake --preset dev
+      - name: clang-tidy
+        run: |
+          files=$(find src tools -type f -name '*.cpp')
+          clang-tidy -p build/dev --warnings-as-errors='*' $files
