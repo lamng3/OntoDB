@@ -1,10 +1,10 @@
 # Architecture
 
-ontodb is a SPARQL store. A query is a pipeline of small types. A committed insert is the same pipeline plus the log. The files below are the ones each path actually touches.
+OntoDB is a SPARQL store. A query is a pipeline of small types. A committed insert is the same pipeline plus the log. The files below are the ones each path actually touches.
 
 ## One query
 
-Take this, typed at the `ontodb>` prompt after `\load data/tiny.ttl`:
+Take this, typed at the `OntoDB>` prompt after `\load data/tiny.ttl`:
 
 ```sparql
 PREFIX ub: <http://example.edu/univ#>
