@@ -113,9 +113,9 @@ Shell::Shell(Database& db, std::istream& in, std::ostream& out) : db_(db), in_(i
 
 void Shell::Prompt() {
   if (in_.rdbuf() == std::cin.rdbuf() && sessions_.Active() == 1) {
-    out_ << "ontodb> " << std::flush;
+    out_ << "OntoDB> " << std::flush;
   } else if (in_.rdbuf() == std::cin.rdbuf()) {
-    out_ << "ontodb:" << sessions_.Active() << "> " << std::flush;
+    out_ << "OntoDB:" << sessions_.Active() << "> " << std::flush;
   }
 }
 

@@ -1,4 +1,4 @@
-# ontodb
+# OntoDB
 
 This is the feature list, not a course. Each feature is something the store will do. Slices under a feature keep their ids (`1.4`, `8.6`) because the tests and the `not built yet (PLAN x.y)` messages use them.
 

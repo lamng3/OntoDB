@@ -1,6 +1,17 @@
-# ontodb
+# OntoDB
 
-A SPARQL database. Triples are the records. The shell is how you load a file and run a query.
+A database management system for ontologies. Data is RDF. The query language is SPARQL.
+
+OntoDB loads an ontology, stores each triple as three dictionary ids, and answers a query with a planner, an optimizer, and a B+ tree. A commit is a write-ahead log. A restart is ARIES.
+
+## Features
+
+- **SPARQL.** Basic graph patterns, filters, and `INSERT DATA` / `DELETE DATA`. Turtle, N-Triples, and RDF/XML load as triples. OWL is stored as RDF.
+- **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
+- **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
+- **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES.
+
+The `ontodb` shell runs that SPARQL subset on an in-memory store today. The index, the optimizer, and recovery are the rest of the system. `PLAN.md` is the build list.
 
 ## Run
 
@@ -22,7 +33,7 @@ cmake --preset dev && cmake --build --preset dev
 
 ## Query
 
-At the `ontodb>` prompt, load the sample graph and ask for student names. A query can span lines. It runs when the `{ }` group closes. `\quit` leaves.
+At the `OntoDB>` prompt, a query may span lines. It runs when the braces close.
 
 ```text
 \load data/tiny.ttl
@@ -33,14 +44,6 @@ SELECT ?name WHERE {
 \quit
 ```
 
-That load reports 53 triples. The result is `Alice`, `Bob`, and `Cara`.
+The load reports 53 triples. The names are Alice, Bob, and Cara. `\help` lists the commands. `\explain` prints the plan.
 
-The same query on one line also works:
-
-```text
-SELECT ?name WHERE { ?s a <http://example.edu/univ#Student> ; <http://example.edu/univ#name> ?name . }
-```
-
-`\help` lists every command. `\explain` prints the plan and does not run it. Storage, transactions, and recovery commands answer `not built yet` until that feature exists.
-
-`PLAN.md` is the feature list. `benchmarks/` is where a later comparison of eviction, indexing, joins, or recovery is written down. `docs/architecture.md` follows one query and one insert through the code.
+Study notes: <https://lamng3.github.io/ontodb-docs/>. One query, followed through the code: `docs/architecture.md`.
