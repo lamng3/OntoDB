@@ -101,7 +101,8 @@ auto HelpText() -> const char* {
          "\\txns                     running transactions (PLAN 7.2)\n"
          "\\locks                    lock table (PLAN 7.3)\n"
          "\\log [n]                  decoded WAL tail (PLAN 8.2)\n"
-         "\\checkpoint               (PLAN 8.5)\n"
+         "\\checkpoint               snapshot and reset the log (PLAN 9.4)\n"
+         "\\verify                   check snapshot, log, and state (PLAN 9.6)\n"
          "\\crash                    abrupt exit (PLAN 8.3)\n"
          "\\help\n"
          "\\quit\n";
@@ -406,8 +407,10 @@ auto Shell::Evaluate(const std::string& line, SessionState& session) -> std::str
     return db_.LogDebug(n);
   }
   if (lower == "\\checkpoint") {
-    db_.Checkpoint();
-    return "ok";
+    return db_.Checkpoint();
+  }
+  if (lower == "\\verify") {
+    return db_.Verify();
   }
   if (lower == "\\crash") {
     db_.Crash();
