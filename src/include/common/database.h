@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,6 +12,7 @@
 #include "dictionary/mem_dictionary.h"
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
+#include "recovery/durability.h"
 #include "store/mem_store.h"
 
 namespace ontodb {
@@ -18,9 +20,17 @@ namespace ontodb {
 class BufferPoolManager;
 
 // In-memory database used by the shell until the indexed backend exists.
+// `Database()` keeps nothing on disk. `Database::Open(dir)` makes it durable
+// (PLAN 9): every update statement and every \load is a logged transaction,
+// and reopening the directory restores the committed state.
 class Database {
  public:
   Database();
+  ~Database();
+
+  static auto Open(const std::filesystem::path& dir, RecoveryMode mode = RecoveryMode::kPointInTime,
+                   OpenReport* report = nullptr) -> std::unique_ptr<Database>;
+  auto IsDurable() const -> bool { return durability_ != nullptr; }
 
   auto Load(const std::string& path) -> LoadStats;
   auto Execute(const std::string& sparql, SessionState* session) -> StatementResult;
@@ -46,7 +56,8 @@ class Database {
   auto TransactionsDebug() const -> std::string;
   auto LocksDebug() const -> std::string;
   auto LogDebug(size_t n) const -> std::string;
-  void Checkpoint();
+  auto Checkpoint() -> std::string;
+  auto Verify() -> std::string;
   void Crash();
 
  private:
@@ -57,6 +68,7 @@ class Database {
   Config config_;
   std::mutex config_mu_;
   BufferPoolManager* bpm_{nullptr};
+  std::unique_ptr<Durability> durability_;
 };
 
 }  // namespace ontodb

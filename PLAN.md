@@ -14,8 +14,10 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `INSERT DATA` and `DELETE DATA` on the memory store.
 - `\explain`. `\explain analyze` is part of the optimizer.
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
+- A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
+- Log records with checksums (8.1) and the log manager with group commit (8.2).
 
-Opening a file path prints that recovery is not built and starts an empty memory database.
+Without a directory, the shell starts an empty memory database that keeps nothing.
 
 ## Building
 
@@ -29,7 +31,8 @@ Opening a file path prints that recovery is not built and starts an empty memory
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. |
-| Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. |
+| Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
+| Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
 
 ## Later, on purpose
 
@@ -41,6 +44,8 @@ These have no stubs. Add one by writing the design next to the code that impleme
 - Leaf compression, delta-encoded keys. Say what happens to prefix bounds.
 - RDFS `subClassOf` materialization, and which LUBM queries it completes.
 - A query window around the shell. Same engine, a place to type and read rows.
+- Page checksums on the disk store, as PostgreSQL's `data_checksums` and InnoDB do, once pages exist. Checked on read, and by `\verify`.
+- Restore to a chosen LSN: replay the snapshot and the log up to an LSN and stop, to see the database as it was at that point.
 
 ## Triple key
 
@@ -150,9 +155,9 @@ Checked under the `tsan` preset. Latches protect pages for one tree operation. L
 
 Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree split or merge is redone, not undone as a triple operation. Log the split as a redo-only nested top action and log the triple insert separately.
 
-**8.1 Records.** Types: begin, commit, abort, update, CLR, checkpoint. `SerializeTo` writes `Size()` bytes. A short buffer throws. An update carries the triple and whether it inserted. A CLR carries `undo_next`. A checkpoint lists the active transactions. Put the length in the record.
+**8.1 Records.** Done. Types: begin, commit, abort, update, CLR, checkpoint. `SerializeTo` writes `Size()` bytes. A short buffer throws. An update carries the triple and whether it inserted. A CLR carries `undo_next`. A checkpoint lists the active transactions. Put the length in the record.
 
-**8.2 Log manager.** `Append` assigns an LSN. `Flush(lsn)` blocks until that LSN is durable. Commit forces. Commits that overlap one flush share it. `\log` prints the tail, oldest first. The log file path is the `LogManager` constructor argument.
+**8.2 Log manager.** Done. `Append` assigns an LSN. `Flush(lsn)` blocks until that LSN is durable. Commit forces. Commits that overlap one flush share it. `\log` prints the tail, oldest first. The log file path is the `LogManager` constructor argument.
 
 **8.3 WAL.** Every update sets pageLSN. The pool flushes the log before the page write, with the crash point between them. `\crash` exits without flushing.
 
@@ -163,3 +168,25 @@ Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree 
 **8.6 ARIES.** On open, analysis finds winners, losers, and the redo LSN. Redo repeats every page update whose LSN is greater than the pageLSN, including CLRs. Undo walks losers newest-first. `Summary` is one line per pass: `analysis`, `redo`, `undo`.
 
 **8.7 Crash test.** `scripts/crashtest --seeds 200` is green. A committed insert is visible after restart. An uncommitted insert is not. The harness already detects a lost commit and a surviving uncommitted write on fake stores.
+
+## Durable memory database
+
+The shell's memory store, made durable without pages. Redo is logical: an update record names a triple, not a page, and its `page_id` is `INVALID_PAGE_ID`. This uses the log records (8.1) and the log manager (8.2) as they are, and leaves page-oriented recovery (8.3 to 8.7) for the disk store. `src/recovery/durability.cpp`, `src/recovery/snapshot.cpp`. Scenario tests in `test/durable/`.
+
+The directory holds two files. `snapshot` is a full image at one LSN. `wal` holds every record after it.
+
+**9.1 Checksums.** Every log record carries a CRC-32C over its bytes, as PostgreSQL, RocksDB, and InnoDB do for theirs. A record whose bytes are all present but wrong throws `LogCorruptionException`. A short buffer throws a plain `StorageException`, because a torn final write is what a crash leaves behind.
+
+**9.2 Log scan.** `ScanLog` returns the valid prefix of a log and says where and why it stopped. Opening a `LogManager` on an existing log continues its LSNs.
+
+**9.3 Statements are transactions.** A statement runs against a `RecordingStore` that remembers each triple it changed. Then the log gets begin, any dictionary terms not logged yet, one update per changed triple, and commit, and the commit is forced before the statement returns. A statement that throws is undone in memory. A statement that changed nothing logs nothing. Term records replay whatever their transaction's outcome, because the dictionary only grows and a term no committed triple uses is invisible. Updates replay only for committed transactions, in log order.
+
+**9.4 Checkpoint.** `\checkpoint` writes the snapshot to a temporary file, fsyncs it, renames it over the old one, and then empties the log. A crash between the rename and the truncate leaves the new snapshot with the old log; replay skips every record at or below the snapshot's LSN. The snapshot carries its own CRC-32C, and a bad one refuses to open.
+
+**9.5 Recovery modes.** Named after RocksDB's WAL recovery modes. `kPointInTime`, the default, keeps every transaction before the first bad record, truncates the log there, and reports what it dropped. `kAbsoluteConsistency` (`ontodb --strict <dir>`) refuses to open instead.
+
+**9.6 Verify.** `\verify` rebuilds the database from the files into a fresh store, compares it with the live one, and checks the invariants: no duplicate triples, and every id in the dictionary. It changes nothing. In the same spirit as PostgreSQL's `pg_amcheck`, MySQL's `CHECK TABLE`, and RocksDB's `VerifyChecksum`.
+
+**9.7 Shell flow.** One shell session loads an OWL file, updates it, checkpoints, verifies, and a second session on the same directory sees the result.
+
+Scenarios covered: Turtle and RDF/XML loads survive a reopen; inserts and deletes replay in order; a no-op statement logs nothing; a crash before commit leaves no trace; term ids are stable; snapshot plus log replays to the same state; a crash after the snapshot does not replay twice; a corrupt snapshot refuses to open; a torn tail keeps earlier commits; a corrupt record drops everything after it; a tampered log fails `\verify`.

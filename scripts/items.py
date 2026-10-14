@@ -49,6 +49,13 @@ ITEMS = [
     ("8.5", "P8_5_*", True, False),
     ("8.6", "P8_6_*", True, False),
     ("8.7", "P8_7_*", True, False),
+    ("9.1", "P9_1_*", False, False),
+    ("9.2", "P9_2_*", False, False),
+    ("9.3", "P9_3_*", False, False),
+    ("9.4", "P9_4_*", False, False),
+    ("9.5", "P9_5_*", False, False),
+    ("9.6", "P9_6_*", False, False),
+    ("9.7", "P9_7_*", False, False),
 ]
 
 PROGRESS = [item for item in ITEMS if item[0] not in ("0.1", "0.3")]
@@ -65,6 +72,7 @@ FEATURES = [
     ("load", "Bulk load", ("6.1", "6.2")),
     ("concurrency", "Concurrency", ("7.1", "7.2", "7.3", "7.4", "7.5", "7.6")),
     ("recovery", "Recovery", ("8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7")),
+    ("durable", "Durable memory database", ("9.1", "9.2", "9.3", "9.4", "9.5", "9.6", "9.7")),
 ]
 
 

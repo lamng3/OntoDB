@@ -42,7 +42,7 @@ auto Records(const std::vector<char>& bytes) -> std::vector<LogRecord> {
   return records;
 }
 
-TEST(P8_1_LogRecord, DISABLED_RoundTrip) {
+TEST(P8_1_LogRecord, RoundTrip) {
   const Triple triple{4, 5, 6};
   std::vector<LogRecord> records = {
       LogRecord::Begin(3),
@@ -78,7 +78,7 @@ TEST(P8_1_LogRecord, DISABLED_RoundTrip) {
             (std::vector<txn_id_t>{1, 2, 3}));
 }
 
-TEST(P8_2_LogManager, DISABLED_GroupCommit) {
+TEST(P8_2_LogManager, GroupCommit) {
   test::TempDir dir;
   const auto path = (dir.path() / "wal").string();
   IoStats stats;
