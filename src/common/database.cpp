@@ -1,22 +1,113 @@
 #include "common/database.h"
 
+#include <unistd.h>
+
+#include <atomic>
 #include <cstdlib>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 
 #include "binder/binder.h"
 #include "buffer/buffer_pool_manager.h"
+#include "catalog/catalog.h"
 #include "common/exception.h"
+#include "dictionary/disk_dictionary.h"
 #include "dictionary/mem_dictionary.h"
 #include "parser/parser.h"
+#include "store/indexed_store.h"
 #include "store/mem_store.h"
 
 namespace ontodb {
+
+// The indexed backend's parts, in construction order. The file is deleted
+// after everything that uses it is gone (members are destroyed in reverse).
+struct Database::IndexedBackend {
+  struct TempFile {
+    std::filesystem::path path;
+    ~TempFile() {
+      std::error_code ignored;
+      std::filesystem::remove(path, ignored);
+    }
+  };
+
+  IndexedBackend(std::filesystem::path file, const Config& config, IoStats* stats, TraceSink* trace)
+      : temp{std::move(file)}
+      , disk(temp.path.string(), stats, trace)
+      , pool(config.pool_size, &disk, config.lru_k, nullptr, stats, trace)
+      , catalog(&pool)
+      , dictionary(&pool, &catalog)
+      , store(&catalog, &pool, &dictionary) {}
+
+  TempFile temp;
+  DiskManager disk;
+  BufferPoolManager pool;
+  Catalog catalog;
+  DiskDictionary dictionary;
+  IndexedStore store;
+};
+
+namespace {
+
+auto TempDatabasePath() -> std::filesystem::path {
+  static std::atomic<int> counter{0};
+  return std::filesystem::temp_directory_path() /
+         ("ontodb-" + std::to_string(::getpid()) + "-" + std::to_string(counter++) + ".db");
+}
+
+// Copies every triple by spelling, so the target dictionary assigns its own ids.
+void CopyTriples(Dictionary& from_terms, TripleStore& from, Dictionary& to_terms, TripleStore& to) {
+  auto scan = from.Scan(TriplePattern{});
+  scan->Init();
+  Triple triple;
+  while (scan->Next(&triple)) {
+    auto id = [&](term_id_t old) { return to_terms.Insert(*from_terms.Lookup(old)); };
+    to.Insert(Triple{id(triple.subject), id(triple.predicate), id(triple.object)});
+  }
+}
+
+}  // namespace
 
 Database::Database()
     : dictionary_(std::make_unique<MemDictionary>()), store_(std::make_unique<MemStore>()) {}
 
 Database::~Database() = default;
+
+auto Database::GetDictionary() -> Dictionary* {
+  return indexed_ ? static_cast<Dictionary*>(&indexed_->dictionary) : dictionary_.get();
+}
+
+auto Database::GetStore() -> TripleStore* {
+  return indexed_ ? static_cast<TripleStore*>(&indexed_->store) : store_.get();
+}
+
+void Database::SetBackend(BackendKind kind) {
+  std::lock_guard<std::mutex> guard(indexed_mu_);
+  if (kind == BackendKind::kIndexed && !indexed_) {
+    if (durability_) {
+      throw std::runtime_error(
+          "a persistent database stays on the memory backend until page-level recovery (PLAN 8)");
+    }
+    auto backend =
+        std::make_unique<IndexedBackend>(TempDatabasePath(), GetConfig(), &stats_, &trace_);
+    CopyTriples(*dictionary_, *store_, backend->dictionary, backend->store);
+    indexed_ = std::move(backend);
+    bpm_ = &indexed_->pool;
+    dictionary_ = std::make_unique<MemDictionary>();
+    store_ = std::make_unique<MemStore>();
+  } else if (kind == BackendKind::kMem && indexed_) {
+    auto terms = std::make_unique<MemDictionary>();
+    auto triples = std::make_unique<MemStore>();
+    CopyTriples(indexed_->dictionary, indexed_->store, *terms, *triples);
+    dictionary_ = std::move(terms);
+    store_ = std::move(triples);
+    bpm_ = nullptr;
+    indexed_.reset();
+  }
+  Config config = GetConfig();
+  config.backend = kind;
+  UpdateConfig(config);
+}
 
 auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
                     OpenReport* report) -> std::unique_ptr<Database> {
@@ -32,7 +123,11 @@ auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
 
 auto Database::Load(const std::string& path) -> LoadStats {
   if (!durability_) {
-    return RdfLoader().Load(path, *dictionary_, *store_);
+    std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
+    if (indexed_) {
+      one_at_a_time.lock();
+    }
+    return RdfLoader().Load(path, *GetDictionary(), *GetStore());
   }
   LoadStats stats;
   durability_->Run(
@@ -55,13 +150,17 @@ void Database::SetTracing(bool enabled) {
 }
 
 auto Database::Execute(const std::string& sparql, SessionState* session) -> StatementResult {
+  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
+  if (indexed_) {
+    one_at_a_time.lock();
+  }
   const AstQuery ast = Parser(sparql).Parse();
-  const BoundQuery bound = Binder(*dictionary_).Bind(ast);
+  const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
   const bool is_update =
       bound.kind == BoundQuery::Kind::kInsert || bound.kind == BoundQuery::Kind::kDelete;
   if (!durability_ || !is_update) {
-    ExecutorContext ctx(store_.get(), dictionary_.get(), &config, nullptr, nullptr, nullptr, bpm_,
+    ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
                         &stats_, &trace_, session);
     return ExecutionEngine(&ctx).Execute(bound);
   }
@@ -75,19 +174,27 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
 }
 
 auto Database::Explain(const std::string& sparql) -> std::string {
+  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
+  if (indexed_) {
+    one_at_a_time.lock();
+  }
   const AstQuery ast = Parser(sparql).Parse();
-  const BoundQuery bound = Binder(*dictionary_).Bind(ast);
+  const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
-  ExecutorContext ctx(store_.get(), dictionary_.get(), &config, nullptr, nullptr, nullptr, bpm_,
+  ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
                       &stats_, &trace_, nullptr);
   return ExecutionEngine(&ctx).Explain(bound);
 }
 
 auto Database::ExplainAnalyze(const std::string& sparql) -> std::string {
+  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
+  if (indexed_) {
+    one_at_a_time.lock();
+  }
   const AstQuery ast = Parser(sparql).Parse();
-  const BoundQuery bound = Binder(*dictionary_).Bind(ast);
+  const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
-  ExecutorContext ctx(store_.get(), dictionary_.get(), &config, nullptr, nullptr, nullptr, bpm_,
+  ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
                       &stats_, &trace_, nullptr);
   return ExecutionEngine(&ctx).ExplainAnalyze(bound);
 }
@@ -95,8 +202,8 @@ auto Database::ExplainAnalyze(const std::string& sparql) -> std::string {
 namespace {
 
 constexpr char kNoPool[] =
-    "no buffer pool: the memory backend keeps triples in memory; the indexed backend (PLAN 3.4) "
-    "has one";
+    "no buffer pool: the memory backend keeps triples in memory; \\set backend indexed builds "
+    "one";
 
 }  // namespace
 
@@ -135,9 +242,20 @@ auto Database::PageDebug(page_id_t page_id) const -> std::string {
   return out.str();
 }
 
-auto Database::TreeDebug(const std::string&, bool) const -> std::string {
-  return "no index: the memory backend keeps triples in memory; the indexed backend (PLAN 3.4) "
-         "has spo, pos, and osp trees";
+auto Database::TreeDebug(const std::string& index, bool dot) const -> std::string {
+  if (!indexed_) {
+    return "no index: the memory backend keeps triples in memory; \\set backend indexed builds "
+           "the B+ trees";
+  }
+  BPlusTree* tree = indexed_->store.Tree(index);
+  if (tree == nullptr) {
+    std::string names;
+    for (const auto& name : indexed_->store.IndexNames()) {
+      names += (names.empty() ? "" : ", ") + name;
+    }
+    return "no index named " + index + "; this store has " + names;
+  }
+  return dot ? tree->ToDot() : tree->ToString();
 }
 
 void Database::Begin() {

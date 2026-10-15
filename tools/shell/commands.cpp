@@ -96,13 +96,10 @@ auto ShowSettings(const Config& config) -> CommandResult {
 // Applies one knob to `config`. Returns an error message, or empty on success.
 auto SetKnob(Config& config, const std::string& key, const std::string& value) -> std::string {
   if (key == "backend") {
-    if (value == "indexed") {
-      throw NotImplementedException("PLAN 3.4: IndexedStore");
-    }
-    if (value != "mem") {
+    if (value != "mem" && value != "indexed") {
       return "error: backend is mem or indexed";
     }
-    config.backend = BackendKind::kMem;
+    config.backend = value == "mem" ? BackendKind::kMem : BackendKind::kIndexed;
   } else if (key == "pool_size") {
     config.pool_size = static_cast<size_t>(std::stoul(value));
   } else if (key == "lru_k") {
@@ -147,6 +144,9 @@ auto Set(Database& db, const std::string& arg) -> CommandResult {
       SetKnob(config, Lower(arg.substr(0, space)), Lower(Trim(arg.substr(space + 1))));
   if (!error.empty()) {
     return Text(error);
+  }
+  if (config.backend != db.GetConfig().backend) {
+    db.SetBackend(config.backend);  // moves the triples; may throw
   }
   db.UpdateConfig(config);
   return Ok();

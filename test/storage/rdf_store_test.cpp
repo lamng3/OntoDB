@@ -209,7 +209,7 @@ TEST(P3_3_Catalog, ClaimsItsPageAndRefusesAForeignOne) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P3_4_IndexedStore, DISABLED_InsertDeleteScan) {
+TEST(P3_4_IndexedStore, InsertDeleteScan) {
   test::DiskEnv env;
   Catalog catalog(&env.bpm);
   DiskDictionary dict(&env.bpm, &catalog);
