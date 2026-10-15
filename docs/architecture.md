@@ -86,7 +86,7 @@ The code uses a small set of standard patterns, so a new method plugs in at a kn
 | Strategy, replace conditional with polymorphism | `LogDamagePolicy` with one class per recovery mode; `\set join` selects the join operator; `TraceSink` implementations |
 | Null object | `NullTraceSink` when tracing is off |
 | Decorator | `RecordingStore` wraps any `TripleStore` and records its changes |
-| Adapter | `RdfLoader` adapts raptor2's parser to `Dictionary` and `TripleStore` |
+| Adapter | `RdfLoader` adapts raptor2's parser to `Dictionary` and `TripleStore`; an exception from either is caught in the C callback, the parse is aborted, and it is rethrown after raptor is freed |
 | Command | The shell's command table (`tools/shell/commands.cpp`): one entry per backslash command, read by both dispatch and `\help`; log records are replayable commands |
 | RAII | `ReadPageGuard` and `WritePageGuard` unpin on destruction |
 | Dependency injection | `ExecutorContext` carries the store, dictionary, config, and stats into every executor; `LogManager`, `Durability`, and the buffer pool take their collaborators as constructor arguments |

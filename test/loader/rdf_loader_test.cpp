@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include "common/exception.h"
 #include "dictionary/mem_dictionary.h"
 #include "store/mem_store.h"
 #include "test_util.h"
@@ -24,6 +25,26 @@ TEST(RdfLoader, RejectsUnknownExtension) {
   MemStore store;
   EXPECT_THROW(RdfLoader().Load(test::DataFile("tiny.ttl").replace_extension(".xyz"), dict, store),
                std::runtime_error);
+}
+
+// The store's exception must cross raptor's C parser intact: caught in the
+// callback, the parse aborted, raptor freed, then rethrown with its type.
+TEST(RdfLoader, StoreFailureAbortsTheParseAndKeepsItsType) {
+  class FailingStore : public TripleStore {
+   public:
+    auto Insert(const Triple&) -> bool override {
+      if (++inserts == 3) {
+        throw NotImplementedException("PLAN 3.4: fake store");
+      }
+      return true;
+    }
+    auto Delete(const Triple&) -> bool override { return false; }
+    auto Scan(const TriplePattern&) -> std::unique_ptr<TripleIterator> override { return nullptr; }
+    int inserts{0};
+  } store;
+  MemDictionary dict;
+  EXPECT_THROW(RdfLoader().Load(test::DataFile("tiny.ttl"), dict, store), NotImplementedException);
+  EXPECT_EQ(store.inserts, 3);  // no statement handled after the failure
 }
 
 }  // namespace
