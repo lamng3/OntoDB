@@ -116,6 +116,25 @@ stale after updates until the next collection, like a table that has not been
 re-\code{ANALYZE}d.
 \end{decision}
 
+\begin{decision}{Join estimates use distinct values}
+\dpart{Choice} A join's estimate is System R's
+$|L|\,|R| / \max(V(L,x), V(R,x))$ for each shared variable $x$, where $V$ is
+the number of distinct values $x$ takes. For a single pattern, $V$ comes from
+statistics: a predicate's distinct subjects or objects, or the pattern's own
+count when the other positions are bound.
+\dpart{Alternatives} Assume each side's join values are all distinct, which
+gives $\min(|L|, |R|)$ for one shared variable; or a fixed selectivity per join.
+\dpart{Why} SPARQL joins come in two shapes that the simple rule cannot both
+get right. On a store of 100 students taking 3 of 10 courses, joining students
+to their names (a star on the subject) is 100 rows, and joining enrolments to
+the course class is 300. Distinct values give both exactly; $\min(|L|,|R|)$
+says 10 for the second, 30 times too low.
+\dpart{Cost} Two more counts per predicate, and an assumption that remains: the
+join values of the smaller side are taken to appear on the larger side. A
+variable's $V$ in an intermediate result is approximated by the smaller of its
+$V$ in a pattern and the result's size.
+\end{decision}
+
 \begin{decision}{The inner side is re-opened with the outer row}
 \dpart{Choice} Every executor has \code{InitWith(row)}, which by default is
 \code{Init}. A triple scan overrides it: each variable that the outer row
@@ -193,8 +212,9 @@ Today the planner always joins in textual order with nested loop, and the
 nested loop rebinds its inner scan for every outer row (plan 4.1). The index
 nested-loop join (plan 4.2) and hash join (plan 4.3) run, chosen with
 \code{\textbackslash set join}, and the differential test checks every query
-file under all three against the memory store. Statistics run (plan 5.1). Cardinality, join ordering, the automatic choice,
-and \code{\textbackslash explain analyze} are plans 5.2 to 5.5.
+file under all three against the memory store. Statistics (plan 5.1) and cardinality estimation (plan 5.2) run. Join
+ordering, the automatic choice, and \code{\textbackslash explain analyze} are
+plans 5.3 to 5.5.
 \end{status}
 
 \begin{checkyourself}

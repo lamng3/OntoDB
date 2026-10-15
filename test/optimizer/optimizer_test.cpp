@@ -73,7 +73,7 @@ TEST(P5_1_Statistics, CountsPositionsAndPatterns) {
   EXPECT_EQ(stats.PatternCount({2, 11, 100}), 1u);
 }
 
-TEST(P5_2_Cardinality, DISABLED_MonotoneAndNonNegative) {
+TEST(P5_2_Cardinality, MonotoneAndNonNegative) {
   MemDictionary dict;
   MemStore store;
   store.Insert({1, 10, 100});
@@ -105,6 +105,46 @@ TEST(P5_2_Cardinality, DISABLED_MonotoneAndNonNegative) {
   const double join = estimator.EstimateJoin(unbound, one, 1);
   EXPECT_TRUE(std::isfinite(join));
   EXPECT_GE(join, 0);
+}
+
+// 100 students, each with a name and 3 of 10 courses. A star join on the
+// subject and a join from takes to the course class both come out exact with
+// distinct counts; min(l, r) gets the second wrong by 30x.
+TEST(P5_2_Cardinality, DistinctValuesGetStarAndClassJoinsRight) {
+  MemDictionary dict;
+  MemStore store;
+  const term_id_t type = 1;
+  const term_id_t name = 2;
+  const term_id_t takes = 3;
+  const term_id_t student = 4;
+  const term_id_t course = 5;
+  for (term_id_t c = 0; c < 10; c++) {
+    store.Insert({1000 + c, type, course});
+  }
+  for (term_id_t s = 0; s < 100; s++) {
+    store.Insert({s + 10, type, student});
+    store.Insert({s + 10, name, 5000 + s});
+    for (term_id_t k = 0; k < 3; k++) {
+      store.Insert({s + 10, takes, 1000 + (s + k) % 10});
+    }
+  }
+  Statistics stats;
+  stats.Collect(store, dict);
+  CardinalityEstimator estimator(&stats);
+  auto var = [](size_t slot) { return BoundTerm{true, slot, INVALID_TERM_ID, {}}; };
+  auto id = [](term_id_t value) { return BoundTerm{false, 0, value, "c"}; };
+  const BoundTriplePattern students{var(0), id(type), id(student), ""};
+  const BoundTriplePattern names{var(0), id(name), var(1), ""};
+  const BoundTriplePattern enrolled{var(0), id(takes), var(2), ""};
+  const BoundTriplePattern courses{var(2), id(type), id(course), ""};
+  auto join = [&](const BoundTriplePattern& l, const BoundTriplePattern& r, size_t slot) {
+    return estimator.EstimateJoinWith(
+        estimator.EstimateTriplePattern(l), estimator.EstimateTriplePattern(r),
+        estimator.EstimateDistinct(l, slot), estimator.EstimateDistinct(r, slot));
+  };
+  EXPECT_DOUBLE_EQ(join(students, names, 0), 100);           // truth: 100
+  EXPECT_DOUBLE_EQ(join(enrolled, courses, 2), 300);         // truth: 300
+  EXPECT_DOUBLE_EQ(estimator.EstimateJoin(300, 10, 1), 10);  // the fallback's guess
 }
 
 TEST(P5_3_JoinOrder, DISABLED_PreservesResults) {
