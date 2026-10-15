@@ -250,11 +250,48 @@ initialized'' from ``a catalog whose dictionary root happens to be 0''.
 \dpart{Cost} An extra page write when a database is created.
 \end{decision}
 
+\begin{decision}{Permutations are data, and every write is all-or-nothing}
+\dpart{Choice} An index is named by its key order (\code{"spo"},
+\code{"pos"}, \ldots), and the store keeps whichever of the six the catalog
+lists; a fresh catalog gets a default set. An insert or delete goes to every
+index in turn, and if one throws, the indexes already changed are put back
+before the error propagates. A scan uses the index with the longest bound
+prefix and filters the remaining bound positions.
+\dpart{Alternatives} Hard-code SPO, POS, and OSP as three fields of the store;
+or write to the indexes without undoing a partial write.
+\dpart{Why} The number of permutations is exactly the decision the next
+section measures, so it must be a knob, not a rewrite. A triple present in one
+index and missing from another would make answers depend on which index a
+query happened to use.
+\dpart{Cost} Every write costs one tree insert per index. The undo is
+in-memory only: it does not survive a crash, which is the log's job
+(\cref{ch:wal}).
+\end{decision}
+
+\begin{decision}{The shell's indexed backend lives in a temporary file}
+\dpart{Choice} \code{\textbackslash set backend indexed} builds a buffer pool,
+the catalog, a disk dictionary, and the indexes in a temporary database file,
+and moves every triple across by its spelling. \code{\textbackslash set backend
+mem} moves them back and deletes the file. While the indexed backend is on,
+statements run one at a time.
+\dpart{Alternatives} Make the page store the database behind
+\code{ontodb <dir>}.
+\dpart{Why} A persistent page store needs page-level recovery (plans 8.3 to
+8.7) to survive a crash; until then, persistent databases use the memory store
+and its logical log. A temporary file lets every query run on both backends
+today, which is what the differential test does, and the tree is
+single-threaded until latch crabbing (plan 7.1).
+\dpart{Cost} Indexed data disappears when the shell exits, ids differ between
+backends, and two sessions cannot run statements at the same time.
+\end{decision}
+
 \begin{status}
 The triple key runs (plan 0.2): encode, decode, compare, and both prefix
 bounds, with the carry and saturation cases tested. So do the catalog (plan
-3.3) and the disk dictionary (plan 3.2). The indexed store and the
-permutation measurement follow the B+ tree (plans 3.4 and 3.5).
+3.3), the disk dictionary (plan 3.2), and the indexed store (plan 3.4): every
+query file in the test suite returns the same rows on the memory store and on
+the B+ tree store, and \code{\textbackslash set backend indexed} switches the
+shell to it. The permutation measurement is plan 3.5.
 \end{status}
 
 \begin{checkyourself}
@@ -264,6 +301,7 @@ permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \item Which permutation serves \code{?s ?p <Material>}? Which serves \code{<Alice> ?p <Student>}?
 \item Why must the loader and the binder share one canonical spelling for terms? Give a literal that two careless implementations might spell differently.
 \item What would go wrong if the dictionary assigned $2^{64}-1$ to a real term?
+\item With only the SPO index, which of the eight bound/unbound patterns are answered by a range scan, and which by a full scan plus a filter?
 \item Two different spellings have the same 64-bit hash. What does the disk dictionary do when you look up the second one?
 \item Why does the catalog record each index's header page rather than its root? How often does the catalog page change?
 \end{checkyourself}

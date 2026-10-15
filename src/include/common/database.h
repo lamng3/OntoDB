@@ -19,10 +19,20 @@ namespace ontodb {
 
 class BufferPoolManager;
 
-// In-memory database used by the shell until the indexed backend exists.
-// `Database()` keeps nothing on disk. `Database::Open(dir)` makes it durable
-// (PLAN 9): every update statement and every \load is a logged transaction,
-// and reopening the directory restores the committed state.
+// The database the shell talks to. `Database()` keeps nothing on disk.
+// `Database::Open(dir)` makes it durable (PLAN 9): every update statement and
+// every \load is a logged transaction, and reopening the directory restores
+// the committed state.
+//
+// Two backends hold the triples. The memory backend (the default) is a
+// MemDictionary and a MemStore. SetBackend(kIndexed) builds the indexed
+// backend in a temporary database file: a buffer pool of the configured size
+// and k, the catalog, a DiskDictionary, and an IndexedStore. It moves every
+// triple across by spelling, so ids are those of the new dictionary.
+// SetBackend(kMem) moves them back and deletes the file. A persistent
+// database stays on the memory backend until page-level recovery (PLAN 8).
+// The B+ tree is single-threaded until PLAN 7.1, so statements on the
+// indexed backend run one at a time.
 class Database {
  public:
   Database();
@@ -37,8 +47,9 @@ class Database {
   auto Explain(const std::string& sparql) -> std::string;
   auto ExplainAnalyze(const std::string& sparql) -> std::string;
 
-  auto GetDictionary() -> Dictionary* { return dictionary_.get(); }
-  auto GetStore() -> TripleStore* { return store_.get(); }
+  auto GetDictionary() -> Dictionary*;
+  auto GetStore() -> TripleStore*;
+  void SetBackend(BackendKind kind);
   auto GetStats() -> IoStats& { return stats_; }
   auto GetTrace() -> TraceSink* { return &trace_; }
   auto GetBufferPool() -> BufferPoolManager* { return bpm_; }
@@ -61,6 +72,8 @@ class Database {
   void Crash();
 
  private:
+  struct IndexedBackend;
+
   std::unique_ptr<MemDictionary> dictionary_;
   std::unique_ptr<MemStore> store_;
   IoStats stats_;
@@ -69,6 +82,8 @@ class Database {
   std::mutex config_mu_;
   BufferPoolManager* bpm_{nullptr};
   std::unique_ptr<Durability> durability_;
+  std::unique_ptr<IndexedBackend> indexed_;
+  std::mutex indexed_mu_;  // one statement at a time on the indexed backend
 };
 
 }  // namespace ontodb

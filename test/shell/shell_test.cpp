@@ -63,10 +63,33 @@ TEST(Shell, ExplainStatsSetAndUnbuiltCommands) {
   EXPECT_NE(out.find("not built yet (PLAN 8.2)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 8.5)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 8.3)"), std::string::npos);
-  EXPECT_NE(out.find("not built yet (PLAN 3.4)"), std::string::npos);
+  EXPECT_EQ(out.find("not built yet (PLAN 3.4)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 5.5)"), std::string::npos);
   EXPECT_NE(out.find("TripleScan"), std::string::npos);
   EXPECT_NE(out.find("\\session"), std::string::npos);
+}
+
+// The same session on both backends: the rows agree, the indexed backend has
+// a pool and a tree to inspect, an update made there survives the move back.
+TEST(Shell, IndexedBackendAnswersLikeMemoryAndMovesBack) {
+  const std::string query =
+      "SELECT ?s ?o WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?o . }\n";
+  const auto out = RunScript("\\load " + test::DataFile("tiny.owl").string() + "\n" + query +
+                             "\\set backend indexed\n" + query +
+                             "\\bpm\n\\tree spo\n\\tree pos\n"
+                             "INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/b> . }\n"
+                             "\\set backend mem\n"
+                             "SELECT ?o WHERE { <http://ex/a> <http://ex/p> ?o . }\n\\quit\n");
+  const auto first = out.find("rows)");
+  ASSERT_NE(first, std::string::npos) << out;
+  const auto second = out.find("rows)", first + 1);
+  ASSERT_NE(second, std::string::npos) << out;
+  EXPECT_EQ(out.substr(out.rfind('(', first), first - out.rfind('(', first)),
+            out.substr(out.rfind('(', second), second - out.rfind('(', second)));
+  EXPECT_NE(out.find("buffer pool: 64 frames"), std::string::npos) << out;
+  EXPECT_NE(out.find("spo: root"), std::string::npos) << out;
+  EXPECT_NE(out.find("no index named pos"), std::string::npos) << out;
+  EXPECT_NE(out.find("<http://ex/b>"), std::string::npos) << out;
 }
 
 TEST(Shell, SessionWaitReasonDoesNotBlockTheCaller) {

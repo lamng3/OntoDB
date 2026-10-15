@@ -29,7 +29,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
 | Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
-| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. 3.1 to 3.3 are done. |
+| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. 3.1 to 3.4 are done. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
@@ -96,7 +96,7 @@ The index is a B+ tree. Keys live in the leaves. Internal pages hold separators 
 
 **3.3 Catalog.** Done. Remember the root of `"spo"`, `"pos"`, `"osp"`, and the dictionary. A missing name is `INVALID_PAGE_ID`. `Flush` makes it durable. Initialize the page so a zeroed file is not mistaken for root 0. An index entry names the tree's header page. The catalog writes page 0 at once so its id is taken, and refuses a non-empty page without its magic number.
 
-**3.4 Indexed store.** `Insert` and `Delete` update every index the catalog has a root for, or leave the store unchanged. `Scan` returns an iterator that drops its leaf guard. `\set backend indexed` selects this store. The differential test stops skipping.
+**3.4 Indexed store.** Done. `Insert` and `Delete` update every index the catalog has a root for, or leave the store unchanged. `Scan` returns an iterator that drops its leaf guard. `\set backend indexed` selects this store. The differential test stops skipping. Permutations are named by key order; the catalog decides which exist. `\set backend indexed` builds the backend in a temporary file and moves the triples by spelling; persistent databases stay on the memory backend until PLAN 8.
 
 **3.5 Permutations.** All eight bound patterns return the right triples. Measure before adding a tree. SPO serves a bound subject. A bound object wants OSP or POS. Building all six is not the default. Write the set you kept, and why, in `benchmarks/indexing/question.md`.
 
