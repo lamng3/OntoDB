@@ -40,6 +40,12 @@ void Statistics::Collect(TripleStore& store, const Dictionary&) {
     by_so_[{t.subject, t.object}]++;
     all_.insert(t);
   }
+  for (const auto& [sp, unused] : by_sp_) {
+    subjects_per_p_[sp.second]++;
+  }
+  for (const auto& [po, unused] : by_po_) {
+    objects_per_p_[po.first]++;
+  }
 }
 
 auto Statistics::TripleCount() const -> uint64_t {
@@ -61,6 +67,14 @@ auto Statistics::DistinctCount(std::string_view position) const -> uint64_t {
 
 auto Statistics::PredicateCount(term_id_t predicate) const -> uint64_t {
   return Find(by_p_, predicate);
+}
+
+auto Statistics::DistinctSubjects(term_id_t predicate) const -> uint64_t {
+  return Find(subjects_per_p_, predicate);
+}
+
+auto Statistics::DistinctObjects(term_id_t predicate) const -> uint64_t {
+  return Find(objects_per_p_, predicate);
 }
 
 // Exact for every combination of bound positions.

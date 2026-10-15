@@ -30,6 +30,9 @@ class Statistics {
   auto DistinctCount(std::string_view position) const -> uint64_t;
   auto PredicateCount(term_id_t predicate) const -> uint64_t;
   auto PatternCount(const TriplePattern& pattern) const -> uint64_t;
+  // Distinct subjects and objects among the triples with this predicate.
+  auto DistinctSubjects(term_id_t predicate) const -> uint64_t;
+  auto DistinctObjects(term_id_t predicate) const -> uint64_t;
 
  private:
   struct TripleHash {
@@ -49,6 +52,8 @@ class Statistics {
   PairCounts by_po_;
   PairCounts by_so_;
   std::unordered_set<Triple, TripleHash> all_;
+  Counts subjects_per_p_;
+  Counts objects_per_p_;
 };
 
 }  // namespace ontodb
