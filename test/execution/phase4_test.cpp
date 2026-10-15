@@ -199,7 +199,7 @@ TEST(P4_3_HashJoin, SameRowsAsNestedLoop) {
   EXPECT_EQ(RowsOf(hash.get()), expect);
 }
 
-TEST(P4_4_DistinctLimit, DISABLED_DropsDuplicatesAndWindows) {
+TEST(P4_4_DistinctLimit, DropsDuplicatesAndWindows) {
   MemStore store;
   store.Insert({1, 9, 5});
   store.Insert({2, 9, 5});

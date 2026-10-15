@@ -7,6 +7,7 @@
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/stub_plans.h"
+#include "execution/row_merge.h"
 
 namespace ontodb {
 
@@ -26,10 +27,6 @@ class HashJoinExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema& override;
 
  private:
-  struct KeyHash {
-    auto operator()(const std::vector<term_id_t>& key) const noexcept -> size_t;
-  };
-
   auto KeyOf(const Row& row,
              std::vector<term_id_t>* key) const -> bool;  // false if a slot is unbound
   void StartProbe();
@@ -39,7 +36,7 @@ class HashJoinExecutor : public AbstractExecutor {
   const HashJoinPlan* plan_;
   std::vector<size_t> key_slots_;
   size_t width_;
-  std::unordered_map<std::vector<term_id_t>, std::vector<Row>, KeyHash> table_;
+  std::unordered_map<std::vector<term_id_t>, std::vector<Row>, RowHash> table_;
   std::vector<Row> unkeyed_;            // inner rows with an unbound key slot
   std::vector<const Row*> candidates_;  // inner rows to try against left_row_
   size_t next_candidate_{0};

@@ -95,3 +95,19 @@ PREFIX ub: <http://example.edu/univ#>
 DELETE DATA { ub:Gina ub:name "Gina" . }
 ----
 deleted 1 triple
+
+query distinct-courses-taken
+PREFIX ub: <http://example.edu/univ#>
+SELECT DISTINCT ?course WHERE { ?s a ub:Student ; ub:takes ?course . }
+----
+<http://example.edu/univ#CS101>
+<http://example.edu/univ#CS102>
+<http://example.edu/univ#MA201>
+
+query limit-larger-than-the-answer
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ?s a ub:Student ; ub:name ?name . } LIMIT 10
+----
+"Alice"
+"Bob"
+"Cara"

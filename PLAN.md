@@ -30,7 +30,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. Done. |
-| Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. 4.1 to 4.3 are done. |
+| Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. 4.1 to 4.4 are done. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. |
@@ -112,7 +112,7 @@ The memory nested-loop join already returns the right rows. These slices change 
 
 **4.3 Hash join.** Done. Hash `term_id_t`. An unbound slot is not a key. `\set join hash`. Same rows as nested loop.
 
-**4.4 Distinct, limit, offset.** Distinct is on the projected row. Offset skips, then limit counts, and the child order is kept.
+**4.4 Distinct, limit, offset.** Done. Distinct is on the projected row. Offset skips, then limit counts, and the child order is kept.
 
 **4.5 Sort.** `ORDER BY` in memory, then external merge sort through the buffer pool when the run does not fit. Compare the way `term_compare.cpp` does, not by raw id.
 

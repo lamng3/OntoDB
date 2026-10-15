@@ -19,15 +19,6 @@ HashJoinExecutor::HashJoinExecutor(std::unique_ptr<AbstractExecutor> left,
   width_ = plan_->OutputSchema().columns.size();
 }
 
-auto HashJoinExecutor::KeyHash::operator()(const std::vector<term_id_t>& key) const noexcept
-    -> size_t {
-  size_t h = 0;
-  for (const term_id_t id : key) {
-    h ^= std::hash<term_id_t>{}(id) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-  }
-  return h;
-}
-
 auto HashJoinExecutor::KeyOf(const Row& row, std::vector<term_id_t>* key) const -> bool {
   key->clear();
   for (const size_t slot : key_slots_) {

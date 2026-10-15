@@ -17,6 +17,14 @@ auto MergeRows(const Row& left, const Row& right, size_t width, Row* out) -> boo
   return true;
 }
 
+auto RowHash::operator()(const std::vector<term_id_t>& ids) const noexcept -> size_t {
+  size_t h = ids.size();
+  for (const term_id_t id : ids) {
+    h ^= std::hash<term_id_t>{}(id) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  }
+  return h;
+}
+
 auto ProducedSlots(const AbstractPlanNode* plan) -> std::set<size_t> {
   std::set<size_t> slots;
   if (plan->GetType() == PlanType::kTripleScan) {

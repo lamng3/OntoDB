@@ -12,6 +12,11 @@ namespace ontodb {
 // false. INVALID_TERM_ID marks a slot a side has not bound.
 auto MergeRows(const Row& left, const Row& right, size_t width, Row* out) -> bool;
 
+// Hash of a row (or any vector of ids), for hash joins and DISTINCT.
+struct RowHash {
+  auto operator()(const std::vector<term_id_t>& ids) const noexcept -> size_t;
+};
+
 // The variable slots a plan's rows bind: a scan's variables, the union of a
 // join's children, a filter's or sort's child. Joins use the intersection of
 // their children's slots as the join key.

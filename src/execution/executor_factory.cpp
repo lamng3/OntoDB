@@ -1,6 +1,7 @@
 #include "execution/executor_factory.h"
 
 #include "common/exception.h"
+#include "execution/executors/distinct_limit_executor.h"
 #include "execution/executors/filter_executor.h"
 #include "execution/executors/hash_join_executor.h"
 #include "execution/executors/index_nested_loop_join_executor.h"
@@ -43,9 +44,11 @@ auto ExecutorFactory::Create(const AbstractPlanNode* plan,
                                                 Create(plan->GetChildAt(1), ctx),
                                                 static_cast<const HashJoinPlan*>(plan));
     case PlanType::kDistinct:
-      throw NotImplementedException("PLAN 4.4: DistinctExecutor");
+      return std::make_unique<DistinctExecutor>(Create(plan->GetChildAt(0), ctx),
+                                                static_cast<const DistinctPlan*>(plan));
     case PlanType::kLimit:
-      throw NotImplementedException("PLAN 4.4: LimitExecutor");
+      return std::make_unique<LimitExecutor>(Create(plan->GetChildAt(0), ctx),
+                                             static_cast<const LimitPlan*>(plan));
     case PlanType::kSort:
       throw NotImplementedException("PLAN 4.5: SortExecutor");
     case PlanType::kInsert:
