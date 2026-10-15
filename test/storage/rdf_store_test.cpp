@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <map>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -28,7 +30,7 @@ auto Collect(TripleStore* store, const TriplePattern& pattern) -> std::vector<Tr
   return triples;
 }
 
-TEST(P3_1_TermHeap, DISABLED_SlottedPageRoundTrip) {
+TEST(P3_1_TermHeap, SlottedPageRoundTrip) {
   Page raw;
   TermHeapPage page(&raw);
   page.Init();
@@ -48,7 +50,7 @@ TEST(P3_1_TermHeap, DISABLED_SlottedPageRoundTrip) {
   EXPECT_FALSE(page.Insert(std::string(PAGE_SIZE, 'x')).has_value());
 }
 
-TEST(P3_1_TermHeap, DISABLED_HeapSurvivesChainAndOversized) {
+TEST(P3_1_TermHeap, HeapSurvivesChainAndOversized) {
   test::DiskEnv env;
   page_id_t first = INVALID_PAGE_ID;
   ASSERT_NE(env.bpm.NewPage(&first), nullptr);
@@ -69,6 +71,40 @@ TEST(P3_1_TermHeap, DISABLED_HeapSurvivesChainAndOversized) {
   }
   EXPECT_EQ(live, 2);
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+// Delete compacts the page, so records move; their slot numbers must not.
+TEST(P3_1_TermHeap, CompactionKeepsSlotsAndContentsAgainstAMap) {
+  Page raw;
+  TermHeapPage page(&raw);
+  page.Init();
+  std::map<slot_offset_t, std::string> model;
+  std::mt19937 rng(7);
+  for (int step = 0; step < 4000; step++) {
+    if (model.empty() || rng() % 3 != 0) {
+      const std::string bytes(rng() % 90, static_cast<char>('a' + rng() % 26));
+      const auto before = page.FreeSpace();
+      if (const auto slot = page.Insert(bytes)) {
+        ASSERT_FALSE(model.count(*slot)) << "slot " << *slot << " was live";
+        model[*slot] = bytes;
+      } else {
+        ASSERT_LT(before, bytes.size() + 4);  // only refuses when it cannot fit
+      }
+    } else {
+      auto it = model.begin();
+      std::advance(it, static_cast<long>(rng() % model.size()));
+      page.Delete(it->first);
+      model.erase(it);
+    }
+    for (const auto& [slot, bytes] : model) {
+      ASSERT_EQ(page.Get(slot), bytes) << "step " << step;
+    }
+  }
+  for (auto it = model.begin(); it != model.end(); it = model.erase(it)) {
+    page.Delete(it->first);
+  }
+  EXPECT_EQ(page.GetSlotCount(), 0);
+  EXPECT_EQ(page.FreeSpace(), PAGE_SIZE - 16);
 }
 
 TEST(P3_2_DiskDictionary, DISABLED_BothDirectionsAndRestart) {
