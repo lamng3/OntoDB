@@ -320,7 +320,7 @@ TEST(P4_5_Sort, ExternalMergeMatchesStableSortAndFreesItsPages) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P4_6_InsertDelete, DISABLED_UpdatesTheStore) {
+TEST(P4_6_InsertDelete, UpdatesTheStore) {
   MemStore store;
   Config config;
   IoStats stats;
@@ -354,6 +354,32 @@ TEST(P4_6_InsertDelete, DISABLED_UpdatesTheStore) {
   }
   ASSERT_EQ(got.size(), 1u);
   EXPECT_EQ(got[0], (Triple{4, 5, 6}));
+}
+
+// The third write fails: the two triples already inserted by this statement
+// are taken back before the error reaches the caller.
+TEST(P4_6_InsertDelete, AFailedWriteUndoesTheStatement) {
+  class FailOnThird : public MemStore {
+   public:
+    auto Insert(const Triple& triple) -> bool override {
+      if (++inserts == 3) {
+        throw StorageException("disk full");
+      }
+      return MemStore::Insert(triple);
+    }
+    int inserts{0};
+  } store;
+  Config config;
+  IoStats stats;
+  NullTraceSink trace;
+  ExecutorContext ctx(&store, nullptr, &config, nullptr, nullptr, nullptr, nullptr, &stats, &trace,
+                      nullptr);
+  auto insert = std::make_unique<InsertPlan>(std::vector<Triple>{{1, 2, 3}, {4, 5, 6}, {7, 8, 9}});
+  auto inserter = ExecutorFactory::Create(insert.get(), &ctx);
+  inserter->Init();
+  Row row;
+  EXPECT_THROW(inserter->Next(&row), StorageException);
+  EXPECT_EQ(store.Size(), 0u);
 }
 
 }  // namespace

@@ -98,6 +98,21 @@ or nothing: a half-loaded OWL file is a corrupt ontology.
 transaction, logged and held in memory until its commit.
 \end{decision}
 
+\begin{decision}{A failed statement takes itself back}
+\dpart{Choice} \code{INSERT DATA} and \code{DELETE DATA} run as one operator
+that remembers the triples it has changed. If a later write throws, it undoes
+those changes, newest first, before the error reaches the caller. The store,
+for its part, writes each triple to every index or none.
+\dpart{Alternatives} Leave a half-applied statement in place and rely on the
+caller; or rely on the log to undo it.
+\dpart{Why} A statement should be atomic on both backends, including the
+temporary indexed one, which has no log. Undo in memory is enough for an
+exception; the log is still needed for a crash.
+\dpart{Cost} The undo list lives only in memory: if the process dies in the
+middle of a statement, only the log can take it back (\cref{ch:aries}), and the
+memory backend without a directory keeps nothing anyway.
+\end{decision}
+
 \begin{decision}{Read committed by default (planned)}
 \dpart{Choice} \code{\textbackslash set isolation} defaults to \code{rc}.
 \dpart{Alternatives} Serializable, or repeatable read (MySQL's InnoDB default).
@@ -119,7 +134,9 @@ happens or does not. A stress test can pass by luck; a schedule cannot.
 \end{decision}
 
 \begin{status}
-Statement-level atomicity and durability run today. Explicit multi-statement
+Statement-level atomicity and durability run today: on every backend a failed
+statement undoes itself (plan 4.6), and in a persistent database every
+statement is a logged transaction. Explicit multi-statement
 transactions and isolation levels are plans 7.2 to 7.6.
 \end{status}
 
@@ -127,6 +144,7 @@ transactions and isolation levels are plans 7.2 to 7.6.
 \item Draw the conflict graph of $r_1(A)\, w_2(A)\, r_2(B)\, w_1(B)$. Is the schedule conflict-serializable?
 \item Give a schedule with a non-repeatable read, and say which isolation level first forbids it.
 \item Why is consistency mostly the application's promise and not the engine's?
+\item \code{INSERT DATA} names three triples, and the store throws on the third. What is in the store afterwards, on the memory backend without a directory?
 \item Two sessions both run ``read the count of \code{Student}s, insert one more''. Which anomaly can occur, and at which levels?
 \end{checkyourself}
 

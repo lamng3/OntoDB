@@ -28,10 +28,10 @@ SELECT ?name WHERE {
 
 ## One committed insert
 
-Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::Insert`. It does not go through `InsertExecutor` (plan 4.6) and it does not touch the disk. This is the path that insert takes once the later phases are filled in. Each name is the file that owns that step.
+`INSERT DATA` runs as `ModifyExecutor` (plan 4.6) on whichever store is active. On the indexed backend it follows the path below; the log steps (8.x) are still to come. Each name is the file that owns that step.
 
 1. The shell and `Database::Execute` parse and bind as above. `src/planner/planner.cpp` emits an `InsertPlan` (`src/include/execution/plans/stub_plans.h`).
-2. Plan 4.6's insert executor writes every index the catalog knows, and the dictionary, or writes nothing if the triple is already present.
+2. `src/execution/executors/modify_executor.cpp` (plan 4.6) writes each triple to the store, which writes every index the catalog knows or none; if a later triple fails, the statement's earlier ones are taken back. The binder has already written the dictionary.
 3. `src/dictionary/disk_dictionary.cpp` (plan 3.2, done; a term heap plus two B+ trees keyed by id and by hash) turns the three spellings into ids. Bytes live in `src/storage/term/term_heap.cpp` on `src/include/storage/page/term_heap_page.h` (plan 3.1, done; the page layout is in that header).
 4. `src/storage/index/triple_key.cpp` (plan 0.2, done) packs the three ids into 24 big-endian bytes. `memcmp` is the order.
 5. `src/store/indexed_store.cpp` (plan 3.4, done) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3, done; page 0, naming each tree's header page) has a root for. The tree is `src/storage/index/b_plus_tree.cpp` (plans 2.2 to 2.7, done; single-threaded until 7.1). Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1, done; the byte layout is in those headers). The iterator is `src/storage/index/index_iterator.cpp`; it holds one leaf guard and stops at `PrefixUpper`.
@@ -53,7 +53,6 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - `Schema` lives in `src/include/common/types.h`. `lsn_t` is `int64_t` so a long benchmark does not wrap the page header.
 - `MemStore` and `MemDictionary` take a mutex so two shell sessions can share them. That mutex is not isolation.
 - `DiskManager`, `DiskScheduler`, and `BufferPoolManager` take optional `IoStats*` and `TraceSink*`.
-- `INSERT DATA` / `DELETE DATA` run in `ExecutionEngine` until plan 4.6. The executors stay stubs.
 - B+ tree page classes wrap a `Page*`. The byte layout (plan 2.1) is documented in their headers.
 - `Transaction` accessors and `LogRecord` factories hold data. The manager and the serialization are stubs.
 - `TransactionManager` takes an optional `LogManager*`. Null means write-set undo (plan 7.2). Non-null means log undo (plan 8.4). The pointer is in the signature now so plan 8.4 does not have to change it.
