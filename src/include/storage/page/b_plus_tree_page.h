@@ -6,10 +6,19 @@
 namespace ontodb {
 
 // Header shared by internal and leaf index pages. The bytes live in `page`
-// after the pageLSN. Document your byte layout in this header for PLAN 2.1.
-// GetLSN and SetLSN are the page's pageLSN, not a second copy.
+// after the pageLSN. GetLSN and SetLSN are the page's pageLSN, not a second
+// copy. Integers are stored in the machine's byte order, like the pageLSN.
+//
+//   offset  size  field
+//        0     8  pageLSN (Page)
+//        8     4  page type (0 invalid, 1 leaf, 2 internal)
+//       12     4  size: keys in a leaf, keys (children - 1) in an internal page
+//       16     4  max size
+//       20        type-specific layout (see the leaf and internal headers)
 class BPlusTreePage {
  public:
+  static constexpr size_t kHeaderSize = 20;  // pageLSN plus the three fields above
+
   enum class IndexPageType { kInvalid = 0, kLeaf, kInternal };
 
   explicit BPlusTreePage(Page* page);

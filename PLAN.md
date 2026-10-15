@@ -27,7 +27,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | --- | --- | --- |
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
 | Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
-| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. This is the next feature. |
+| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. 2.1 is done. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
@@ -73,7 +73,7 @@ Pages are 4096 bytes. The first 8 bytes are the pageLSN. The scaffold never incr
 
 The index is a B+ tree. Keys live in the leaves. Internal pages hold separators and child pointers. Leaves point at the right sibling. The key is a `TripleKey`.
 
-**2.1 Layout.** Payload starts after the pageLSN. An internal page stores n keys and n+1 children. `KeyAt(0)` is unused. `ValueAt(0)` is the leftmost child. A leaf keeps keys in order and a sibling page id. `MaxSize()` is at least 2. The header stores the root, or `INVALID_PAGE_ID` when the tree is empty. Page 0 is a legal page id, so do not use 0 as the empty sentinel.
+**2.1 Layout.** Done. Payload starts after the pageLSN. An internal page stores n keys and n+1 children. `KeyAt(0)` is unused. `ValueAt(0)` is the leftmost child. A leaf keeps keys in order and a sibling page id. `MaxSize()` is at least 2. The header stores the root, or `INVALID_PAGE_ID` when the tree is empty. Page 0 is a legal page id, so do not use 0 as the empty sentinel. The byte layout is written in the page headers: 169 keys per leaf, 144 per internal page.
 
 **2.2 Invariants.** `CheckInvariants` describes the first broken rule, or returns nullopt. Check size, order, sibling links, and separators: keys in child i-1 are strictly less than `KeyAt(i)`, and keys in child i are greater than or equal to it. `ToDot` is Graphviz. `\tree spo` and `\tree spo dot` call these.
 

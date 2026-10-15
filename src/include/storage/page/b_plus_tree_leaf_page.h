@@ -8,6 +8,10 @@ namespace ontodb {
 // Leaf page. The key is the triple; there is no separate payload. Keys are
 // strictly increasing. GetNextPageId is the right sibling, or INVALID_PAGE_ID
 // on the rightmost leaf. MaxSize() is at least 2.
+//
+//   offset  size  field
+//       20     4  next page id
+//       24  24*n  keys; MaxSize() = (4096 - 24) / 24 = 169
 class BPlusTreeLeafPage : public BPlusTreePage {
  public:
   explicit BPlusTreeLeafPage(Page* page);
