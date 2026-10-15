@@ -14,6 +14,7 @@
 #include "common/database.h"
 #include "common/exception.h"
 #include "common/trace.h"
+#include "recovery/log_manager.h"
 #include "shell/shell.h"
 #include "storage/disk/disk_scheduler.h"
 #include "storage/env.h"
@@ -268,7 +269,7 @@ TEST(P1_3_LRUKReplacer, ConcurrentAccess) {
   EXPECT_EQ(replacer.Size(), 0u);
 }
 
-TEST(P1_4_BufferPoolManager, DISABLED_EvictsAndPins) {
+TEST(P1_4_BufferPoolManager, EvictsAndPins) {
   test::DiskEnv env(3, 2);
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
   std::vector<page_id_t> ids;
@@ -299,7 +300,7 @@ TEST(P1_4_BufferPoolManager, DISABLED_EvictsAndPins) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P1_4_BufferPoolManager, DISABLED_ConcurrentFetch) {
+TEST(P1_4_BufferPoolManager, ConcurrentFetch) {
   test::DiskEnv env(8, 2);
   page_id_t id = INVALID_PAGE_ID;
   Page* page = env.bpm.NewPage(&id);
@@ -323,6 +324,43 @@ TEST(P1_4_BufferPoolManager, DISABLED_ConcurrentFetch) {
   }
   EXPECT_EQ(ok.load(), 200);
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+TEST(P1_4_BufferPoolManager, FullPoolDestructorAndWalOrder) {
+  test::TempDir dir;
+  const auto path = (dir.path() / "db").string();
+  LogManager log((dir.path() / "wal").string());
+  page_id_t kept = INVALID_PAGE_ID;
+  page_id_t lost = INVALID_PAGE_ID;
+  {
+    DiskManager disk(path);
+    BufferPoolManager bpm(2, &disk, 2, &log);
+    Page* first = bpm.NewPage(&kept);
+    Page* second = bpm.NewPage(&lost);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    page_id_t none = INVALID_PAGE_ID;
+    EXPECT_EQ(bpm.NewPage(&none), nullptr);  // every frame is pinned
+
+    // Write-back forces the log up to the page's pageLSN first.
+    auto record = LogRecord::Begin(1);
+    const lsn_t lsn = log.Append(&record);
+    first->SetLSN(lsn);
+    first->GetData()[100] = 5;
+    second->GetData()[100] = 6;
+    EXPECT_TRUE(bpm.UnpinPage(kept, true));
+    EXPECT_TRUE(bpm.UnpinPage(lost, true));
+    EXPECT_LT(log.GetPersistentLsn(), lsn);
+    EXPECT_TRUE(bpm.FlushPage(kept));
+    EXPECT_GE(log.GetPersistentLsn(), lsn);
+    disk.ShutDown();
+  }  // the pool's destructor does not flush `lost`
+  DiskManager disk(path);
+  std::array<char, PAGE_SIZE> back{};
+  disk.ReadPage(kept, back.data());
+  EXPECT_EQ(back[100], 5);
+  disk.ReadPage(lost, back.data());
+  EXPECT_EQ(back[100], 0);
 }
 
 TEST(P1_5_PageGuard, DISABLED_MoveDropAndShare) {

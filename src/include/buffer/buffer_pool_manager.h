@@ -1,10 +1,18 @@
 #pragma once
 
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
+#include "buffer/lru_k_replacer.h"
 #include "common/io_stats.h"
 #include "common/trace.h"
 #include "storage/disk/disk_manager.h"
+#include "storage/disk/disk_scheduler.h"
 #include "storage/page/page.h"
 #include "storage/page/page_guard.h"
 
@@ -33,6 +41,12 @@ class LogManager;
 //
 // stats: BufferHit on a fetch served from memory, BufferMiss when a frame is
 // read from disk. Trace component "bpm".
+//
+// One latch (mu_) covers the page table, the free list, pins, and dirty bits,
+// and is held across the disk I/O of a miss or a write-back. All I/O goes
+// through a DiskScheduler. NewPage and FetchPage return nullptr when every
+// frame is pinned. The destructor does not flush: durability is the log's job,
+// and a clean shutdown calls FlushAllPages first.
 class BufferPoolManager {
  public:
   BufferPoolManager(size_t pool_size, DiskManager* disk_manager, size_t replacer_k,
@@ -57,12 +71,25 @@ class BufferPoolManager {
   auto NewPageGuarded(page_id_t* page_id) -> WritePageGuard;
 
  private:
+  auto TakeFrame(frame_id_t* frame_id) -> bool;  // requires mu_
+  void WriteBack(Page* page);                    // requires mu_
+  void RunIo(bool is_write, Page* page);         // requires mu_
+  void Trace(const std::string& message) const;
+
   size_t pool_size_;
   DiskManager* disk_manager_;
   size_t replacer_k_;
   LogManager* log_manager_;
   IoStats* stats_;
   TraceSink* trace_;
+
+  mutable std::mutex mu_;
+  std::vector<Page> frames_;
+  std::unordered_map<page_id_t, frame_id_t> page_table_;
+  std::deque<frame_id_t> free_list_;
+  std::unordered_set<page_id_t> deleted_;
+  LRUKReplacer replacer_;
+  std::unique_ptr<DiskScheduler> scheduler_;
 };
 
 }  // namespace ontodb

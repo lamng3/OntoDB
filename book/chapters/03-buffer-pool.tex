@@ -170,6 +170,47 @@ would need a priority structure for pools of millions. A second policy is
 planned as a measured comparison, not as a replacement.
 \end{decision}
 
+\begin{decision}{One latch for the whole pool, held across I/O}
+\dpart{Choice} A single mutex covers the page table, the free list, every pin
+count and dirty bit, and the replacer calls. It stays held while a miss reads
+its page or a victim is written back.
+\dpart{Alternatives} Partition the page table and give each frame an
+``I/O in progress'' state, so other threads keep working during a read; this is
+roughly what PostgreSQL does with buffer-mapping partitions and per-buffer I/O
+locks.
+\dpart{Why} The pool's state is then always consistent: no frame is
+half-loaded while another thread looks it up, and the tests pass under
+ThreadSanitizer without subtle protocols. With a single I/O thread
+(design decision on the scheduler), finer locking would mostly move the
+waiting elsewhere.
+\dpart{Cost} A miss stalls every thread for one disk read. Finer-grained
+latching is the first thing to change when I/O becomes parallel.
+\end{decision}
+
+\begin{decision}{The pool's destructor does not flush}
+\dpart{Choice} Destroying the pool discards dirty frames. Durable shutdown
+calls \code{FlushAllPages} explicitly (plan 3.6).
+\dpart{Alternatives} Flush every dirty page on destruction, which is
+convenient.
+\dpart{Why} Durability is the log's job. Tests need a path that behaves like a
+dead process, writing nothing, and a destructor also runs while an exception
+from a crash point unwinds; a flushing destructor would write exactly the page
+the test is trying to keep off disk.
+\dpart{Cost} A caller who forgets \code{FlushAllPages} loses work on a clean
+exit. The clean-restart test of plan 3.6 is there to catch it.
+\end{decision}
+
+\begin{decision}{A full pool returns null}
+\dpart{Choice} When every frame is pinned, \code{NewPage} and
+\code{FetchPage} return \code{nullptr} at once.
+\dpart{Alternatives} Block until some frame is unpinned, or throw.
+\dpart{Why} The caller usually holds pins of its own; blocking could wait for
+a pin that only the waiter can release. Returning lets the caller give up the
+operation and release what it holds.
+\dpart{Cost} Every caller must check for null; guards and the tree turn that
+into an error close to the cause.
+\end{decision}
+
 \begin{decision}{Pages only through guards (planned)}
 \dpart{Choice} Code above the pool reaches a page only through a
 \code{ReadPageGuard} or \code{WritePageGuard}: one pin plus a latch, released
@@ -186,8 +227,10 @@ every caller must follow, and a little ceremony for one-line accesses.
 \end{decision}
 
 \begin{status}
-The disk manager, the I/O scheduler, and the LRU-K replacer run (plans 1.1 to
-1.3). The pool and the guards are being built (plans 1.4 and 1.5).
+The disk manager, the I/O scheduler, the LRU-K replacer, and the pool run
+(plans 1.1 to 1.4). The pool already flushes the log up to a page's pageLSN
+before writing the page. Guards and the shell's inspection commands are plans
+1.5 and 1.6.
 The experiment that checks them is simple: run a scan with a pool of 4 frames
 and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
 \end{status}
@@ -199,6 +242,8 @@ and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbacks
 \item Explain sequential flooding, and why $K = 2$ resists it while $K = 1$ does not.
 \item Which cell of the steal/force table needs \emph{undo} information in the log, and why?
 \item A thread schedules a write of page 9 and then, without waiting, a read of page 9 into another buffer. What does the read return in OntoDB, and what could go wrong with a pool of I/O threads?
+\item Two threads miss on two different pages at the same moment. In OntoDB's pool, how long does the second thread wait, and why?
+\item A test arms the crash point between the log flush and the page write, and the exception unwinds through the pool's destructor. Why would a destructor that flushes dirty pages ruin the test?
 \item A query returns the right rows, but afterwards one frame is still pinned. What will go wrong later, and how do OntoDB's guards prevent it?
 \end{checkyourself}
 

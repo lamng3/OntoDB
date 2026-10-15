@@ -159,7 +159,9 @@ ridden out.
 
 \begin{status}
 Log records (plan 8.1) and the log manager with group commit (plan 8.2) run
-today. Enforcing rule 1 in the buffer pool (plan 8.3) waits for the buffer pool.
+today. The buffer pool already applies rule 1 when it writes a page back: it
+flushes the log up to the page's pageLSN first, with a crash point between the
+two. Plan 8.3 completes the rule by making every update set the pageLSN.
 \end{status}
 
 \begin{checkyourself}

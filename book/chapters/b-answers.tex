@@ -30,6 +30,8 @@ line is the point.
 \item A scan touches each page once; under LRU every scanned page becomes the most recent, so the scan pushes out the hot pages. With $K = 2$, a page touched once has infinite distance and leaves first. $K = 1$ is LRU.
 \item Both steal cells. Under steal, an uncommitted change can reach the disk, and the log must be able to take it back.
 \item The bytes just written: one thread runs requests in the order scheduled. With several I/O threads the read could run first and return the old page, unless requests for the same page were ordered some other way.
+\item Until the first thread's read finishes: the pool's one latch is held across the I/O, and the single I/O thread would serialize the reads anyway.
+\item It would write the very page the crash point was meant to keep off the disk, so the test could not observe the state a real crash leaves.
 \item That frame can never be evicted, so the pool is permanently one frame smaller; enough leaks and every frame is pinned and the next miss fails. Guards unpin exactly once at the end of their scope, and the tests check that nothing stays pinned.
 \end{enumerate}
 
