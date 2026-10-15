@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <stdexcept>
 #include <tuple>
 #include <vector>
 
@@ -17,7 +18,7 @@ auto Ids(const TripleKey& key) -> std::tuple<term_id_t, term_id_t, term_id_t> {
   return {subject, predicate, object};
 }
 
-TEST(P0_2_TripleKey, DISABLED_RoundTripAndBigEndian) {
+TEST(P0_2_TripleKey, RoundTripAndBigEndian) {
   const auto key = TripleKey::Encode(0x0102, 0, 0);
   EXPECT_EQ(Ids(key), std::make_tuple(term_id_t{0x0102}, term_id_t{0}, term_id_t{0}));
   // Big-endian: 0x0102 lives in the last two bytes of the subject, so memcmp
@@ -32,7 +33,7 @@ TEST(P0_2_TripleKey, DISABLED_RoundTripAndBigEndian) {
   EXPECT_GT(TripleKey::Encode(9, 0, 0).Compare(TripleKey::Encode(8, 9, 9)), 0);
 }
 
-TEST(P0_2_TripleKey, DISABLED_PrefixBounds) {
+TEST(P0_2_TripleKey, PrefixBounds) {
   const auto key = TripleKey::Encode(5, 7, 9);
   const auto lower1 = TripleKey::PrefixLower(key, 1);
   const auto upper1 = TripleKey::PrefixUpper(key, 1);
@@ -57,6 +58,36 @@ TEST(P0_2_TripleKey, DISABLED_PrefixBounds) {
   const auto past = TripleKey::Encode(6, 0, 0);
   EXPECT_LE(upper1.Compare(past), 0);
   EXPECT_LT(lower1.Compare(past), 0);
+}
+
+TEST(P0_2_TripleKey, PrefixUpperCarriesAndSaturates) {
+  const term_id_t max = INVALID_TERM_ID;
+  // The last prefix component is at its maximum, so the increment carries left.
+  EXPECT_EQ(Ids(TripleKey::PrefixUpper(TripleKey::Encode(5, max, 9), 2)),
+            std::make_tuple(term_id_t{6}, term_id_t{0}, term_id_t{0}));
+  EXPECT_EQ(Ids(TripleKey::PrefixUpper(TripleKey::Encode(5, 7, max), 3)),
+            std::make_tuple(term_id_t{5}, term_id_t{8}, term_id_t{0}));
+  // No key is above the whole space, so the bound saturates to all 0xFF.
+  const auto all_ones = std::make_tuple(max, max, max);
+  EXPECT_EQ(Ids(TripleKey::PrefixUpper(TripleKey::Encode(5, 7, 9), 0)), all_ones);
+  EXPECT_EQ(Ids(TripleKey::PrefixUpper(TripleKey::Encode(max, 7, 9), 1)), all_ones);
+  EXPECT_GT(TripleKey::PrefixUpper(TripleKey::Encode(1, 2, 3), 0)
+                .Compare(TripleKey::Encode(max - 1, max - 1, max - 1)),
+            0);
+}
+
+TEST(P0_2_TripleKey, CompareMatchesMemcmpSign) {
+  const auto low = TripleKey::Encode(0x00FF, 0, 0);
+  const auto high = TripleKey::Encode(0x0100, 0, 0);
+  EXPECT_EQ(low.Compare(high), -1);
+  EXPECT_EQ(high.Compare(low), 1);
+  EXPECT_EQ(low.Compare(low), 0);
+}
+
+TEST(P0_2_TripleKey, RejectsBadPrefixLength) {
+  const auto key = TripleKey::Encode(1, 2, 3);
+  EXPECT_THROW(TripleKey::PrefixLower(key, -1), std::invalid_argument);
+  EXPECT_THROW(TripleKey::PrefixUpper(key, 4), std::invalid_argument);
 }
 
 }  // namespace

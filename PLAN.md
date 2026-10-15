@@ -16,6 +16,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2).
+- The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
 Without a directory, the shell starts an empty memory database that keeps nothing.
 
@@ -23,8 +24,8 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 
 | Feature | Check | What it adds |
 | --- | --- | --- |
-| Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. This is the next slice. |
-| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. |
+| Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
+| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. This is the next feature. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
@@ -49,7 +50,7 @@ These have no stubs. Add one by writing the design next to the code that impleme
 
 ## Triple key
 
-**0.2.** `src/include/storage/index/triple_key.h`, `src/storage/index/triple_key.cpp`. `Encode` writes subject, predicate, and object as big-endian `uint64`. `Compare` agrees with `memcmp` on the 24 bytes. `PrefixLower(key, n)` is the smallest key with that prefix. `PrefixUpper(key, n)` is the smallest key strictly above every key with the prefix. `n` is 0, 1, 2, or 3. A scan of `[lower, upper)` is the prefix. For `n = 0`, lower is the zero key. Check: `scripts/check 0.2`.
+**0.2.** `src/include/storage/index/triple_key.h`, `src/storage/index/triple_key.cpp`. `Encode` writes subject, predicate, and object as big-endian `uint64`. `Compare` agrees with `memcmp` on the 24 bytes. `PrefixLower(key, n)` is the smallest key with that prefix. `PrefixUpper(key, n)` is the smallest key strictly above every key with the prefix. `n` is 0, 1, 2, or 3. A scan of `[lower, upper)` is the prefix. For `n = 0`, lower is the zero key. When nothing is above the prefix (`n = 0`, or every prefix id is the maximum), upper saturates to the all-`0xFF` key, three `INVALID_TERM_ID`s, which is never stored. Done. Check: `scripts/check 0.2`.
 
 ## Buffer pool
 
