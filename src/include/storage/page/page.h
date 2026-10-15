@@ -1,5 +1,6 @@
 #pragma once
 
+#include <new>
 #include <shared_mutex>
 
 #include "common/config.h"
@@ -38,6 +39,11 @@ class Page {
   auto GetLSN() const -> lsn_t;
   void SetLSN(lsn_t lsn);
 
+  // Called only on an unpinned frame that is about to hold another page (or
+  // none). Guards pin before they latch, so no thread holds or waits on the
+  // latch, and the frame gets a fresh one: a latch then belongs to one page,
+  // not to every page the frame has held, and lock-order checkers such as
+  // ThreadSanitizer do not see an order between unrelated pages.
   void Reset() {
     page_id_ = INVALID_PAGE_ID;
     pin_count_ = 0;
@@ -45,6 +51,8 @@ class Page {
     for (size_t i = 0; i < PAGE_SIZE; i++) {
       data_[i] = 0;
     }
+    latch_.~shared_mutex();
+    new (&latch_) std::shared_mutex();
   }
 
  private:

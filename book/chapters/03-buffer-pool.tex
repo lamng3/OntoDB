@@ -241,6 +241,20 @@ evicted and reused while its latch is still held.
 first; callers must not assume what they will find.
 \end{decision}
 
+\begin{decision}{A latch belongs to a page, not to a frame}
+\dpart{Choice} When a frame is given to a different page, it gets a new latch.
+This happens only while the frame is unpinned, and since guards pin before they
+latch, no thread holds or waits on the old one.
+\dpart{Alternatives} One latch per frame for the life of the pool.
+\dpart{Why} Latch order is a rule about pages: top-down and left to right. With
+a latch per frame, two unrelated pages that once shared a frame look like the
+same lock, and ThreadSanitizer reported a lock-order cycle in a bulk load on a
+three-frame pool that could never deadlock. A fresh latch makes the checker see
+the same thing the protocol is about.
+\dpart{Cost} Destroying and rebuilding a mutex on every page load, which is
+small next to the disk read that comes with it.
+\end{decision}
+
 \begin{decision}{A write guard dirties only if written}
 \dpart{Choice} A write guard marks the page dirty on drop only if its mutable
 \code{GetData} was called.
