@@ -15,7 +15,7 @@ SELECT ?name WHERE {
 ```
 
 1. `tools/shell/main.cpp` builds a `Database` and a `Shell` on stdin.
-2. `tools/shell/shell.cpp` counts braces, so a query may span lines. `#` inside `<...>` is not a comment. The line is handed to the session worker in `tools/shell/session.cpp`.
+2. `tools/shell/shell.cpp` counts braces, so a query may span lines. `#` inside `<...>` is not a comment. A backslash line is looked up in the command table in `tools/shell/commands.cpp`; anything else is SPARQL. The line is handed to the session worker in `tools/shell/session.cpp`.
 3. `src/common/database.cpp` `Database::Execute` copies the current `Config` and calls the parser.
 4. `src/parser/lexer.cpp` and `src/parser/parser.cpp` produce an AST. `a` is `rdf:type`. `;` and `,` repeat the subject and predicate. `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` throw `ParseException` with a line and column.
 5. `src/binder/binder.cpp` resolves prefixes, interns constants in `src/dictionary/mem_dictionary.cpp`, and assigns each variable a slot in first-seen order. `src/common/term_codec.cpp` is the one spelling both the loader and the binder use (`<iri>`, `"lex"`, `"lex"@en`, `"lex"^^<datatype>`).
@@ -63,3 +63,36 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - Page-guard move and `Drop` do not unpin yet. Plan 1.5 replaces `src/storage/page/page_guard.cpp`.
 - `.clang-tidy` enables `bugprone-*` and `clang-analyzer-*`. The broader `modernize` and `readability` sets are left off so the tidy job can stay green on a scaffold of intentional stubs.
 - `data/pizza.ttl` is a small original subset used by the query tests. `scripts/fetch-data pizza` downloads the real ontology into `data/downloads/`, which is gitignored.
+
+## One statement in a persistent database
+
+This path runs today when the shell was started with a directory (`ontodb <dir>`).
+
+1. `Database::Open` (`src/common/database.cpp`) builds the database and a `Durability` (`src/recovery/durability.cpp`) over the same dictionary and store. `Durability::Open` loads `snapshot` (`src/recovery/snapshot.cpp`), scans `wal` (`ScanLog` in `src/recovery/log_manager.cpp`), lets the recovery mode's damage policy decide about a bad tail, and replays the committed transactions.
+2. `Database::Execute` parses and binds as above. An update runs inside `Durability::Run`, against a `RecordingStore` (`src/include/store/recording_store.h`) that remembers each triple it changed.
+3. `Durability::LogTransaction` appends begin, any new dictionary terms, one update per change, and commit through `LogManager`, then forces the commit. If anything throws, `RecordingStore::Undo` takes the changes back.
+4. `\checkpoint` writes a new snapshot by rename and empties the log. `\verify` runs four checks (snapshot, log, replay, invariants), one report line each.
+
+## Design
+
+The code uses a small set of standard patterns, so a new method plugs in at a known place.
+
+| Pattern | Where |
+| --- | --- |
+| Iterator (volcano) | `TripleIterator`; every executor's `Init` / `Next` pulls one row at a time |
+| Repository | `TripleStore` and `Dictionary` hide where triples and terms live (`MemStore`, `IndexedStore`; `MemDictionary`, `DiskDictionary`) |
+| Factory | `ExecutorFactory::Create` maps a plan node to its executor; `Database::Open`; `LogRecord::Begin`, `Commit`, `Update`, and the other named constructors; `MakeDamagePolicy` |
+| Builder | `Planner` builds the plan tree from a bound query |
+| Strategy, replace conditional with polymorphism | `LogDamagePolicy` with one class per recovery mode; `\set join` selects the join operator; `TraceSink` implementations |
+| Null object | `NullTraceSink` when tracing is off |
+| Decorator | `RecordingStore` wraps any `TripleStore` and records its changes |
+| Adapter | `RdfLoader` adapts raptor2's parser to `Dictionary` and `TripleStore` |
+| Command | The shell's command table (`tools/shell/commands.cpp`): one entry per backslash command, read by both dispatch and `\help`; log records are replayable commands |
+| RAII | `ReadPageGuard` and `WritePageGuard` unpin on destruction |
+| Dependency injection | `ExecutorContext` carries the store, dictionary, config, and stats into every executor; `LogManager`, `Durability`, and the buffer pool take their collaborators as constructor arguments |
+
+Deliberate exceptions:
+
+- **No retry on a failed fsync.** A log flush that fails is reported, not retried. After a failed fsync the kernel may have dropped the dirty pages, so a retry that succeeds can still have lost data; this is the lesson of PostgreSQL's 2018 fsync incident.
+- **One process-wide test hook.** `CrashPoint` is global because a crash point has to be reachable from any depth of any call. It does nothing unless a test arms it.
+- **Constants, not literals.** Sizes and intervals have names: `PAGE_SIZE` and the defaults in `src/include/common/config.h`, `LogRecord::kHeaderSize` and `kMaxSize`, `kFlushInterval` in the log manager, and `kDefaultLogTail` in the shell.

@@ -14,6 +14,10 @@
 namespace ontodb {
 namespace {
 
+// How long the flush thread sleeps when nobody asks for a flush. Buffered
+// records that no commit forced reach the disk within this interval.
+constexpr auto kFlushInterval = std::chrono::milliseconds(10);
+
 void WriteAll(int fd, const char* data, size_t len) {
   while (len > 0) {
     const ssize_t n = ::write(fd, data, len);
@@ -152,8 +156,7 @@ void LogManager::Flush(lsn_t lsn, bool force) {
 void LogManager::FlushThreadLoop() {
   std::unique_lock<std::mutex> lock(mu_);
   while (true) {
-    work_cv_.wait_for(lock, std::chrono::milliseconds(10),
-                      [&] { return flush_requested_ || stop_; });
+    work_cv_.wait_for(lock, kFlushInterval, [&] { return flush_requested_ || stop_; });
     flush_requested_ = false;
     try {
       WriteBuffered(lock);

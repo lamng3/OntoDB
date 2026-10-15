@@ -1,6 +1,7 @@
 #include "recovery/durability.h"
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -100,6 +101,45 @@ auto AllTriples(TripleStore& store) -> std::vector<Triple> {
   return triples;
 }
 
+// What to do when the log ends in a damaged record (PLAN 9.5). One class per
+// RecoveryMode, chosen once by MakeDamagePolicy.
+class LogDamagePolicy {
+ public:
+  virtual ~LogDamagePolicy() = default;
+  virtual void Handle(const LogScan& scan, const std::filesystem::path& wal,
+                      OpenReport* report) const = 0;
+};
+
+// Keep the valid prefix, cut the log there, and report what was dropped.
+class PointInTimePolicy : public LogDamagePolicy {
+ public:
+  void Handle(const LogScan& scan, const std::filesystem::path& wal,
+              OpenReport* report) const override {
+    report->stop = scan.stop;
+    report->discarded_bytes = scan.file_bytes - scan.valid_bytes;
+    std::filesystem::resize_file(wal, scan.valid_bytes);
+  }
+};
+
+// Refuse to open.
+class AbsoluteConsistencyPolicy : public LogDamagePolicy {
+ public:
+  void Handle(const LogScan& scan, const std::filesystem::path&, OpenReport*) const override {
+    throw LogCorruptionException("wal: " + scan.stop +
+                                 "; not opening in absolute-consistency mode");
+  }
+};
+
+auto MakeDamagePolicy(RecoveryMode mode) -> std::unique_ptr<LogDamagePolicy> {
+  switch (mode) {
+    case RecoveryMode::kAbsoluteConsistency:
+      return std::make_unique<AbsoluteConsistencyPolicy>();
+    case RecoveryMode::kPointInTime:
+      break;
+  }
+  return std::make_unique<PointInTimePolicy>();
+}
+
 }  // namespace
 
 auto OpenReport::ToString() const -> std::string {
@@ -137,37 +177,38 @@ auto Durability::Open(RecoveryMode mode) -> OpenReport {
   std::filesystem::create_directories(dir_);
   OpenReport report;
   report.dir = dir_;
-
-  lsn_t snapshot_lsn = 0;
-  if (std::filesystem::exists(SnapshotPath())) {
-    const Snapshot snap = ReadSnapshot(SnapshotPath());
-    LoadSnapshot(snap, *dictionary_, *store_);
-    report.had_snapshot = true;
-    report.snapshot_lsn = snapshot_lsn = snap.lsn;
-    report.snapshot_triples = snap.triples.size();
-    next_txn_ = snap.next_txn;
-  }
-
-  const LogScan scan = ScanLog(WalPath());
+  const lsn_t snapshot_lsn = LoadSnapshotIfAny(&report);
+  LogScan scan = ScanLog(WalPath());
   if (!scan.Clean()) {
-    if (mode == RecoveryMode::kAbsoluteConsistency) {
-      throw LogCorruptionException("wal: " + scan.stop +
-                                   "; not opening in absolute-consistency mode");
-    }
-    report.stop = scan.stop;
-    report.discarded_bytes = scan.file_bytes - scan.valid_bytes;
-    std::filesystem::resize_file(WalPath(), scan.valid_bytes);
+    MakeDamagePolicy(mode)->Handle(scan, WalPath(), &report);
   }
+  const lsn_t last_lsn = ReplayLog(scan, snapshot_lsn, &report);
+  StartLog(std::max(snapshot_lsn, last_lsn) + 1);
+  return report;
+}
 
+auto Durability::LoadSnapshotIfAny(OpenReport* report) -> lsn_t {
+  if (!std::filesystem::exists(SnapshotPath())) {
+    return 0;
+  }
+  const Snapshot snap = ReadSnapshot(SnapshotPath());
+  LoadSnapshot(snap, *dictionary_, *store_);
+  report->had_snapshot = true;
+  report->snapshot_lsn = snap.lsn;
+  report->snapshot_triples = snap.triples.size();
+  next_txn_ = snap.next_txn;
+  return snap.lsn;
+}
+
+auto Durability::ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* report) -> lsn_t {
   const ReplayResult replay = Replay(scan.records, snapshot_lsn, *dictionary_, *store_);
-  report.log_records = replay.records;
-  report.committed = replay.committed;
-  report.uncommitted = replay.uncommitted;
-  report.triples = store_->Size();
+  report->log_records = replay.records;
+  report->committed = replay.committed;
+  report->uncommitted = replay.uncommitted;
+  report->triples = store_->Size();
   next_txn_ = std::max(next_txn_, replay.max_txn + 1);
   logged_terms_ = dictionary_->Size();
-  StartLog(std::max(snapshot_lsn, replay.last_lsn) + 1);
-  return report;
+  return replay.last_lsn;
 }
 
 void Durability::Run(const std::function<void(TripleStore&)>& body) {
@@ -175,40 +216,39 @@ void Durability::Run(const std::function<void(TripleStore&)>& body) {
   RecordingStore recording(store_);
   try {
     body(recording);
+    LogTransaction(recording.Changes());
   } catch (...) {
     recording.Undo();
     throw;
   }
+}
+
+void Durability::LogTransaction(const std::vector<RecordingStore::Change>& changes) {
   const size_t terms = dictionary_->Size();
-  if (recording.Changes().empty() && terms == logged_terms_) {
-    return;
+  if (changes.empty() && terms == logged_terms_) {
+    return;  // nothing to make durable
   }
-  try {
-    const txn_id_t txn = next_txn_++;
-    lsn_t prev = INVALID_LSN;
-    auto append = [&](LogRecord record) {
-      record.SetPrevLsn(prev);
-      prev = log_->Append(&record);
-    };
-    append(LogRecord::Begin(txn));
-    for (size_t id = logged_terms_ + 1; id <= terms; id++) {
-      const auto text = dictionary_->Lookup(id);
-      if (!text) {
-        throw StorageException("dictionary has no term " + std::to_string(id));
-      }
-      append(LogRecord::Term(txn, id, *text));
+  const txn_id_t txn = next_txn_++;
+  lsn_t prev = INVALID_LSN;
+  auto append = [&](LogRecord record) {
+    record.SetPrevLsn(prev);
+    prev = log_->Append(&record);
+  };
+  append(LogRecord::Begin(txn));
+  for (size_t id = logged_terms_ + 1; id <= terms; id++) {
+    const auto text = dictionary_->Lookup(id);
+    if (!text) {
+      throw StorageException("dictionary has no term " + std::to_string(id));
     }
-    for (const auto& change : recording.Changes()) {
-      append(LogRecord::Update(txn, INVALID_PAGE_ID, change.is_insert, change.triple));
-    }
-    CrashPoint::Reach("Durability::Run::before_commit");
-    append(LogRecord::Commit(txn));
-    log_->Flush(prev, true);
-    logged_terms_ = terms;
-  } catch (...) {
-    recording.Undo();
-    throw;
+    append(LogRecord::Term(txn, id, *text));
   }
+  for (const auto& change : changes) {
+    append(LogRecord::Update(txn, INVALID_PAGE_ID, change.is_insert, change.triple));
+  }
+  CrashPoint::Reach("Durability::Run::before_commit");
+  append(LogRecord::Commit(txn));
+  log_->Flush(prev, true);
+  logged_terms_ = terms;
 }
 
 auto Durability::Checkpoint() -> std::string {
@@ -232,70 +272,86 @@ auto Durability::Checkpoint() -> std::string {
 auto Durability::Verify() -> std::string {
   std::lock_guard<std::mutex> guard(mu_);
   log_->Flush(log_->NextLsn() - 1, true);
-  std::ostringstream out;
-  bool ok = true;
-
   MemDictionary rebuilt_terms;
   MemStore rebuilt;
   lsn_t snapshot_lsn = 0;
-  if (std::filesystem::exists(SnapshotPath())) {
-    try {
-      const Snapshot snap = ReadSnapshot(SnapshotPath());
-      LoadSnapshot(snap, rebuilt_terms, rebuilt);
-      snapshot_lsn = snap.lsn;
-      out << "snapshot: ok (lsn " << snap.lsn << ", " << snap.terms.size() << " terms, "
-          << snap.triples.size() << " triples)\n";
-    } catch (const StorageException& ex) {
-      out << "snapshot: FAILED: " << ex.what() << '\n';
-      ok = false;
-    }
-  } else {
-    out << "snapshot: none\n";
-  }
-
   const LogScan scan = ScanLog(WalPath());
-  if (scan.Clean()) {
-    out << "wal: ok (" << scan.records.size() << " records, " << scan.file_bytes << " bytes)\n";
-  } else {
-    out << "wal: FAILED: " << scan.stop << '\n';
-    ok = false;
+  const std::vector<CheckResult> checks = {
+      CheckSnapshot(&rebuilt_terms, &rebuilt, &snapshot_lsn),
+      CheckLog(scan),
+      CheckReplay(scan, snapshot_lsn, &rebuilt_terms, &rebuilt),
+      CheckInvariants(),
+  };
+  std::ostringstream out;
+  bool ok = true;
+  for (const auto& check : checks) {
+    out << check.line << '\n';
+    ok = ok && check.ok;
   }
+  out << (ok ? "verify: ok" : "verify: FAILED");
+  return out.str();
+}
 
+auto Durability::CheckSnapshot(MemDictionary* terms, MemStore* store,
+                               lsn_t* snapshot_lsn) const -> CheckResult {
+  if (!std::filesystem::exists(SnapshotPath())) {
+    return {true, "snapshot: none"};
+  }
   try {
-    Replay(scan.records, snapshot_lsn, rebuilt_terms, rebuilt);
-    bool terms_match = rebuilt_terms.Size() <= dictionary_->Size();
-    for (term_id_t id = 1; terms_match && id <= rebuilt_terms.Size(); id++) {
-      terms_match = rebuilt_terms.Lookup(id) == dictionary_->Lookup(id);
-    }
-    const bool triples_match = AllTriples(rebuilt) == AllTriples(*store_);
-    if (terms_match && triples_match) {
-      out << "replay: matches the live database (" << rebuilt.Size() << " triples)\n";
-    } else {
-      out << "replay: MISMATCH (" << (terms_match ? "" : "terms ")
-          << (triples_match ? "" : "triples ") << "differ from the live database)\n";
-      ok = false;
-    }
+    const Snapshot snap = ReadSnapshot(SnapshotPath());
+    LoadSnapshot(snap, *terms, *store);
+    *snapshot_lsn = snap.lsn;
+    std::ostringstream line;
+    line << "snapshot: ok (lsn " << snap.lsn << ", " << snap.terms.size() << " terms, "
+         << snap.triples.size() << " triples)";
+    return {true, line.str()};
   } catch (const StorageException& ex) {
-    out << "replay: FAILED: " << ex.what() << '\n';
-    ok = false;
+    return {false, std::string("snapshot: FAILED: ") + ex.what()};
   }
+}
 
+auto Durability::CheckLog(const LogScan& scan) -> CheckResult {
+  if (!scan.Clean()) {
+    return {false, "wal: FAILED: " + scan.stop};
+  }
+  std::ostringstream line;
+  line << "wal: ok (" << scan.records.size() << " records, " << scan.file_bytes << " bytes)";
+  return {true, line.str()};
+}
+
+auto Durability::CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDictionary* terms,
+                             MemStore* store) const -> CheckResult {
+  try {
+    Replay(scan.records, snapshot_lsn, *terms, *store);
+  } catch (const StorageException& ex) {
+    return {false, std::string("replay: FAILED: ") + ex.what()};
+  }
+  bool terms_match = terms->Size() <= dictionary_->Size();
+  for (term_id_t id = 1; terms_match && id <= terms->Size(); id++) {
+    terms_match = terms->Lookup(id) == dictionary_->Lookup(id);
+  }
+  const bool triples_match = AllTriples(*store) == AllTriples(*store_);
+  if (terms_match && triples_match) {
+    return {true,
+            "replay: matches the live database (" + std::to_string(store->Size()) + " triples)"};
+  }
+  return {false, std::string("replay: MISMATCH (") + (terms_match ? "" : "terms ") +
+                     (triples_match ? "" : "triples ") + "differ from the live database)"};
+}
+
+auto Durability::CheckInvariants() const -> CheckResult {
   const auto live = AllTriples(*store_);
+  const size_t n = dictionary_->Size();
   const bool unique = std::adjacent_find(live.begin(), live.end()) == live.end();
-  const bool resolved = std::all_of(live.begin(), live.end(), [&](const Triple& t) {
-    const size_t n = dictionary_->Size();
+  const bool resolved = std::all_of(live.begin(), live.end(), [n](const Triple& t) {
     return t.subject >= 1 && t.subject <= n && t.predicate >= 1 && t.predicate <= n &&
            t.object >= 1 && t.object <= n;
   });
   if (unique && resolved) {
-    out << "invariants: ok (no duplicate triples, every id in the dictionary)\n";
-  } else {
-    out << "invariants: FAILED (" << (unique ? "" : "duplicate triples ")
-        << (resolved ? "" : "unresolved ids") << ")\n";
-    ok = false;
+    return {true, "invariants: ok (no duplicate triples, every id in the dictionary)"};
   }
-  out << (ok ? "verify: ok" : "verify: FAILED");
-  return out.str();
+  return {false, std::string("invariants: FAILED (") + (unique ? "" : "duplicate triples ") +
+                     (resolved ? "" : "unresolved ids") + ")"};
 }
 
 auto Durability::LogTail(size_t n) const -> std::string {

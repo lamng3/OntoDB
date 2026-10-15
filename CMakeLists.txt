@@ -31,7 +31,8 @@ target_compile_options(ontodb PRIVATE -Wall -Wextra -Werror -Wno-unused-private-
 
 add_library(ontodb_shell
   tools/shell/shell.cpp
-  tools/shell/session.cpp)
+  tools/shell/session.cpp
+  tools/shell/commands.cpp)
 target_include_directories(ontodb_shell PUBLIC ${CMAKE_SOURCE_DIR}/tools)
 target_link_libraries(ontodb_shell PUBLIC ontodb)
 target_compile_options(ontodb_shell PRIVATE -Wall -Wextra -Werror -Wno-unused-private-field)
