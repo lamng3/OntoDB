@@ -8,6 +8,7 @@ auto MemDictionary::Insert(std::string_view term) -> term_id_t {
   if (const auto it = to_id_.find(key); it != to_id_.end()) {
     return it->second;
   }
+  CheckAssignable(next_);
   const term_id_t id = next_++;
   to_id_.emplace(key, id);
   to_term_.emplace(id, key);

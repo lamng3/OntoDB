@@ -90,7 +90,7 @@ The index is a B+ tree. Keys live in the leaves. Internal pages hold separators 
 
 **3.1 Term heap.** A slotted page of byte strings. `Insert` returns nullopt when the record does not fit. A record larger than an empty page throws. `Get` is valid only while the page is pinned. `Delete` frees the slot for reuse. The iterator holds no pin after `operator*` returns.
 
-**3.2 Disk dictionary.** Spelling to id and id to spelling both survive restart. `Insert` of an existing spelling returns the original id. Ids are dense and start at 1.
+**3.2 Disk dictionary.** Spelling to id and id to spelling both survive restart. `Insert` of an existing spelling returns the original id. Ids are dense and start at 1. `INVALID_TERM_ID` is never assigned; call `Dictionary::CheckAssignable` before handing out an id.
 
 **3.3 Catalog.** Remember the root of `"spo"`, `"pos"`, `"osp"`, and the dictionary. A missing name is `INVALID_PAGE_ID`. `Flush` makes it durable. Initialize the page so a zeroed file is not mistaken for root 0.
 

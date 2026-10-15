@@ -15,7 +15,7 @@ namespace ontodb {
 // with that prefix. n is 0, 1, 2, or 3. A scan of [lower, upper) visits
 // exactly the matching prefix. When no key lies above the prefix (n = 0, or
 // every prefix component is the maximum id), PrefixUpper is the all-0xFF key;
-// that is three INVALID_TERM_IDs, which is never stored. Other n throw
+// that is three INVALID_TERM_IDs, which the dictionary never assigns. Other n throw
 // std::invalid_argument.
 class TripleKey {
  public:
