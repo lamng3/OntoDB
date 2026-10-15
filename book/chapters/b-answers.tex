@@ -43,6 +43,8 @@ line is the point.
 \item The right (new) leaf, whose first key it is. Left in the left leaf, a key equal to the separator sits in the left child, which breaks the separator rule, and a search for 14 goes right.
 \item Leaf keys are the data, and every key must stay in a leaf. Internal keys only route searches, so the middle one can move up and leave both halves.
 \item Holding two leaves, and possibly a parent, can use up a small pool; with latches, two scans moving in opposite directions can deadlock.
+\item A split would have to rewrite the parent pointer in every child that moved, up to 72 pages for one internal split. Without them, a structure change re-fetches parents remembered by id, which is safe only while one thread changes the tree; latch crabbing fixes that.
+\item Two leaves of 85. A leaf of 1 would be below the minimum of 84 keys, so the last two leaves share their 170 keys evenly.
 \item A full leaf splits into two half-full leaves, so random inserts leave leaves about two-thirds full, and each insert is a random descent. Bulk load writes full leaves sequentially.
 \end{enumerate}
 

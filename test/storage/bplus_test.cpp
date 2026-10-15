@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <random>
+#include <set>
+#include <stdexcept>
+#include <tuple>
 #include <vector>
 
 #include "common/exception.h"
@@ -82,7 +85,7 @@ TEST(P2_1_PageLayout, LeafInternalAndHeader) {
   EXPECT_EQ(header.GetRootPageId(), 8);
 }
 
-TEST(P2_2_TreeDebug, DISABLED_ToDotAndInvariants) {
+TEST(P2_2_TreeDebug, ToDotAndInvariants) {
   test::DiskEnv env;
   BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
   EXPECT_FALSE(tree.CheckInvariants().has_value()) << tree.CheckInvariants().value_or("");
@@ -95,7 +98,7 @@ TEST(P2_2_TreeDebug, DISABLED_ToDotAndInvariants) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P2_3_PointSearch, DISABLED_FindsAndMisses) {
+TEST(P2_3_PointSearch, FindsAndMisses) {
   test::DiskEnv env;
   BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
   EXPECT_TRUE(tree.IsEmpty());
@@ -108,7 +111,7 @@ TEST(P2_3_PointSearch, DISABLED_FindsAndMisses) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P2_4_Insert, DISABLED_RandomMatchesSortedVector) {
+TEST(P2_4_Insert, RandomMatchesSortedVector) {
   test::DiskEnv env(32, 2);
   BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
   std::mt19937 rng(42);
@@ -150,7 +153,7 @@ TEST(P2_4_Insert, DISABLED_RandomMatchesSortedVector) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P2_5_Iterator, DISABLED_PrefixEdgesAndTinyPool) {
+TEST(P2_5_Iterator, PrefixEdgesAndTinyPool) {
   test::DiskEnv env(3, 2);
   BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
   {
@@ -192,7 +195,7 @@ TEST(P2_5_Iterator, DISABLED_PrefixEdgesAndTinyPool) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P2_6_BulkLoad, DISABLED_MatchesSortedInput) {
+TEST(P2_6_BulkLoad, MatchesSortedInput) {
   test::DiskEnv env(16, 2);
   std::vector<TripleKey> keys;
   for (term_id_t i = 1; i <= 300; i++) {
@@ -207,7 +210,7 @@ TEST(P2_6_BulkLoad, DISABLED_MatchesSortedInput) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P2_7_Delete, DISABLED_MergeOrRedistributeStaysSorted) {
+TEST(P2_7_Delete, MergeOrRedistributeStaysSorted) {
   test::DiskEnv env(16, 2);
   BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
   std::vector<TripleKey> keys;
@@ -227,6 +230,85 @@ TEST(P2_7_Delete, DISABLED_MergeOrRedistributeStaysSorted) {
   ExpectSame(Scan(&tree), left);
   EXPECT_FALSE(tree.CheckInvariants().has_value());
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+// Tiny nodes grow deep trees from few keys, so every split, merge, rotation,
+// and root change happens many times. Invariants are checked after every
+// operation, contents against std::set, and pins after every operation.
+TEST(P2_7_Delete, DeepTreeStressMatchesSet) {
+  struct Sizes {
+    int leaf;
+    int internal;
+  };
+  for (const Sizes sizes : {Sizes{2, 2}, Sizes{3, 3}, Sizes{4, 2}, Sizes{5, 4}}) {
+    test::DiskEnv env(256, 2);
+    BPlusTree tree("spo", Header(&env.bpm), &env.bpm, nullptr, sizes.leaf, sizes.internal);
+    std::set<std::tuple<term_id_t, term_id_t, term_id_t>> model;
+    std::mt19937 rng(static_cast<unsigned>(sizes.leaf * 10 + sizes.internal));
+    for (int step = 0; step < 700; step++) {
+      const term_id_t s = 1 + rng() % 6;
+      const term_id_t p = 1 + rng() % 4;
+      const term_id_t o = 1 + rng() % 10;
+      const auto key = TripleKey::Encode(s, p, o);
+      const bool insert = rng() % 3 != 0 || model.empty();
+      if (insert) {
+        EXPECT_EQ(tree.Insert(key), model.insert({s, p, o}).second);
+      } else {
+        EXPECT_EQ(tree.Remove(key), model.erase({s, p, o}) == 1);
+      }
+      const auto broken = tree.CheckInvariants();
+      ASSERT_FALSE(broken.has_value()) << "step " << step << ": " << *broken;
+      ASSERT_EQ(env.bpm.GetPinnedFrameCount(), 0u) << "step " << step;
+    }
+    std::vector<TripleKey> expect;
+    for (const auto& [s, p, o] : model) {
+      expect.push_back(TripleKey::Encode(s, p, o));
+    }
+    ExpectSame(Scan(&tree), expect);
+    for (term_id_t s = 0; s <= 7; s++) {  // every 1-prefix, including absent ones
+      size_t want = 0;
+      for (const auto& triple : model) {
+        want += std::get<0>(triple) == s ? 1 : 0;
+      }
+      size_t got = 0;
+      for (auto it = tree.Begin(TripleKey::Encode(s, 0, 0), 1); !it.IsEnd(); ++it) {
+        got++;
+      }
+      EXPECT_EQ(got, want) << "subject " << s;
+    }
+    for (const auto& [s, p, o] : model) {  // drain: the tree must end empty
+      ASSERT_TRUE(tree.Remove(TripleKey::Encode(s, p, o)));
+      ASSERT_FALSE(tree.CheckInvariants().has_value());
+    }
+    EXPECT_TRUE(tree.IsEmpty());
+    EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+  }
+}
+
+TEST(P2_6_BulkLoad, EverySizeKeepsInvariantsWithTinyNodes) {
+  for (int n = 0; n <= 60; n++) {
+    test::DiskEnv env(3, 2);
+    BPlusTree tree("spo", Header(&env.bpm), &env.bpm, nullptr, 3, 2);
+    std::vector<TripleKey> keys;
+    for (int i = 1; i <= n; i++) {
+      keys.push_back(TripleKey::Encode(i, 1, 1));
+    }
+    tree.BulkLoad(keys);
+    const auto broken = tree.CheckInvariants();
+    ASSERT_FALSE(broken.has_value()) << n << " keys: " << *broken;
+    ExpectSame(Scan(&tree), keys);
+    if (n > 0) {
+      EXPECT_TRUE(tree.Insert(TripleKey::Encode(n + 1, 1, 1)));  // a loaded tree keeps working
+      EXPECT_FALSE(tree.CheckInvariants().has_value());
+    }
+    EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+  }
+  test::DiskEnv env(4, 2);
+  BPlusTree tree("spo", Header(&env.bpm), &env.bpm);
+  EXPECT_THROW(tree.BulkLoad({TripleKey::Encode(2, 1, 1), TripleKey::Encode(1, 1, 1)}),
+               std::invalid_argument);
+  tree.Insert(TripleKey::Encode(1, 1, 1));
+  EXPECT_THROW(tree.BulkLoad({TripleKey::Encode(2, 1, 1)}), std::logic_error);
 }
 
 auto CrashOn(const char* point, bool insert) -> bool {
@@ -254,15 +336,15 @@ auto CrashOn(const char* point, bool insert) -> bool {
   return false;
 }
 
-TEST(P2_4_Insert, DISABLED_LeafSplitCrashPoint) {
+TEST(P2_4_Insert, LeafSplitCrashPoint) {
   EXPECT_TRUE(CrashOn("BPlusTree::Insert::after_leaf_split", true));
 }
 
-TEST(P2_4_Insert, DISABLED_InternalSplitCrashPoint) {
+TEST(P2_4_Insert, InternalSplitCrashPoint) {
   EXPECT_TRUE(CrashOn("BPlusTree::Insert::after_internal_split", true));
 }
 
-TEST(P2_7_Delete, DISABLED_RemoveCrashPoint) {
+TEST(P2_7_Delete, RemoveCrashPoint) {
   const bool merge = CrashOn("BPlusTree::Remove::after_merge", false);
   const bool redistribute = merge || CrashOn("BPlusTree::Remove::after_redistribute", false);
   EXPECT_TRUE(redistribute);

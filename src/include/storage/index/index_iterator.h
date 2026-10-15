@@ -11,11 +11,15 @@ class BufferPoolManager;
 // time. Copying is not allowed; moving transfers the guard. Destroying the
 // iterator drops that guard, so the pinned-frame count returns to what it
 // was before the iterator was created. operator* on an end iterator is
-// undefined. ++ past the last key yields the end iterator.
+// undefined. ++ past the last key yields the end iterator. With an upper
+// bound, the iterator ends at the first key >= upper. Moving to the sibling
+// drops the current leaf before pinning the next, so at most one leaf is
+// pinned.
 class IndexIterator {
  public:
   IndexIterator() = default;
   IndexIterator(BufferPoolManager* bpm, page_id_t leaf, int index);
+  IndexIterator(BufferPoolManager* bpm, page_id_t leaf, int index, const TripleKey& upper);
   IndexIterator(const IndexIterator&) = delete;
   auto operator=(const IndexIterator&) -> IndexIterator& = delete;
   IndexIterator(IndexIterator&& other) noexcept;
@@ -29,10 +33,16 @@ class IndexIterator {
   auto operator!=(const IndexIterator& other) const -> bool;
 
  private:
+  void Settle();  // skip exhausted leaves, then stop at the upper bound
+  void Finish();
+
   BufferPoolManager* bpm_{nullptr};
+  ReadPageGuard guard_;
   page_id_t leaf_{INVALID_PAGE_ID};
   int index_{0};
   bool end_{true};
+  bool bounded_{false};
+  TripleKey upper_{};
 };
 
 }  // namespace ontodb

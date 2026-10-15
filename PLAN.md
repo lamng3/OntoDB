@@ -16,6 +16,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2).
+- The B+ tree (2.1 to 2.7): page layout, invariants, search, insert with splits, the prefix iterator, bulk load, and delete. Single-threaded until 7.1; nodes remember their path instead of storing parent pointers.
 - The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
@@ -27,8 +28,8 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | --- | --- | --- |
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
 | Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
-| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. 2.1 is done. |
-| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
+| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
+| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. This is the next feature. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
@@ -75,17 +76,17 @@ The index is a B+ tree. Keys live in the leaves. Internal pages hold separators 
 
 **2.1 Layout.** Done. Payload starts after the pageLSN. An internal page stores n keys and n+1 children. `KeyAt(0)` is unused. `ValueAt(0)` is the leftmost child. A leaf keeps keys in order and a sibling page id. `MaxSize()` is at least 2. The header stores the root, or `INVALID_PAGE_ID` when the tree is empty. Page 0 is a legal page id, so do not use 0 as the empty sentinel. The byte layout is written in the page headers: 169 keys per leaf, 144 per internal page.
 
-**2.2 Invariants.** `CheckInvariants` describes the first broken rule, or returns nullopt. Check size, order, sibling links, and separators: keys in child i-1 are strictly less than `KeyAt(i)`, and keys in child i are greater than or equal to it. `ToDot` is Graphviz. `\tree spo` and `\tree spo dot` call these.
+**2.2 Invariants.** Done. `CheckInvariants` describes the first broken rule, or returns nullopt. Check size, order, sibling links, and separators: keys in child i-1 are strictly less than `KeyAt(i)`, and keys in child i are greater than or equal to it. `ToDot` is Graphviz. `\tree spo` and `\tree spo dot` call these.
 
-**2.3 Search.** `GetValue` is a point lookup. Missing and empty return false. Pins are zero on return.
+**2.3 Search.** Done. `GetValue` is a point lookup. Missing and empty return false. Pins are zero on return.
 
-**2.4 Insert.** A duplicate returns false. After a leaf split, reach `BPlusTree::Insert::after_leaf_split`. After an internal split, including a new root, reach `BPlusTree::Insert::after_internal_split`. A random insert matches a sorted vector.
+**2.4 Insert.** Done. A duplicate returns false. After a leaf split, reach `BPlusTree::Insert::after_leaf_split`. After an internal split, including a new root, reach `BPlusTree::Insert::after_internal_split`. A random insert matches a sorted vector.
 
-**2.5 Scan.** `Begin()` holds one leaf guard and follows sibling pointers. `Begin(key, prefix_len)` stops at `PrefixUpper`. On a 3-frame pool the pinned count stays at most 1 during the scan and is 0 after the iterator dies. Drop the current leaf before pinning the sibling.
+**2.5 Scan.** Done. `Begin()` holds one leaf guard and follows sibling pointers. `Begin(key, prefix_len)` stops at `PrefixUpper`. On a 3-frame pool the pinned count stays at most 1 during the scan and is 0 after the iterator dies. Drop the current leaf before pinning the sibling.
 
-**2.6 Bulk load.** Build a packed tree from sorted unique keys. This is not a loop of `Insert`.
+**2.6 Bulk load.** Done. Build a packed tree from sorted unique keys. This is not a loop of `Insert`.
 
-**2.7 Delete.** Merge or redistribute so every node except the root stays at least half full. Reach either `BPlusTree::Remove::after_redistribute` or `BPlusTree::Remove::after_merge`. Update the parent separator when a key moves.
+**2.7 Delete.** Done. Merge or redistribute so every node except the root stays at least half full. Reach either `BPlusTree::Remove::after_redistribute` or `BPlusTree::Remove::after_merge`. Update the parent separator when a key moves.
 
 ## RDF storage
 

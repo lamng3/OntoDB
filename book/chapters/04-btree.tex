@@ -179,7 +179,7 @@ a third of each leaf for a subject-heavy SPO index. Leaf compression is on the
 list of later work, with the question of what it does to prefix bounds.
 \end{decision}
 
-\begin{decision}{The key is the record (planned)}
+\begin{decision}{The key is the record}
 \dpart{Choice} A leaf stores the 24-byte \code{TripleKey} and nothing else.
 There is no value field and no record id pointing to a heap.
 \dpart{Alternatives} The relational layout: a heap file of tuples, with each
@@ -190,7 +190,7 @@ same 24 bytes again and cost an extra page read per match.
 permutations is a space decision (\cref{ch:rdf-indexing}).
 \end{decision}
 
-\begin{decision}{Strict deletion (planned)}
+\begin{decision}{Strict deletion}
 \dpart{Choice} \code{Remove} keeps every node except the root at least half
 full, by redistributing from a sibling or merging with it.
 \dpart{Alternatives} Lazy deletion, as many production systems do: let nodes
@@ -202,7 +202,7 @@ chapters need.
 code in the tree.
 \end{decision}
 
-\begin{decision}{The invariant checker comes before insert (planned)}
+\begin{decision}{The invariant checker comes before insert}
 \dpart{Choice} \code{CheckInvariants} (size, order, sibling links, the
 separator rule) is built and tested before \code{Insert}, and every insert and
 delete test runs it.
@@ -214,10 +214,70 @@ structural mistake into a failure on the operation that caused it.
 every test.
 \end{decision}
 
+\begin{decision}{Remember the path, not parent pointers}
+\dpart{Choice} Pages store no pointer to their parent. An insert or delete
+records the page ids on its way down, releasing each page before reading its
+child, and re-fetches a parent by id only if a split or merge reaches it. A
+descent pins one page at a time; a merge pins three (parent, node, sibling).
+\dpart{Alternatives} A parent pointer in every page; or keeping every page on
+the path pinned and latched until the operation ends.
+\dpart{Why} A split of an internal page with 145 children would have to rewrite
+the parent pointer of half of them, which is dozens of page writes for one
+insert. Releasing pages on the way down lets the whole tree run on a pool of
+three frames.
+\dpart{Cost} It is correct only while one thread changes the tree: another
+writer could split a remembered parent between the descent and the re-fetch.
+Latch crabbing (plan 7.1) replaces this with holding exactly the pages a
+structure change can reach.
+\end{decision}
+
+\begin{decision}{Split in the middle}
+\dpart{Choice} A full leaf splits into two halves, and the right half's first
+key is copied up. A full internal page splits around its middle key, which
+moves up.
+\dpart{Alternatives} Split at the insertion point when keys arrive in
+increasing order, leaving the left page full, as several engines do for
+append-heavy indexes.
+\dpart{Why} Triples arrive in no particular order across three permutations,
+and a middle split is the simplest rule that keeps every page at least half
+full.
+\dpart{Cost} Inserting sorted keys one at a time leaves every leaf half full,
+twice the pages a scan must read. Loading sorted data is what bulk load is for.
+\end{decision}
+
+\begin{decision}{Bulk load packs leaves full}
+\dpart{Choice} \code{BulkLoad} fills each leaf to its maximum, left to right,
+then builds each internal level the same way. If the last node of a level would
+fall below its minimum, it and its left neighbour split their entries evenly.
+\dpart{Alternatives} Leave free space in each leaf, a \emph{fill factor}, as
+PostgreSQL does for its B-tree indexes (90\% by default).
+\dpart{Why} An ontology is loaded and then queried. Full leaves mean the fewest
+pages for every scan, and loading is one sequential pass per level.
+\dpart{Cost} The first insert into a full leaf splits it at once, so a tree that
+is loaded and then edited heavily ends up looking like one built by inserts.
+\end{decision}
+
+\begin{decision}{Small nodes in tests}
+\dpart{Choice} The tree's maximum node sizes default to what a page holds
+(169 and 144 keys), and tests pass sizes as small as 2 to grow deep trees from
+a few dozen keys. A randomized test inserts and deletes against a reference set
+with node sizes of 2 to 5, checking every invariant after every operation.
+\dpart{Alternatives} Test only with full pages, or shrink \code{PAGE\_SIZE} for
+tests.
+\dpart{Why} With 169 keys per leaf, a tree needs tens of thousands of keys to
+reach three levels, so bugs in internal merges and root changes would hide. The
+same code runs with either size; only two numbers change.
+\dpart{Cost} Small nodes make some cases more common than they are in real use
+and others rarer, so the full-size tests stay as well.
+\end{decision}
+
 \begin{status}
-The page layout runs (plan 2.1): 169 keys per leaf and 144 per internal page.
-Invariants, search, insert and split, the iterator, bulk load, and delete are
-plans 2.2 to 2.7.
+The B+ tree is complete (plans 2.1 to 2.7): the page layout, the invariant
+checker and \code{ToDot}, point search, insert with splits, the prefix
+iterator, bulk load, and delete with merge and redistribution, with all four
+crash points. It is single-threaded until latch crabbing (plan 7.1), and the
+shell's \code{\textbackslash tree} draws it once the indexed backend exists
+(plan 3.4).
 \end{status}
 
 \begin{checkyourself}
@@ -226,6 +286,8 @@ plans 2.2 to 2.7.
 \item During a leaf split the separator 14 is copied up. Which leaf must it stay in, and what breaks if it stays in the other one?
 \item Why does an internal split \emph{push up} its middle key, while a leaf split \emph{copies} it?
 \item Why should a scan unpin its current leaf before pinning the sibling?
+\item Why does OntoDB not store a parent pointer in each page? What does the choice cost once several threads change the tree?
+\item OntoDB bulk-loads 170 sorted keys with a leaf maximum of 169. What leaves does it build, and why not one leaf of 169 and one of 1?
 \item Bulk load fills every leaf. Why can't a loop of \code{Insert} calls do the same?
 \end{checkyourself}
 

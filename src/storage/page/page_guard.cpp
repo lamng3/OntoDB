@@ -34,6 +34,10 @@ auto ReadPageGuard::GetData() const -> const char* {
   return page_->GetData();
 }
 
+auto ReadPageGuard::View() const -> const Page* {
+  return page_;
+}
+
 auto ReadPageGuard::GetPageId() const -> page_id_t {
   return page_->GetPageId();
 }
@@ -84,6 +88,15 @@ WritePageGuard::~WritePageGuard() {
 auto WritePageGuard::GetData() -> char* {
   dirty_ = true;
   return page_->GetData();
+}
+
+auto WritePageGuard::GetPage() -> Page* {
+  dirty_ = true;
+  return page_;
+}
+
+auto WritePageGuard::View() const -> const Page* {
+  return page_;
 }
 
 auto WritePageGuard::GetPageId() const -> page_id_t {
