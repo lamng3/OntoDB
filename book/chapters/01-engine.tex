@@ -122,3 +122,40 @@ An insert adds a sixth step: before the shell says \code{inserted 1 triple},
 a log record describing the insert must be on disk. Why that order is
 non-negotiable, and how it lets the engine survive a crash, is the subject of
 \cref{part:recovery-ref}. First, storage.
+
+\begin{decision}{One text interface}
+\dpart{Choice} The shell is the only way in. Every caller (the shell, the
+crash harness, the differential tests) goes through one facade,
+\code{Database}, which takes SPARQL text or a backslash command and returns
+rows. A future query window would send the same text and print the same rows;
+it would not get its own parser.
+\dpart{Alternatives} A client--server wire protocol, as PostgreSQL and MySQL
+have; or an embedded library API with one call per operation, as SQLite and
+RocksDB offer.
+\dpart{Why} One entry point means one code path to test. A crash test, a
+differential test, and a person at the prompt all exercise exactly the same
+parser, planner, and log.
+\dpart{Cost} No remote clients. Two ``users'' are two shell sessions on threads
+of one process, which is enough to test locking but not a network service.
+\end{decision}
+
+\begin{decision}{Store OWL as triples, with no reasoner}
+\dpart{Choice} OWL and RDFS load as plain triples. \code{Alloy subClassOf
+Metal} and \code{Metal subClassOf Material} are two stored facts; the engine
+does not derive \code{Alloy subClassOf Material}.
+\dpart{Alternatives} Forward chaining (materialize the closure at load, so
+queries see derived triples), or backward chaining (rewrite each query to
+follow \code{subClassOf} at run time).
+\dpart{Why} The book and the engine are about storage, indexing, transactions,
+and recovery. Inference is a separate feature with its own costs, and it is on
+the list of later work, to be measured on LUBM.
+\dpart{Cost} Queries that depend on inference return a subset of the
+``intended'' answer. Several LUBM benchmark queries do exactly that.
+\end{decision}
+
+\begin{checkyourself}
+\item Name the layer that hides each cost: (a) a lookup needs four page reads; (b) the disk is slow; (c) a query has a thousand possible plans.
+\item Why does the transaction manager not fit into one layer of \cref{fig:layers}?
+\item A SPARQL query has five triple patterns that all share \code{?s}. Viewed as relational algebra over one table of triples, what is it?
+\item A user loads an ontology with \code{Alloy subClassOf Metal} and \code{Metal subClassOf Material} and asks for every subclass of \code{Material}. What does OntoDB return, and why?
+\end{checkyourself}

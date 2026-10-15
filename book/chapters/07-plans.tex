@@ -103,11 +103,55 @@ An empty pattern, with no triple to match, returns one empty row rather than
 none: the identity input for a join that has nothing to bind yet.
 \end{ontodb}
 
+\begin{decision}{Unsupported syntax fails at parse time}
+\dpart{Choice} \code{OPTIONAL}, \code{UNION}, property paths, aggregates, and
+\code{DELETE/INSERT WHERE} are recognized by the parser and rejected there with
+a line and column.
+\dpart{Alternatives} Accept the full grammar and fail in the executor; or skip
+what is not understood.
+\dpart{Why} A query either runs completely or fails before anything happens.
+Ignoring an \code{OPTIONAL} would silently change the answer, which is worse
+than refusing.
+\dpart{Cost} The parser must know the shape of features the engine does not
+implement.
+\end{decision}
+
+\begin{decision}{Volcano, one row at a time}
+\dpart{Choice} Every operator implements \code{Init} and \code{Next} and passes
+one row of ids per call.
+\dpart{Alternatives} Vectorized execution (a batch of rows per call), or
+compiling the plan into loops.
+\dpart{Why} It is the simplest model that composes, it makes \code{LIMIT} stop
+the whole tree, and it keeps pin ownership obvious: a scan holds one leaf while
+it has a current row.
+\dpart{Cost} A virtual call per row per operator. Large analytical scans would
+be several times faster vectorized.
+\end{decision}
+
+\begin{decision}{Stub plan nodes before their executors}
+\dpart{Choice} \code{Sort}, \code{Distinct}, \code{Limit}, \code{Insert}, and
+\code{Delete} exist as plan nodes that \code{\textbackslash explain} prints
+before their executors are written.
+\dpart{Alternatives} Add a plan node only together with its executor.
+\dpart{Why} The plan's shape and the planner's tests can be fixed first; each
+executor then arrives into a slot that is already wired and printed.
+\dpart{Cost} For a while, \code{\textbackslash explain} shows plans that cannot
+run, and running one throws ``not built yet''.
+\end{decision}
+
 \begin{status}
 Parsing, binding, planning, triple scans, nested-loop join, filter, and
 projection run today against the in-memory store. Distinct, limit, offset, and
 sort are parsed and planned; their executors are next (plans 4.4 and 4.5).
 \end{status}
+
+\begin{checkyourself}
+\item In \code{?s a ub:Student . ?s ub:name ?name . ?s ub:age ?age}, which slot does each variable get?
+\item Why does \code{DISTINCT} apply to projected rows, not to the rows the scans produce?
+\item Why can't \code{ORDER BY} compare term ids?
+\item A plan is \code{Limit 10} over a join of two large scans. How much work does the Volcano model do, and how much would a model that materializes each operator's output do?
+\item Why does an empty pattern produce one empty row rather than none?
+\end{checkyourself}
 
 \section*{Further reading}
 Graefe \cite{graefe}; the W3C SPARQL 1.1 recommendation \cite{sparql}.

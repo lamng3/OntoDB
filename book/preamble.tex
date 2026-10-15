@@ -55,6 +55,29 @@
   boxrule=0.5pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
   title={Status},fonttitle=\bfseries\small,coltitle=white}
 
+% A choice OntoDB made: what it chose, the alternatives, why, and the cost.
+\definecolor{decisionbg}{HTML}{F5F0FA}
+\newcounter{decision}
+\newtcolorbox{decision}[1]{enhanced,breakable,colback=decisionbg,colframe=violet!55!black,
+  boxrule=0.5pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  code={\refstepcounter{decision}\addcontentsline{lod}{section}{\protect\numberline{\thedecision}#1}},
+  title={Design decision \thedecision: #1},fonttitle=\bfseries\small,coltitle=white}
+\newcommand{\dpart}[1]{\par\smallskip\noindent\textbf{#1.}\enspace}
+\makeatletter
+\newcommand{\listofdecisions}{%
+  \chapter*{Design Decisions}\addcontentsline{toc}{chapter}{Design Decisions}%
+  \markboth{Design Decisions}{Design Decisions}%
+  Every choice OntoDB makes is written up where the theory behind it is taught, in
+  a box that names the choice, the alternatives it passed over, why, and what it
+  costs. A title marked \emph{planned} is a decision fixed in the plan for code
+  not yet written.\par\medskip
+  \@starttoc{lod}}
+\makeatother
+% End-of-chapter questions; answers are in the appendix.
+\newenvironment{checkyourself}
+  {\section*{Check your understanding}\begin{enumerate}[label=\thechapter.\arabic*,leftmargin=2.4em]}
+  {\end{enumerate}\par\smallskip\emph{Answers are in \cref{app:answers}.}}
+
 \lstset{basicstyle=\ttfamily\small,columns=fullflexible,keepspaces=true,
   frame=single,framerule=0.4pt,rulecolor=\color{black!25},backgroundcolor=\color{black!3},
   xleftmargin=6pt,xrightmargin=6pt,aboveskip=8pt,belowskip=8pt,

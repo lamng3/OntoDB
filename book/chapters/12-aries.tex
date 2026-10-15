@@ -146,6 +146,29 @@ reopened store with an oracle that replayed only acknowledged commits:
 \code{scripts/crashtest --seeds 200} must pass.
 \end{ontodb}
 
+\begin{decision}{A blocking checkpoint first (planned)}
+\dpart{Choice} The page store's \code{\textbackslash checkpoint} may pause
+updates while it writes the checkpoint record; the comment above
+\code{Checkpoint} names which kind it is.
+\dpart{Alternatives} ARIES's fuzzy checkpoint, which never stops the system.
+\dpart{Why} A blocking checkpoint is easy to reason about and enough to bound
+recovery. Fuzzy checkpointing is an optimization to add once the three passes
+are correct.
+\dpart{Cost} Updates stall for the length of the checkpoint.
+\end{decision}
+
+\begin{decision}{Recovery is tested against an oracle}
+\dpart{Choice} A crash harness kills the process at random points and at named
+crash points, reopens the store, and compares it with an oracle that applied
+only acknowledged commits. The harness is itself tested on deliberately broken
+stores.
+\dpart{Alternatives} Hand-written recovery scenarios only.
+\dpart{Why} The bugs in recovery live in interleavings nobody thinks to write.
+Many random crash points find them; a harness that catches a planted lost
+commit proves it can.
+\dpart{Cost} Slow tests, and failures that need a seed to reproduce.
+\end{decision}
+
 \begin{status}
 The log record types used here, including CLRs and checkpoints, exist and
 serialize (plan 8.1). Abort by the log, checkpoints, the three passes, and the
@@ -153,6 +176,14 @@ crash test are plans 8.4 to 8.7, after the buffer pool and B+ tree. The crash
 harness already detects a lost commit and a surviving uncommitted write on
 deliberately faulty test stores.
 \end{status}
+
+\begin{checkyourself}
+\item In the worked example, suppose the pool had also written P1 after LSN 40. What does redo do now, and what does undo do?
+\item Why does ARIES redo the losers' changes, only to undo them right after?
+\item The system crashes after CLR 60 but before $T_2$'s end record. What does the next recovery do?
+\item Why is a B+ tree split never undone, even when the transaction that caused it aborts?
+\item What do the dirty page table's recLSNs let redo skip?
+\end{checkyourself}
 
 \section*{Further reading}
 Mohan et al.\ \cite{aries}, the whole paper; Ramakrishnan and Gehrke
