@@ -28,6 +28,7 @@ class TripleScanExecutor : public AbstractExecutor {
   const TripleScanPlan* plan_;
   std::unique_ptr<TripleIterator> iter_;
   bool yielded_vacuous_{false};
+  uint64_t scanned_{0};
 };
 
 }  // namespace ontodb

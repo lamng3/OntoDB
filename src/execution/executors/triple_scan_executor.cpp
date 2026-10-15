@@ -32,6 +32,7 @@ void TripleScanExecutor::Init() {
 }
 
 void TripleScanExecutor::InitWith(const Row& bindings) {
+  ctx_->CheckDeadline();
   yielded_vacuous_ = false;
   iter_.reset();
   if (Vacuous()) {
@@ -75,6 +76,9 @@ auto TripleScanExecutor::Next(Row* row) -> bool {
   const auto& pattern = plan_->Pattern();
   Triple triple;
   while (iter_->Next(&triple)) {
+    if ((++scanned_ & 4095U) == 0) {
+      ctx_->CheckDeadline();
+    }
     Row candidate(plan_->RowWidth(), INVALID_TERM_ID);
     if (!BindPosition(pattern.subject, triple.subject, &candidate) ||
         !BindPosition(pattern.predicate, triple.predicate, &candidate) ||

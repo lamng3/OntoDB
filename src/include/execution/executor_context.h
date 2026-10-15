@@ -1,5 +1,9 @@
 #pragma once
 
+#include <chrono>
+#include <optional>
+
+#include "common/exception.h"
 #include "common/io_stats.h"
 #include "common/session_state.h"
 #include "common/trace.h"
@@ -43,6 +47,15 @@ class ExecutorContext {
   auto GetTrace() const -> TraceSink* { return trace_; }
   auto GetSession() const -> SessionState* { return session_; }
 
+  // An optional wall-clock deadline. Scans call CheckDeadline as they work
+  // and on every re-open, so a plan of any shape stops soon after it passes.
+  void SetDeadline(std::chrono::steady_clock::time_point deadline) { deadline_ = deadline; }
+  void CheckDeadline() const {
+    if (deadline_.has_value() && std::chrono::steady_clock::now() > *deadline_) {
+      throw QueryTimeoutException("query timed out");
+    }
+  }
+
  private:
   TripleStore* store_;
   Dictionary* dictionary_;
@@ -54,6 +67,7 @@ class ExecutorContext {
   IoStats* stats_;
   TraceSink* trace_;
   SessionState* session_;
+  std::optional<std::chrono::steady_clock::time_point> deadline_;
 };
 
 }  // namespace ontodb

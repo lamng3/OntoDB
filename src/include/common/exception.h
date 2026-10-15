@@ -55,6 +55,12 @@ class StorageException : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
+// A query ran past the deadline in its ExecutorContext.
+class QueryTimeoutException : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
+};
+
 // Deadlock detection aborts the younger transaction by throwing this from the
 // lock wait. The shell and the isolation harness treat it as an abort.
 class TransactionAbortException : public std::runtime_error {

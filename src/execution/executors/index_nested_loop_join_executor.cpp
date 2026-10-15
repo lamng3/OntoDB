@@ -25,6 +25,7 @@ void IndexNestedLoopJoinExecutor::Init() {
 }
 
 auto IndexNestedLoopJoinExecutor::Probe() -> bool {
+  ctx_->CheckDeadline();
   probe_.reset();
   if (!left_->Next(&left_row_)) {
     return false;

@@ -83,7 +83,7 @@ enum class IsolationLevel { kReadUncommitted, kReadCommitted, kRepeatableRead, k
 
 struct Config {
   BackendKind backend{BackendKind::kMem};
-  JoinMethod join{JoinMethod::kNestedLoop};
+  JoinMethod join{JoinMethod::kAuto};
   IsolationLevel isolation{IsolationLevel::kReadCommitted};
   size_t pool_size{64};
   size_t lru_k{2};

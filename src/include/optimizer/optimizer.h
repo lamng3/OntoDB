@@ -21,6 +21,11 @@ namespace ontodb {
 // smallest estimated join; a cross product is taken only when nothing is
 // connected. Ties keep the textual order. Estimates carry each variable's
 // distinct-value count through the chain (CardinalityEstimator).
+//
+// With kAuto (PLAN 5.4), each join of the rebuilt chain picks its operator:
+// a cross product stays a nested loop; otherwise an index nested-loop join
+// when the estimated outer side is no larger than the inner pattern (few
+// probes), and a hash join, built on the smaller inner pattern, when it is.
 class Optimizer {
  public:
   Optimizer(const CardinalityEstimator* estimator, const Config* config);
@@ -33,15 +38,7 @@ class Optimizer {
   static auto ApplyJoinMethod(PlanNodeRef plan, JoinMethod method) -> PlanNodeRef;
 
  private:
-  // One rebuilt join: whether the inner pattern shares a variable with the
-  // outer side, and the estimated rows on each side.
-  struct JoinStep {
-    bool connected;
-    double outer_rows;
-    double inner_rows;
-  };
-
-  auto Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanNodeRef;
+  auto Reorder(PlanNodeRef plan) -> PlanNodeRef;
 
   const CardinalityEstimator* estimator_;
   const Config* config_;

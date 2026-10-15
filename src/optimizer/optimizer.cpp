@@ -125,16 +125,14 @@ auto VariableSlots(const BoundTriplePattern& p) -> std::vector<size_t> {
 }  // namespace
 
 auto Optimizer::Optimize(PlanNodeRef plan) -> PlanNodeRef {
-  std::vector<JoinStep> steps;
-  plan = Reorder(std::move(plan), &steps);
-  return ApplyJoinMethod(std::move(plan), config_->join);
+  return ApplyJoinMethod(Reorder(std::move(plan)), config_->join);
 }
 
-auto Optimizer::Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanNodeRef {
+auto Optimizer::Reorder(PlanNodeRef plan) -> PlanNodeRef {
   if (plan->GetType() != PlanType::kNestedLoopJoin) {
     auto children = plan->ReleaseChildren();
     for (auto& child : children) {
-      child = Reorder(std::move(child), steps);
+      child = Reorder(std::move(child));
     }
     plan->SetChildren(std::move(children));
     return plan;
@@ -152,6 +150,14 @@ auto Optimizer::Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanN
     patterns.push_back(&static_cast<const TripleScanPlan*>(leaf.get())->Pattern());
   }
 
+  // One rebuilt join: whether the inner pattern shares a variable with the
+  // outer side, and the estimated rows on each side.
+  struct JoinStep {
+    bool connected;
+    double outer_rows;
+    double inner_rows;
+  };
+  std::vector<JoinStep> steps;
   std::vector<size_t> order;
   if (patterns.size() == leaves.size()) {
     std::vector<bool> used(leaves.size(), false);
@@ -187,8 +193,7 @@ auto Optimizer::Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanN
         }
       }
       if (step > 0) {
-        steps->push_back(
-            {best_connected, rows, estimator_->EstimateTriplePattern(*patterns[best])});
+        steps.push_back({best_connected, rows, estimator_->EstimateTriplePattern(*patterns[best])});
       }
       used[best] = true;
       order.push_back(best);
@@ -210,8 +215,17 @@ auto Optimizer::Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanN
 
   PlanNodeRef chain = std::move(leaves[order[0]]);
   for (size_t i = 1; i < order.size(); i++) {
-    chain = std::make_unique<NestedLoopJoinPlan>(schema, std::move(chain),
-                                                 std::move(leaves[order[i]]), width);
+    PlanNodeRef inner = std::move(leaves[order[i]]);
+    if (config_->join == JoinMethod::kAuto && !steps.empty() && steps[i - 1].connected) {
+      if (steps[i - 1].outer_rows <= steps[i - 1].inner_rows) {
+        chain =
+            std::make_unique<IndexNestedLoopJoinPlan>(schema, std::move(chain), std::move(inner));
+      } else {
+        chain = std::make_unique<HashJoinPlan>(schema, std::move(chain), std::move(inner));
+      }
+      continue;
+    }
+    chain = std::make_unique<NestedLoopJoinPlan>(schema, std::move(chain), std::move(inner), width);
   }
   return chain;
 }

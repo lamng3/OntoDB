@@ -34,7 +34,7 @@ TEST(Execution, JoinFilterAndProjection) {
 
   auto plan = db.Explain(
       "SELECT ?name WHERE { ?s <http://ex/name> ?name . ?s <http://ex/type> <http://ex/Student> }");
-  EXPECT_NE(plan.find("NestedLoopJoin"), std::string::npos);
+  EXPECT_NE(plan.find("Join"), std::string::npos);
   EXPECT_NE(plan.find("Projection"), std::string::npos);
 }
 
