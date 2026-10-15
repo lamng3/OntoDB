@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <mutex>
 #include <string>
 
 #include "common/io_stats.h"
@@ -15,6 +17,12 @@ namespace ontodb {
 //
 // Report every read with stats->PageRead and every write with stats->PageWrite
 // when stats is non-null. Trace component "disk".
+//
+// The file's length is the allocation record: AllocatePage grows the file by
+// one zero page, so a restart sees every page allocated before it, and page 0
+// is an ordinary page (the catalog uses it). DeallocatePage does not reuse the
+// id; the file only grows. WritePage does not fsync; ShutDown does. Reading or
+// writing a page that was never allocated throws StorageException.
 class DiskManager {
  public:
   explicit DiskManager(std::string db_file, IoStats* stats = nullptr, TraceSink* trace = nullptr);
@@ -33,9 +41,17 @@ class DiskManager {
   auto GetNumReads() const -> int;
 
  private:
+  void Trace(const char* op, page_id_t page_id);
+  void CheckAllocated(page_id_t page_id) const;
+
   std::string db_file_;
   IoStats* stats_;
   TraceSink* trace_;
+  int fd_{-1};
+  std::mutex alloc_mu_;
+  std::atomic<page_id_t> num_pages_{0};
+  std::atomic<int> num_reads_{0};
+  std::atomic<int> num_writes_{0};
 };
 
 }  // namespace ontodb

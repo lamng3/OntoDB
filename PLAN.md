@@ -16,6 +16,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2).
+- The disk manager (1.1): allocate, read, and write pages of the database file.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
 Without a directory, the shell starts an empty memory database that keeps nothing.
@@ -25,7 +26,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Feature | Check | What it adds |
 | --- | --- | --- |
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
-| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. This is the next feature. |
+| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. 1.1 is done; 1.2 is next. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
@@ -56,7 +57,7 @@ These have no stubs. Add one by writing the design next to the code that impleme
 
 Pages are 4096 bytes. The first 8 bytes are the pageLSN. The scaffold never increments `IoStats`; the call sites are named in `src/include/common/io_stats.h`.
 
-**1.1 Disk file.** `DiskManager` owns the file. Page ids survive restart. `ReadPage` and `WritePage` move one page. A page never written reads back as zeros. `ShutDown` flushes and closes. Trace component `"disk"`.
+**1.1 Disk file.** Done. `DiskManager` owns the file. Page ids survive restart: the file length is the allocation record, and a freed id is not reused. `ReadPage` and `WritePage` move one page. A page never written reads back as zeros. `ShutDown` flushes and closes. Trace component `"disk"`.
 
 **1.2 Scheduler.** One background thread drains `DiskRequest`. `Schedule` returns immediately. The promise is completed on that thread. Trace component `"io"`.
 

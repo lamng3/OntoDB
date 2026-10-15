@@ -153,6 +153,50 @@ missing initialization is a visible error, not a tree rooted at page 0.
 largest file is $2^{31}$ pages, 8 TiB at 4 KiB.
 \end{decision}
 
+\begin{decision}{The file's length records allocation}
+\dpart{Choice} \code{AllocatePage} grows the database file by one zero page
+(\code{ftruncate}, which usually writes no data blocks). On open, the number of
+allocated pages is the file size divided by \code{PAGE\_SIZE}, rounded up. There
+is no header page of the disk manager's own.
+\dpart{Alternatives} A header page (a superblock) holding the next page id and
+a free list, as SQLite's first page and InnoDB's space header do.
+\dpart{Why} Page 0 already belongs to the catalog. The file system updates a
+file's length as one fact, so there is no second record of allocation that a
+crash could leave disagreeing with the file.
+\dpart{Cost} The new length is durable only after an \code{fsync}. After a
+crash, a page that a log record names may lie past the end of the file, so
+recovery must be ready to extend the file and treat the missing page as zeros.
+\end{decision}
+
+\begin{decision}{The file only grows}
+\dpart{Choice} \code{DeallocatePage} does not return the id for reuse. A freed
+page stays in the file, unused.
+\dpart{Alternatives} An in-memory free list, or a durable free-space map such
+as PostgreSQL's.
+\dpart{Why} An id that is reused while anything still names it (a log record
+awaiting redo, a stale parent pointer after a crash) turns an old reference
+into a write to someone else's page. It is the same argument as for term ids:
+an id's meaning should not change.
+\dpart{Cost} Space freed by merges and deletes is not reclaimed. Reclaiming it
+safely needs a logged free-space map, which is later work.
+\end{decision}
+
+\begin{decision}{Through the page cache; \code{fsync} at shutdown}
+\dpart{Choice} Pages are read and written with \code{pread} and \code{pwrite}
+through the operating system's page cache. \code{WritePage} does not
+\code{fsync}; \code{ShutDown} does, once.
+\dpart{Alternatives} \code{O\_DIRECT}, bypassing the page cache as InnoDB can;
+or \code{fsync} after every page write.
+\dpart{Why} Durability is the log's job: a committed change survives because
+its log record is forced (\cref{ch:wal}), not because its page is. A page needs
+to be on disk only at a checkpoint or a clean shutdown. \code{pread} and
+\code{pwrite} carry their own offset, so threads share one file descriptor
+without a lock around a seek.
+\dpart{Cost} A cached page exists twice, in a pool frame and in the kernel's
+cache. Until page-level logging exists (plan 8.3), only a clean shutdown makes
+the page store durable.
+\end{decision}
+
 \begin{decision}{Spellings are never deleted}
 \dpart{Choice} Deleting the last triple that uses a term keeps the term and its
 id in the dictionary.
@@ -166,9 +210,9 @@ literals keeps every one of them.
 \end{decision}
 
 \begin{status}
-The page frame and the pageLSN layout exist. The disk manager, which allocates
-pages and reads and writes them, and the term heap are being built (plans 1.1
-and 3.1).
+The page frame and the pageLSN layout exist, and the disk manager runs (plan
+1.1): it allocates pages by growing the file, reads and writes whole pages, and
+fsyncs on shutdown. The term heap is plan 3.1.
 \end{status}
 
 \begin{checkyourself}
@@ -177,6 +221,7 @@ and 3.1).
 \item A \code{write} returned successfully and then the machine lost power. Was the data durable? What call would have made it so?
 \item \code{fsync} returns an error. Why is calling it again and continuing on success wrong?
 \item Why is $-1$ a better ``no page'' sentinel than 0?
+\item After a crash, a log record names page 812, but the file holds only 800 pages. How can OntoDB's allocation scheme produce this, and who must repair it?
 \end{checkyourself}
 
 \section*{Further reading}
