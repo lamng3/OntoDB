@@ -5,6 +5,7 @@
 
 #include "binder/bound_query.h"
 #include "execution/executor_context.h"
+#include "execution/plans/abstract_plan.h"
 
 namespace ontodb {
 
@@ -29,6 +30,7 @@ class ExecutionEngine {
   auto ExplainAnalyze(const BoundQuery& query) -> std::string;
 
  private:
+  auto PlanFor(const BoundQuery& query) const -> PlanNodeRef;
   auto Decode(term_id_t id) const -> std::string;
   static auto CountMessage(const char* verb, size_t n) -> std::string;
 

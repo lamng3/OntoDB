@@ -132,7 +132,7 @@ auto ScanPlan(term_id_t predicate, size_t width) -> std::unique_ptr<TripleScanPl
   return std::make_unique<TripleScanPlan>(schema, pattern, width);
 }
 
-TEST(P4_2_IndexNLJ, DISABLED_SameRowsAsNestedLoop) {
+TEST(P4_2_IndexNLJ, SameRowsAsNestedLoop) {
   MemStore store;
   store.Insert({10, 1, 100});
   store.Insert({10, 2, 200});
@@ -166,7 +166,7 @@ TEST(P4_2_IndexNLJ, DISABLED_SameRowsAsNestedLoop) {
   EXPECT_EQ(RowsOf(inlj.get()), expect);
 }
 
-TEST(P4_3_HashJoin, DISABLED_SameRowsAsNestedLoop) {
+TEST(P4_3_HashJoin, SameRowsAsNestedLoop) {
   MemStore store;
   store.Insert({10, 1, 100});
   store.Insert({10, 2, 200});

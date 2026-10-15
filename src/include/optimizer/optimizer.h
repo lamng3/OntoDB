@@ -16,6 +16,12 @@ class Optimizer {
   Optimizer(const CardinalityEstimator* estimator, const Config* config);
   auto Optimize(PlanNodeRef plan) -> PlanNodeRef;
 
+  // Replaces every nested-loop join with the operator `method` names:
+  // kHash -> HashJoin; kIndexNestedLoop -> IndexNestedLoopJoin where the inner
+  // side is a single triple scan (other joins stay nested loops). kNestedLoop
+  // and kAuto leave the plan as it is. Same rows; only the operator changes.
+  static auto ApplyJoinMethod(PlanNodeRef plan, JoinMethod method) -> PlanNodeRef;
+
  private:
   const CardinalityEstimator* estimator_;
   const Config* config_;
