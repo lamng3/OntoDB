@@ -168,6 +168,35 @@ a dictionary that skipped the check could hand a real term an id that every
 operator reads as ``unbound''.
 \end{decision}
 
+\begin{decision}{The dictionary is built from the engine's own pages}
+\dpart{Choice} On disk, spellings live in the term heap. Two B+ trees index
+them, both with ordinary 24-byte triple keys: one keyed
+$(\textit{id}, \textit{page}, \textit{slot})$, so a prefix scan on the id finds
+the record; one keyed $(\textit{hash}, \textit{id}, 0)$, so a prefix scan on a
+spelling's hash lists candidate ids, each checked against the heap. A header
+page holds the term count and the three page ids.
+\dpart{Alternatives} Keep the dictionary in memory and rebuild its hash maps
+from the heap at every open; or write a dedicated on-disk hash index, such as
+extendible hashing.
+\dpart{Why} It reuses parts that are already tested, works when the
+dictionary is larger than memory, and needs nothing rebuilt at startup.
+Comparing the spelling makes hash collisions harmless.
+\dpart{Cost} Looking up a spelling is two tree descents and a heap read,
+against one probe of an in-memory hash table, and each term costs 48 bytes of
+index on top of its spelling. A memory cache in front is the obvious
+optimization if lookups dominate a load.
+\end{decision}
+
+\begin{decision}{A fixed hash function}
+\dpart{Choice} The spelling hash is 64-bit FNV-1a, written out in the code.
+\dpart{Alternatives} \code{std::hash}, or a faster modern hash from a library.
+\dpart{Why} A hash stored on disk must give the same value in every build, on
+every machine, forever. \code{std::hash} promises none of that; a different
+standard library would silently make every stored entry unreachable.
+\dpart{Cost} FNV-1a is slower and mixes less well than newer hashes; with
+spellings this short, and collisions resolved by comparison, neither matters.
+\end{decision}
+
 \begin{decision}{Big-endian keys, compared with \code{memcmp}}
 \dpart{Choice} Each id is written most significant byte first, so comparing
 the 24 bytes with \code{memcmp} gives numeric $(s, p, o)$ order.
@@ -223,8 +252,8 @@ initialized'' from ``a catalog whose dictionary root happens to be 0''.
 
 \begin{status}
 The triple key runs (plan 0.2): encode, decode, compare, and both prefix
-bounds, with the carry and saturation cases tested. So does the catalog (plan
-3.3). The indexed store and the
+bounds, with the carry and saturation cases tested. So do the catalog (plan
+3.3) and the disk dictionary (plan 3.2). The indexed store and the
 permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \end{status}
 
@@ -235,6 +264,7 @@ permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \item Which permutation serves \code{?s ?p <Material>}? Which serves \code{<Alice> ?p <Student>}?
 \item Why must the loader and the binder share one canonical spelling for terms? Give a literal that two careless implementations might spell differently.
 \item What would go wrong if the dictionary assigned $2^{64}-1$ to a real term?
+\item Two different spellings have the same 64-bit hash. What does the disk dictionary do when you look up the second one?
 \item Why does the catalog record each index's header page rather than its root? How often does the catalog page change?
 \end{checkyourself}
 

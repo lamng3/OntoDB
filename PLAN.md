@@ -29,7 +29,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
 | Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
-| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. 3.1 and 3.3 are done. |
+| RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. 3.1 to 3.3 are done. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
@@ -92,7 +92,7 @@ The index is a B+ tree. Keys live in the leaves. Internal pages hold separators 
 
 **3.1 Term heap.** Done. A slotted page of byte strings. `Insert` returns nullopt when the record does not fit. A record larger than an empty page throws. `Get` is valid only while the page is pinned. `Delete` frees the slot for reuse. The iterator holds no pin after `operator*` returns. Delete compacts the page; a record is at most 4,076 bytes; inserts append to the last page of the chain.
 
-**3.2 Disk dictionary.** Spelling to id and id to spelling both survive restart. `Insert` of an existing spelling returns the original id. Ids are dense and start at 1. `INVALID_TERM_ID` is never assigned; call `Dictionary::CheckAssignable` before handing out an id.
+**3.2 Disk dictionary.** Done. Spelling to id and id to spelling both survive restart. `Insert` of an existing spelling returns the original id. Ids are dense and start at 1. `INVALID_TERM_ID` is never assigned; call `Dictionary::CheckAssignable` before handing out an id. Spellings live in the term heap; a B+ tree keyed (id, page, slot) and one keyed (FNV-1a hash, id, 0) index them.
 
 **3.3 Catalog.** Done. Remember the root of `"spo"`, `"pos"`, `"osp"`, and the dictionary. A missing name is `INVALID_PAGE_ID`. `Flush` makes it durable. Initialize the page so a zeroed file is not mistaken for root 0. An index entry names the tree's header page. The catalog writes page 0 at once so its id is taken, and refuses a non-empty page without its magic number.
 
