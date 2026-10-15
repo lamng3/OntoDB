@@ -58,7 +58,9 @@ auto LoadCases(const std::filesystem::path& path, std::string* data) -> std::vec
   return cases;
 }
 
-auto JoinRows(const std::vector<std::vector<std::string>>& rows) -> std::vector<std::string> {
+// Rows as tab-joined lines, sorted unless `keep_order` (an ORDER BY query).
+auto JoinRows(const std::vector<std::vector<std::string>>& rows,
+              bool keep_order = false) -> std::vector<std::string> {
   std::vector<std::string> lines;
   for (const auto& row : rows) {
     std::string line;
@@ -70,7 +72,9 @@ auto JoinRows(const std::vector<std::vector<std::string>>& rows) -> std::vector<
     }
     lines.push_back(std::move(line));
   }
-  std::sort(lines.begin(), lines.end());
+  if (!keep_order) {
+    std::sort(lines.begin(), lines.end());
+  }
   return lines;
 }
 
@@ -104,7 +108,8 @@ TEST(Differential, MemAndIndexed) {
              {JoinMethod::kNestedLoop, JoinMethod::kIndexNestedLoop, JoinMethod::kHash}) {
           config.join = join;
           const auto right = engine.Execute(bound);
-          EXPECT_EQ(JoinRows(left.rows), JoinRows(right.rows))
+          const bool ordered = item.name.rfind("query order", 0) == 0;
+          EXPECT_EQ(JoinRows(left.rows, ordered), JoinRows(right.rows, ordered))
               << item.name << " with join " << static_cast<int>(join);
           if (update) {
             EXPECT_EQ(left.message, right.message) << item.name;

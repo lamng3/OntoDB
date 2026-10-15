@@ -74,6 +74,7 @@ line is the point.
 \item Rows can differ in slots that are not projected: two students with the same name are two scan rows but one projected row.
 \item Ids are assigned in load order, not value order; \code{"10"} can have a smaller id than \code{"9"}. Sorting must compare values.
 \item Volcano stops as soon as ten rows reach the root, doing only the join work that produced them. Materializing computes the entire join first, then keeps ten rows.
+\item Run generation writes 100 runs of 10 pages (1,000 pages). Merging 8 at a time gives 13 runs, then 2, and 2 is few enough for the final merge to stream to the consumer: two intermediate passes, each writing 1,000 pages. In all, 3,000 pages written (and 3,000 read back), plus the input scan.
 \item Neither. Without \code{ORDER BY} the order of solutions is unspecified, so any two of the matching names are a correct answer. The backends produce different orders (insertion order against key order).
 \item An empty pattern has exactly one solution, the empty binding, and that row is the identity for a join. Zero rows would make every join empty.
 \end{enumerate}

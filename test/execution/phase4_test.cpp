@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -10,11 +11,13 @@
 #include "dictionary/mem_dictionary.h"
 #include "execution/executor_factory.h"
 #include "execution/executors/nested_loop_join_executor.h"
+#include "execution/executors/sort_executor.h"
 #include "execution/executors/triple_scan_executor.h"
 #include "execution/plans/nested_loop_join_plan.h"
 #include "execution/plans/projection_plan.h"
 #include "execution/plans/stub_plans.h"
 #include "execution/plans/triple_scan_plan.h"
+#include "storage/env.h"
 #include "store/mem_store.h"
 
 namespace ontodb {
@@ -234,7 +237,7 @@ TEST(P4_4_DistinctLimit, DropsDuplicatesAndWindows) {
   EXPECT_EQ(objects, (std::vector<term_id_t>{5, 3}));
 }
 
-TEST(P4_5_Sort, DISABLED_OrdersAscendingAndDescending) {
+TEST(P4_5_Sort, OrdersAscendingAndDescending) {
   MemStore store;
   store.Insert({1, 9, 3});
   store.Insert({1, 9, 1});
@@ -268,6 +271,53 @@ TEST(P4_5_Sort, DISABLED_OrdersAscendingAndDescending) {
     objects.push_back(row.at(1));
   }
   EXPECT_EQ(objects, (std::vector<term_id_t>{3, 2, 1}));
+}
+
+// 3,000 rows on an 8-frame pool: the budget is 4 pages of 255 two-id rows,
+// so the input becomes 3 sorted runs, merged 2 at a time, then streamed.
+TEST(P4_5_Sort, ExternalMergeMatchesStableSortAndFreesItsPages) {
+  test::DiskEnv env(8, 2);
+  MemStore store;
+  std::mt19937 rng(5);
+  std::vector<Row> expect;
+  for (term_id_t s = 1; s <= 3000; s++) {
+    const term_id_t o = 1 + rng() % 50;
+    store.Insert({s, 9, o});
+    expect.push_back({s, o});
+  }
+  Config config;
+  IoStats stats;
+  NullTraceSink trace;
+  ExecutorContext ctx(&store, nullptr, &config, nullptr, nullptr, nullptr, &env.bpm, &stats, &trace,
+                      nullptr);
+  auto scan = ScanPlan(9, 2);
+  auto plan = std::make_unique<SortPlan>(scan->OutputSchema(),
+                                         std::unique_ptr<AbstractPlanNode>(scan.release()),
+                                         std::vector<BoundOrderKey>{{1, false, "o"}});
+  // MemStore yields insertion order, so equal objects must keep ascending subjects.
+  std::stable_sort(expect.begin(), expect.end(),
+                   [](const Row& a, const Row& b) { return a[1] > b[1]; });
+  {
+    SortExecutor sort(&ctx, ExecutorFactory::Create(plan->GetChildAt(0), &ctx), plan.get());
+    sort.Init();
+    EXPECT_EQ(sort.RunsWritten(), 3u);
+    EXPECT_EQ(sort.MergePasses(), 1u);
+    std::vector<Row> got;
+    Row row;
+    while (sort.Next(&row)) {
+      got.push_back(row);
+    }
+    EXPECT_EQ(got, expect);
+  }
+  {
+    SortExecutor early(&ctx, ExecutorFactory::Create(plan->GetChildAt(0), &ctx), plan.get());
+    early.Init();
+    Row row;
+    for (int i = 0; i < 10; i++) {
+      ASSERT_TRUE(early.Next(&row));
+    }
+  }  // stopped early: the destructor frees the remaining run pages
+  EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
 TEST(P4_6_InsertDelete, DISABLED_UpdatesTheStore) {

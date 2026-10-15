@@ -54,10 +54,16 @@ TEST(Execution, DeleteIsSilentWhenMissing) {
   EXPECT_NE(deleted.message.find("deleted 0"), std::string::npos);
 }
 
-TEST(Execution, OrderByIsBoundButNotRun) {
+TEST(Execution, OrderByRuns) {
   Database db;
-  EXPECT_THROW(Exec(db, "SELECT ?s WHERE { ?s <http://ex/p> <http://ex/o> } ORDER BY ?s"),
-               NotImplementedException);
+  Exec(db,
+       "INSERT DATA { <http://ex/b> <http://ex/p> <http://ex/o> . "
+       "<http://ex/a> <http://ex/p> <http://ex/o> . }");
+  const auto result =
+      Exec(db, "SELECT ?s WHERE { ?s <http://ex/p> <http://ex/o> } ORDER BY DESC(?s)");
+  ASSERT_EQ(result.rows.size(), 2u);
+  EXPECT_EQ(result.rows[0][0], "<http://ex/b>");
+  EXPECT_EQ(result.rows[1][0], "<http://ex/a>");
 }
 
 TEST(ExplainSmoke, ShowsJoinAndFilter) {

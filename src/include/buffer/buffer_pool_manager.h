@@ -64,6 +64,7 @@ class BufferPoolManager {
   void FlushAllPages();
   auto DeletePage(page_id_t page_id) -> bool;
   auto GetPinnedFrameCount() const -> size_t;
+  auto GetPoolSize() const -> size_t { return pool_size_; }
   auto DebugString() const -> std::string;
 
   auto FetchPageRead(page_id_t page_id) -> ReadPageGuard;
