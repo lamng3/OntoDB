@@ -251,8 +251,11 @@ a latch per frame, two unrelated pages that once shared a frame look like the
 same lock, and ThreadSanitizer reported a lock-order cycle in a bulk load on a
 three-frame pool that could never deadlock. A fresh latch makes the checker see
 the same thing the protocol is about.
-\dpart{Cost} Destroying and rebuilding a mutex on every page load, which is
-small next to the disk read that comes with it.
+\dpart{Cost} A small allocation on every page load, next to a disk read that
+costs far more. (It has to be a new allocation: ThreadSanitizer forgets a mutex
+when its memory is freed, but not when a statically initialized
+\code{std::shared\_mutex} is destroyed and rebuilt in place, which was the first
+attempt.)
 \end{decision}
 
 \begin{decision}{A write guard dirties only if written}
