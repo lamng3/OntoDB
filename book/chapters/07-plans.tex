@@ -93,6 +93,28 @@ running it, and an optimizer to swap one tree for another.
 \item[Distinct, limit, offset, sort.] Distinct applies to \emph{projected} rows (two triples can share a name). Sort compares values, not ids: ids are assigned in load order, which is not value order.
 \end{description}
 
+\section{Sorting more than fits in memory}
+
+A sort must see all its input before it can emit the first row, so it is the
+one common operator whose memory grows with its input. When the rows do not fit
+in the memory the sort may use, an \term{external merge sort} spills to disk in
+two phases.
+
+\begin{enumerate}
+\item \textbf{Run generation.} Read as many rows as fit in $B$ pages of memory,
+sort them, and write them out as a sorted \term{run}. Repeat until the input is
+exhausted: $N$ pages of input become $\lceil N/B \rceil$ runs.
+\item \textbf{Merging.} Read the first page of up to $F$ runs at once, and
+repeatedly emit the smallest row at the front of any of them. One merge turns
+$F$ runs into one. Repeat until a single run remains, or until few enough remain
+that the last merge can stream its rows straight to the operator above.
+\end{enumerate}
+
+With fan-in $F$, the number of merge passes is about
+$\lceil \log_F \lceil N/B \rceil \rceil$, and each pass reads and writes every
+page once. Doubling memory saves at most one pass; the real lever is that $F$
+is large, so most sorts need a single merge.
+
 \begin{ontodb}[: planning and execution]
 OntoDB's binder assigns slots in first-appearance order and represents ``not yet
 bound'' with a reserved id. The planner always produces the left-deep tree in
@@ -139,6 +161,38 @@ executor then arrives into a slot that is already wired and printed.
 run, and running one throws ``not built yet''.
 \end{decision}
 
+\begin{decision}{\code{ORDER BY} uses a total order on values}
+\dpart{Choice} Sort keys compare by value: unbound before blank nodes, before
+IRIs, before literals; numeric literals first among literals, by value; other
+literals by lexical form, then datatype, then language; and any remaining tie
+by id. Rows with equal keys keep their input order.
+\dpart{Alternatives} Compare ids, which is fast and meaningless; or use the
+filter comparisons, which call some pairs incomparable.
+\dpart{Why} Ids are assigned in load order, so sorting by id sorts by when a
+term was first seen. A sort needs every pair ordered, which the filter's
+SPARQL semantics do not give (comparing an IRI with a number is a type error
+there). Parsed terms are cached for the length of one sort.
+\dpart{Cost} A dictionary lookup and a parse per distinct value sorted. Without
+a dictionary (some unit tests), the sort falls back to ids.
+\end{decision}
+
+\begin{decision}{External sort through the buffer pool}
+\dpart{Choice} A sort may use half the buffer pool, at least four pages. If
+its input fits, it sorts in memory. Otherwise it writes sorted runs to chains
+of pool pages, merges up to (budget $-$ 2) runs at a time, and streams the last
+merge to its consumer, choosing the earlier run on ties so the sort stays
+stable. Each run page is freed as soon as it has been read. On the memory
+backend there is no pool, and every sort is in memory.
+\dpart{Alternatives} Sort in memory always; or spill to temporary files outside
+the database, as many engines do.
+\dpart{Why} The pool already bounds memory and does the I/O, so the sort's
+memory use is a fraction of a number the user set (\code{pool\_size}), and its
+pages are ordinary pages that tests can count.
+\dpart{Cost} Spilled pages take new page ids, and the file only grows
+(\cref{ch:pages}): every external sort leaves the database file larger,
+permanently. A sort also competes with the query's own pages for frames.
+\end{decision}
+
 \begin{decision}{\code{DISTINCT} keeps a hash set}
 \dpart{Choice} The distinct operator passes a row the first time it sees it,
 in its child's order, and remembers every row it has passed in a hash set.
@@ -167,8 +221,10 @@ larger than the answer.
 
 \begin{status}
 Parsing, binding, planning, triple scans, the three joins, filter,
-projection, distinct, limit, and offset run on both backends (plans 4.1 to
-4.4). Sort is parsed and planned; its executor is plan 4.5.
+projection, distinct, limit, offset, and sort run on both backends (plans 4.1
+to 4.5). On the indexed backend a sort larger than half the pool spills to
+pages; a test sorts 3,000 rows on an 8-frame pool through three runs and one
+intermediate merge.
 \end{status}
 
 \begin{checkyourself}
@@ -177,6 +233,7 @@ projection, distinct, limit, and offset run on both backends (plans 4.1 to
 \item Why can't \code{ORDER BY} compare term ids?
 \item A plan is \code{Limit 10} over a join of two large scans. How much work does the Volcano model do, and how much would a model that materializes each operator's output do?
 \item Why does an empty pattern produce one empty row rather than none?
+\item A sort's input is 1,000 pages and its budget is 10 pages, so its fan-in is 8. How many runs does run generation write, how many merge passes follow, and how many pages are written in all?
 \item \code{SELECT ?name WHERE \{ ... \} LIMIT 2} returns Alice and Bob on the memory backend and Alice and Cara on the indexed one. Which is wrong?
 \end{checkyourself}
 

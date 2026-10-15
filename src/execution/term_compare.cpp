@@ -86,4 +86,68 @@ auto CompareTerms(term_id_t left_id, term_id_t right_id, BoundFilter::Op op,
   }
 }
 
+TermOrder::TermOrder(const Dictionary* dictionary) : dictionary_(dictionary) {}
+
+auto TermOrder::KeyOf(term_id_t id) -> const Key& {
+  if (const auto it = cache_.find(id); it != cache_.end()) {
+    return it->second;
+  }
+  Key key;
+  if (id != INVALID_TERM_ID) {
+    const auto text = dictionary_->Lookup(id);
+    const ParsedTerm term = text ? ParseCanonical(*text) : ParsedTerm{};
+    switch (term.kind) {
+      case ParsedTerm::Kind::kBlank:
+        key.rank = 1;
+        break;
+      case ParsedTerm::Kind::kIri:
+        key.rank = 2;
+        break;
+      case ParsedTerm::Kind::kLiteral:
+        if (const auto number = Numeric(term)) {
+          key.rank = 3;
+          key.number = *number;
+        } else {
+          key.rank = 4;
+        }
+        break;
+      case ParsedTerm::Kind::kInvalid:
+        key.rank = 5;
+        break;
+    }
+    key.lex = term.value;
+    key.datatype = term.datatype;
+    key.lang = term.lang;
+  }
+  return cache_.emplace(id, std::move(key)).first->second;
+}
+
+auto TermOrder::Compare(term_id_t left, term_id_t right) -> int {
+  if (left == right) {
+    return 0;
+  }
+  auto by_id = [&] { return left < right ? -1 : 1; };
+  if (dictionary_ == nullptr) {
+    return by_id();
+  }
+  const Key& a = KeyOf(left);
+  const Key& b = KeyOf(right);
+  if (a.rank != b.rank) {
+    return a.rank < b.rank ? -1 : 1;
+  }
+  if (a.rank == 3 && a.number != b.number) {
+    return a.number < b.number ? -1 : 1;
+  }
+  if (const int c = a.lex.compare(b.lex); c != 0) {
+    return c < 0 ? -1 : 1;
+  }
+  if (const int c = a.datatype.compare(b.datatype); c != 0) {
+    return c < 0 ? -1 : 1;
+  }
+  if (const int c = a.lang.compare(b.lang); c != 0) {
+    return c < 0 ? -1 : 1;
+  }
+  return by_id();
+}
+
 }  // namespace ontodb

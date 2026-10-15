@@ -111,3 +111,21 @@ SELECT ?name WHERE { ?s a ub:Student ; ub:name ?name . } LIMIT 10
 "Alice"
 "Bob"
 "Cara"
+
+query order people-by-age-descending
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ?s ub:name ?name ; ub:age ?age . } ORDER BY DESC(?age)
+----
+"Fay"
+"Dana"
+"Evan"
+"Bob"
+"Alice"
+"Cara"
+
+query order students-by-name-window
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE { ?s a ub:Student ; ub:name ?name . } ORDER BY ?name LIMIT 2 OFFSET 1
+----
+"Bob"
+"Cara"
