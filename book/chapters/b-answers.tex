@@ -20,6 +20,7 @@ line is the point.
 \item No: it was only in the operating system's page cache. \code{fsync} on the file (and, for a new file, on its directory) makes it durable.
 \item The kernel may already have dropped the dirty pages and cleared the error, so the second \code{fsync} ``succeeds'' with the data gone. The only safe response is to stop and recover from the log.
 \item Zero is what unwritten memory and files contain. With $-1$ as the sentinel, a forgotten initialization shows up as an error instead of as a tree rooted at page 0, which is a legal page.
+\item OntoDB refuses it: a term heap record must fit on one page (at most 4,076 bytes), so the term cannot be interned and the load fails as one transaction. PostgreSQL would compress it and, if still large, move it out of line into a TOAST table, leaving a pointer in the row.
 \item Allocation grew the file, but the new length was never made durable (no \code{fsync} before the crash), while the log record that uses the page was forced. Redo reads the page past the end as zeros and reapplies the record; writing the page back grows the file.
 \end{enumerate}
 

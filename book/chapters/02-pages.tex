@@ -198,6 +198,44 @@ cache. Until page-level logging exists (plan 8.3), only a clean shutdown makes
 the page store durable.
 \end{decision}
 
+\begin{decision}{Compact on delete}
+\dpart{Choice} Deleting a record from a term-heap page slides every record
+stored below it up by the record's length and updates their slot offsets, so
+the page's free space is always one gap. Slot numbers, and so RIDs, do not
+change.
+\dpart{Alternatives} Mark the slot free and leave a hole, compacting only when
+an insert cannot find room, as PostgreSQL defragments a page lazily.
+\dpart{Why} Free space is then exactly one number, an insert never has to
+search for a hole that fits, and the page code stays small.
+\dpart{Cost} A delete moves up to a page of bytes. Terms are rarely deleted
+(the dictionary never deletes them), so this cost is almost never paid.
+\end{decision}
+
+\begin{decision}{A term must fit on one page}
+\dpart{Choice} A record is at most $4096 - 16 - 4 = 4076$ bytes. A longer
+spelling is refused with an error, and the load or statement that carried it
+fails.
+\dpart{Alternatives} Overflow pages chained from the record, or storing large
+values out of line as PostgreSQL's TOAST does.
+\dpart{Why} IRIs and almost all literals are far shorter, and a record that
+lives on one page is read with one pin and never reassembled.
+\dpart{Cost} A long \code{rdfs:comment} or an embedded document cannot be
+stored. Overflow records are the natural next step if real ontologies need
+them.
+\end{decision}
+
+\begin{decision}{Append to the last page}
+\dpart{Choice} The heap is a chain of pages. An insert goes to the last page,
+and a new page is chained on when the record does not fit there.
+\dpart{Alternatives} A free-space map that remembers how much room each page
+has, so an insert can use space freed anywhere.
+\dpart{Why} Terms are added and almost never removed, so the last page is
+nearly always the only one with room. Appending keeps new terms together.
+\dpart{Cost} Space freed on an earlier page is reused only by records that are
+placed on that page later, which does not happen; it is lost until a
+compaction of the whole heap.
+\end{decision}
+
 \begin{decision}{Spellings are never deleted}
 \dpart{Choice} Deleting the last triple that uses a term keeps the term and its
 id in the dictionary.
@@ -213,7 +251,8 @@ literals keeps every one of them.
 \begin{status}
 The page frame and the pageLSN layout exist, and the disk manager runs (plan
 1.1): it allocates pages by growing the file, reads and writes whole pages, and
-fsyncs on shutdown. The term heap is plan 3.1.
+fsyncs on shutdown. The term heap runs too (plan 3.1): slotted pages that
+compact on delete, chained into a heap that appends to its last page.
 \end{status}
 
 \begin{checkyourself}
@@ -222,6 +261,7 @@ fsyncs on shutdown. The term heap is plan 3.1.
 \item A \code{write} returned successfully and then the machine lost power. Was the data durable? What call would have made it so?
 \item \code{fsync} returns an error. Why is calling it again and continuing on success wrong?
 \item Why is $-1$ a better ``no page'' sentinel than 0?
+\item A 5,000-byte \code{rdfs:comment} literal arrives in a file being loaded. What does OntoDB do, and how would PostgreSQL store it?
 \item After a crash, a log record names page 812, but the file holds only 800 pages. How can OntoDB's allocation scheme produce this, and who must repair it?
 \end{checkyourself}
 
