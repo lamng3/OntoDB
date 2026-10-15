@@ -5,14 +5,22 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "common/io_stats.h"
 #include "common/types.h"
 #include "dictionary/mem_dictionary.h"
 #include "recovery/log_manager.h"
 #include "store/mem_store.h"
+#include "store/recording_store.h"
 
 namespace ontodb {
+
+// One line of \verify's report.
+struct CheckResult {
+  bool ok;
+  std::string line;
+};
 
 // What to do with a log record that is torn or corrupt (PLAN 9.5). The names
 // follow RocksDB's WAL recovery modes.
@@ -76,6 +84,18 @@ class Durability {
 
  private:
   void StartLog(lsn_t next_lsn);
+  // Open, in steps. Each returns the LSN it reached.
+  auto LoadSnapshotIfAny(OpenReport* report) -> lsn_t;
+  auto ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* report) -> lsn_t;
+  // Run: begin, new terms, one update per change, commit, forced.
+  void LogTransaction(const std::vector<RecordingStore::Change>& changes);
+  // Verify, one check per report line.
+  auto CheckSnapshot(MemDictionary* terms, MemStore* store,
+                     lsn_t* snapshot_lsn) const -> CheckResult;
+  static auto CheckLog(const LogScan& scan) -> CheckResult;
+  auto CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDictionary* terms,
+                   MemStore* store) const -> CheckResult;
+  auto CheckInvariants() const -> CheckResult;
 
   std::filesystem::path dir_;
   MemDictionary* dictionary_;

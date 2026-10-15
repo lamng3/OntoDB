@@ -17,6 +17,8 @@ class Shell {
   auto Dispatch(const std::string& line) -> bool;
   auto Evaluate(const std::string& line, SessionState& session) -> std::string;
   auto FormatResult(const StatementResult& result) const -> std::string;
+  // Appends "time: N ms" when \timing is on.
+  auto Timed(const std::string& text, double milliseconds) const -> std::string;
   void Prompt();
 
   Database& db_;
