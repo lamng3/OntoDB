@@ -1,6 +1,7 @@
 #include "buffer/buffer_pool_manager.h"
 
 #include <future>
+#include <sstream>
 
 #include "common/crash_point.h"
 #include "common/exception.h"
@@ -159,7 +160,26 @@ auto BufferPoolManager::GetPinnedFrameCount() const -> size_t {
 }
 
 auto BufferPoolManager::DebugString() const -> std::string {
-  throw NotImplementedException("PLAN 1.6: BufferPoolManager::DebugString");
+  std::lock_guard<std::mutex> guard(mu_);
+  size_t pinned = 0;
+  size_t dirty = 0;
+  std::ostringstream rows;
+  for (size_t i = 0; i < frames_.size(); i++) {
+    const Page& page = frames_[i];
+    if (page.GetPageId() == INVALID_PAGE_ID) {
+      continue;
+    }
+    pinned += page.GetPinCount() > 0 ? 1 : 0;
+    dirty += page.IsDirty() ? 1 : 0;
+    rows << "frame " << i << ": page " << page.GetPageId() << ", pins " << page.GetPinCount()
+         << ", " << (page.IsDirty() ? "dirty" : "clean") << ", pageLSN " << page.GetLSN() << '\n';
+  }
+  std::ostringstream out;
+  out << "buffer pool: " << pool_size_ << " frames, lru_k " << replacer_k_ << ", "
+      << page_table_.size() << " in use, " << free_list_.size() << " free, " << pinned
+      << " pinned, " << dirty << " dirty, " << replacer_.Size() << " evictable\n"
+      << rows.str();
+  return out.str();
 }
 
 // The guards turn a null page (a full pool, or a deleted page) into an error

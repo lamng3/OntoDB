@@ -57,7 +57,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - B+ tree page classes wrap a `Page*` and do not freeze the byte layout. That layout is plan 2.1.
 - `Transaction` accessors and `LogRecord` factories hold data. The manager and the serialization are stubs.
 - `TransactionManager` takes an optional `LogManager*`. Null means write-set undo (plan 7.2). Non-null means log undo (plan 8.4). The pointer is in the signature now so plan 8.4 does not have to change it.
-- `\trace` prints `not built yet (PLAN 1.6)`. `SwitchableTraceSink` is already there to call.
+- `\trace on|off` switches `SwitchableTraceSink`, which prints component events to stderr. `\bpm` and `\page` report that the memory backend has no buffer pool.
 - The devcontainer installs `default-jre-headless` so `scripts/fetch-data lubm` can run the official generator.
 - Targets compile with `-Wno-unused-private-field` because stub objects store the pointers the student will use.
 - `Page` carries a reader-writer latch (`RLatch`/`WLatch`) for the guards, so a `Page` is neither copyable nor movable.

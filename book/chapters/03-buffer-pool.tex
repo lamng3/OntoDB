@@ -252,11 +252,28 @@ dropping the guard, escapes the dirty bit, which is one more reason never to
 keep that pointer.
 \end{decision}
 
+\begin{decision}{Inspecting a page goes through the pool}
+\dpart{Choice} \code{\textbackslash page N} reads page $N$ with a read guard,
+as any operator would, and prints its pageLSN and the first payload bytes.
+\code{\textbackslash bpm} prints each frame's page, pins, dirty bit, and
+pageLSN.
+\dpart{Alternatives} Read the page straight from the file, bypassing the pool.
+\dpart{Why} The pool's copy is what the engine sees, including changes that
+are dirty and not yet on disk. Reading the file would show a page the engine
+has already moved past.
+\dpart{Cost} Looking is an access: it can load the page, evict another, and add
+to the page's LRU-K history. The observer changes what it observes, so
+\code{\textbackslash bpm} is best read before \code{\textbackslash page}.
+\end{decision}
+
 \begin{status}
 The disk manager, the I/O scheduler, the LRU-K replacer, and the pool run
 (plans 1.1 to 1.4), and so do page guards with per-frame reader--writer latches
-(plan 1.5). The pool already flushes the log up to a page's pageLSN before
-writing the page. The shell's inspection commands are plan 1.6.
+(plan 1.5) and the shell's \code{\textbackslash bpm}, \code{\textbackslash page},
+and \code{\textbackslash trace} (plan 1.6): the buffer pool is complete. It
+already flushes the log up to a page's pageLSN before writing the page. The
+default memory backend has no pool, so these commands come alive with the
+indexed store (plan 3.4).
 The experiment that checks them is simple: run a scan with a pool of 4 frames
 and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
 \end{status}
@@ -271,6 +288,7 @@ and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbacks
 \item Two threads miss on two different pages at the same moment. In OntoDB's pool, how long does the second thread wait, and why?
 \item A test arms the crash point between the log flush and the page write, and the exception unwinds through the pool's destructor. Why would a destructor that flushes dirty pages ruin the test?
 \item Why does a guard release its latch \emph{before} it unpins the page, and not after?
+\item You run \code{\textbackslash page 7} twice and then \code{\textbackslash bpm}. How has inspecting the page changed the pool?
 \item A query returns the right rows, but afterwards one frame is still pinned. What will go wrong later, and how do OntoDB's guards prevent it?
 \end{checkyourself}
 

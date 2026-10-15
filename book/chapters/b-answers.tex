@@ -33,6 +33,7 @@ line is the point.
 \item Until the first thread's read finishes: the pool's one latch is held across the I/O, and the single I/O thread would serialize the reads anyway.
 \item It would write the very page the crash point was meant to keep off the disk, so the test could not observe the state a real crash leaves.
 \item Once the pin is gone the pool may evict the frame and load a different page into it; a latch still held would then be a latch on someone else's page.
+\item Page 7 is now resident (another page may have been evicted to make room), and its LRU-K history holds two recent accesses, so it has a finite, small distance and will be among the last to go.
 \item That frame can never be evicted, so the pool is permanently one frame smaller; enough leaks and every frame is pinned and the next miss fails. Guards unpin exactly once at the end of their scope, and the tests check that nothing stays pinned.
 \end{enumerate}
 
