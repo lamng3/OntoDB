@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <map>
 #include <random>
 #include <string>
@@ -135,7 +136,7 @@ TEST(P3_2_DiskDictionary, DISABLED_BothDirectionsAndRestart) {
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P3_3_Catalog, DISABLED_RootsSurviveFlush) {
+TEST(P3_3_Catalog, RootsSurviveFlush) {
   test::DiskEnv env;
   Catalog catalog(&env.bpm, 0);
   EXPECT_EQ(catalog.GetIndexRoot("spo"), INVALID_PAGE_ID);
@@ -150,6 +151,20 @@ TEST(P3_3_Catalog, DISABLED_RootsSurviveFlush) {
   EXPECT_EQ(again.GetIndexRoot("spo"), 4);
   EXPECT_EQ(again.GetIndexRoot("pos"), 5);
   EXPECT_EQ(again.GetDictionaryRoot(), 6);
+  EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+TEST(P3_3_Catalog, ClaimsItsPageAndRefusesAForeignOne) {
+  test::DiskEnv env;
+  Catalog catalog(&env.bpm);
+  page_id_t next = INVALID_PAGE_ID;
+  ASSERT_NE(env.bpm.NewPage(&next), nullptr);
+  EXPECT_NE(next, 0);  // page 0 was taken by the catalog
+  std::memset(env.bpm.FetchPage(next)->GetData() + 100, 7, 4);
+  EXPECT_TRUE(env.bpm.UnpinPage(next, true));
+  EXPECT_TRUE(env.bpm.UnpinPage(next, true));
+  EXPECT_THROW(Catalog(&env.bpm, next), StorageException);
+  EXPECT_THROW(catalog.SetIndexRoot("too-long-name", 1), std::invalid_argument);
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
