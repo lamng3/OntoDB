@@ -141,15 +141,19 @@ filtering; the other permutations turn scans into prefix ranges.
 OntoDB's \code{TripleKey} is exactly \cref{fig:key}: three big-endian
 \code{uint64}s, compared with \code{memcmp}. \code{PrefixLower(key, n)} and
 \code{PrefixUpper(key, n)} produce the bounds for $n = 0, 1, 2, 3$ bound
-components. The catalog names three B+ tree roots, \code{"spo"}, \code{"pos"},
+components. The upper bound adds one to the prefix, read as a big-endian
+number, carrying left. When nothing lies above the prefix ($n = 0$, or every
+bound id is the maximum) it saturates to the all-\code{0xFF} key, three copies of
+\code{INVALID\_TERM\_ID}, which the dictionary never assigns. The catalog names three B+ tree roots, \code{"spo"}, \code{"pos"},
 and \code{"osp"}, and an insert or delete updates every permutation the catalog
 has, or none. The plan builds SPO first and then \emph{measures} whether POS and
 OSP pay for their space on real SPARQL workloads before adding them.
 \end{ontodb}
 
 \begin{status}
-The triple key is the next item to implement (plan 0.2). The indexed store and
-the permutation measurement follow the B+ tree (plans 3.4 and 3.5).
+The triple key runs (plan 0.2): encode, decode, compare, and both prefix
+bounds, with the carry and saturation cases tested. The indexed store and the
+permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \end{status}
 
 \section*{Further reading}

@@ -7,7 +7,7 @@
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
 [![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.github.io/ontodb-docs/)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
-[![Progress](https://img.shields.io/badge/plan-9%2F53-f59e0b)](PLAN.md)
+[![Progress](https://img.shields.io/badge/plan-10%2F53-f59e0b)](PLAN.md)
 [![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
 
 [⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [📊 Status](#-status) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
@@ -65,11 +65,12 @@ write-ahead log. A restart is ARIES.
 | SPARQL shell | ✅ |
 | Persistent databases (snapshot, WAL, recovery modes, verify) | ✅ |
 | Log records and group commit | ✅ |
-| Triple key, buffer pool, B+ tree | 🚧 |
+| Triple key | ✅ |
+| Buffer pool, B+ tree | 🚧 |
 | RDF storage, query execution, optimizer, bulk load | 🚧 |
 | Concurrency, page-level recovery | 🚧 |
 
-<sub>9 of 53 slices pass · `scripts/status` · the build list is [PLAN.md](PLAN.md)</sub>
+<sub>10 of 53 slices pass · `scripts/status` · the build list is [PLAN.md](PLAN.md)</sub>
 
 </div>
 
