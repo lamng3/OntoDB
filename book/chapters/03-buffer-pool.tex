@@ -134,6 +134,21 @@ log is durable and before the page is. That ordering is the write-ahead rule of
 \cref{ch:wal}.
 \end{ontodb}
 
+\begin{decision}{One I/O thread, first in, first out}
+\dpart{Choice} The pool never calls the disk manager itself. It hands a request
+to a \code{DiskScheduler}, whose single background thread runs reads and writes
+in the order they were scheduled. \code{Schedule} returns at once with a
+future; if the I/O fails, the error is rethrown from the future's \code{get}.
+\dpart{Alternatives} Synchronous I/O on the query thread; a pool of I/O
+threads; an asynchronous kernel interface such as \code{io\_uring}.
+\dpart{Why} In-order execution makes ``write page 9, then read page 9'' correct
+with no per-page bookkeeping. A background thread lets a flush or a prefetch
+overlap with query work, and errors arrive where the waiting caller can handle
+them.
+\dpart{Cost} No parallel I/O: an SSD reaches full throughput only with many
+requests in flight, and one slow read delays every request behind it.
+\end{decision}
+
 \begin{decision}{LRU-K with $K = 2$ (planned)}
 \dpart{Choice} Evict the unpinned frame with the largest backward 2-distance;
 frames seen fewer than twice have infinite distance, and ties go to the older
@@ -164,7 +179,8 @@ every caller must follow, and a little ceremony for one-line accesses.
 \end{decision}
 
 \begin{status}
-The LRU-K replacer, the pool, and the guards are being built (plans 1.3 to 1.5).
+The disk manager and the I/O scheduler run (plans 1.1 and 1.2). The LRU-K
+replacer, the pool, and the guards are being built (plans 1.3 to 1.5).
 The experiment that checks them is simple: run a scan with a pool of 4 frames
 and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
 \end{status}
@@ -174,6 +190,7 @@ and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbacks
 \item In \cref{tab:lruk}, add an access to C at time 10. Which page does LRU-K evict at time 11 now?
 \item Explain sequential flooding, and why $K = 2$ resists it while $K = 1$ does not.
 \item Which cell of the steal/force table needs \emph{undo} information in the log, and why?
+\item A thread schedules a write of page 9 and then, without waiting, a read of page 9 into another buffer. What does the read return in OntoDB, and what could go wrong with a pool of I/O threads?
 \item A query returns the right rows, but afterwards one frame is still pinned. What will go wrong later, and how do OntoDB's guards prevent it?
 \end{checkyourself}
 

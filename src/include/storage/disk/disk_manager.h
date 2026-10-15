@@ -21,8 +21,10 @@ namespace ontodb {
 // The file's length is the allocation record: AllocatePage grows the file by
 // one zero page, so a restart sees every page allocated before it, and page 0
 // is an ordinary page (the catalog uses it). DeallocatePage does not reuse the
-// id; the file only grows. WritePage does not fsync; ShutDown does. Reading or
-// writing a page that was never allocated throws StorageException.
+// id; the file only grows. WritePage does not fsync; ShutDown does. Writing a
+// page past the end grows the file to cover it, and reading one returns zeros,
+// so a never-written page reads as zeros whether or not it was allocated. A
+// negative page id, or any call after ShutDown, throws StorageException.
 class DiskManager {
  public:
   explicit DiskManager(std::string db_file, IoStats* stats = nullptr, TraceSink* trace = nullptr);
@@ -42,7 +44,7 @@ class DiskManager {
 
  private:
   void Trace(const char* op, page_id_t page_id);
-  void CheckAllocated(page_id_t page_id) const;
+  void CheckUsable(page_id_t page_id) const;
 
   std::string db_file_;
   IoStats* stats_;
