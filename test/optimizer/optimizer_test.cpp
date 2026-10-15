@@ -40,7 +40,7 @@ void Walk(const AbstractPlanNode* node, std::vector<PlanType>* types) {
   }
 }
 
-TEST(P5_1_Statistics, DISABLED_CountsPositionsAndPatterns) {
+TEST(P5_1_Statistics, CountsPositionsAndPatterns) {
   MemDictionary dict;
   MemStore store;
   store.Insert({1, 10, 100});
@@ -62,6 +62,15 @@ TEST(P5_1_Statistics, DISABLED_CountsPositionsAndPatterns) {
   pred_obj.predicate = 10;
   pred_obj.object = 100;
   EXPECT_EQ(stats.PatternCount(pred_obj), 2u);
+  // (1, 11), (11, 100), and (1, 100) each occur in some triple, but
+  // (1, 11, 100) does not: pair counts cannot answer the fully bound pattern.
+  store.Insert({1, 11, 105});
+  stats.Collect(store, dict);
+  EXPECT_GT(stats.PatternCount({1, 11, std::nullopt}), 0u);
+  EXPECT_GT(stats.PatternCount({std::nullopt, 11, 100}), 0u);
+  EXPECT_GT(stats.PatternCount({1, std::nullopt, 100}), 0u);
+  EXPECT_EQ(stats.PatternCount({1, 11, 100}), 0u);
+  EXPECT_EQ(stats.PatternCount({2, 11, 100}), 1u);
 }
 
 TEST(P5_2_Cardinality, DISABLED_MonotoneAndNonNegative) {

@@ -99,6 +99,23 @@ finite, never negative, and binding one more position never increases them.
 Join ordering starts greedy and left-deep.
 \end{ontodb}
 
+\begin{decision}{Exact counts for single patterns}
+\dpart{Choice} Statistics are collected in one scan of the store: counts per
+subject, predicate, and object, per pair of positions, and the set of triples.
+Every single triple pattern of constants therefore has an \emph{exact}
+cardinality; estimation, and its independence assumptions, begin only at joins.
+\dpart{Alternatives} Distinct counts and per-predicate counts only, combined
+with the independence formula above; histograms or samples; or RDF-3X's
+characteristic sets, which summarize which predicates occur together on one
+subject.
+\dpart{Why} The independence formula is wrong by orders of magnitude on RDF,
+where predicates and objects are correlated. For a store of this size, exact
+pair counts are affordable and remove that error from every scan estimate.
+\dpart{Cost} About seven hash entries per triple, collected at load, and
+stale after updates until the next collection, like a table that has not been
+re-\code{ANALYZE}d.
+\end{decision}
+
 \begin{decision}{The inner side is re-opened with the outer row}
 \dpart{Choice} Every executor has \code{InitWith(row)}, which by default is
 \code{Init}. A triple scan overrides it: each variable that the outer row
@@ -176,14 +193,14 @@ Today the planner always joins in textual order with nested loop, and the
 nested loop rebinds its inner scan for every outer row (plan 4.1). The index
 nested-loop join (plan 4.2) and hash join (plan 4.3) run, chosen with
 \code{\textbackslash set join}, and the differential test checks every query
-file under all three against the memory store. Statistics, cardinality, join
-ordering, the automatic choice, and \code{\textbackslash explain analyze} are
-plans 5.1 to 5.5.
+file under all three against the memory store. Statistics run (plan 5.1). Cardinality, join ordering, the automatic choice,
+and \code{\textbackslash explain analyze} are plans 5.2 to 5.5.
 \end{status}
 
 \begin{checkyourself}
 \item Outer side 1,000 rows, inner pattern 1,000,000 triples, and the join binds the inner subject with SPO available. Compare nested loop and index nested loop.
 \item When does a hash join beat index nested loop?
+\item With exact pair counts, what is OntoDB's estimate for \code{(?, p, o)}, and where can its estimates still go wrong?
 \item A store has $|T| = 10^6$, $|p| = 10^4$, $|o| = 10^3$. What does the independence formula estimate for \code{(?, p, o)}? The true count is 1,000. What is the q-error?
 \item Why do estimation errors multiply up a plan?
 \item A hash join builds on \code{?c a ub:Course} (2,000 rows) and probes with \code{?s ub:takesCourse ?c} (50,000 rows). What does it keep in memory, and how many hash lookups does it make? What changes if the sides are swapped?

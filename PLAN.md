@@ -31,7 +31,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. Done. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. Done. |
-| Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. This is the next feature. |
+| Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. 5.1 is done. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
@@ -122,7 +122,7 @@ The memory nested-loop join already returns the right rows. These slices change 
 
 `Optimizer::Optimize` rewrites a left-deep nested-loop plan. The new plan returns the same rows. `Config::join` forces the algorithm when it is not `kAuto`: nested loop stays nested loop, `kHash` becomes a hash join, `kIndexNestedLoop` becomes an index nested-loop join. `kAuto` may pick any of the three.
 
-**5.1 Statistics.** `TripleCount`, `DistinctCount("s"|"p"|"o")`, `PredicateCount`, `PatternCount`. Collected at load.
+**5.1 Statistics.** Done. `TripleCount`, `DistinctCount("s"|"p"|"o")`, `PredicateCount`, `PatternCount`. Collected at load. Counts per position, per pair of positions, and the set of triples make every pattern count exact.
 
 **5.2 Cardinality.** Estimates are finite and never negative. An unbound pattern estimates `TripleCount`. Binding another position never increases the estimate.
 
