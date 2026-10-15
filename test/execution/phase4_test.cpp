@@ -382,5 +382,20 @@ TEST(P4_6_InsertDelete, AFailedWriteUndoesTheStatement) {
   EXPECT_EQ(store.Size(), 0u);
 }
 
+// A deadline in the past stops the plan at the first scan it opens.
+TEST(Execution, DeadlineStopsAPlan) {
+  MemStore store;
+  store.Insert({1, 9, 1});
+  Config config;
+  IoStats stats;
+  NullTraceSink trace;
+  ExecutorContext ctx(&store, nullptr, &config, nullptr, nullptr, nullptr, nullptr, &stats, &trace,
+                      nullptr);
+  ctx.SetDeadline(std::chrono::steady_clock::now() - std::chrono::seconds(1));
+  auto scan = ScanPlan(9, 2);
+  auto exec = ExecutorFactory::Create(scan.get(), &ctx);
+  EXPECT_THROW(exec->Init(), QueryTimeoutException);
+}
+
 }  // namespace
 }  // namespace ontodb
