@@ -8,6 +8,7 @@
 [![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.github.io/ontodb-docs/)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
 [![Progress](https://img.shields.io/badge/plan-9%2F53-f59e0b)](PLAN.md)
+[![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
 
 [⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [📊 Status](#-status) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📝 Citation](#-citation)
 
@@ -160,3 +161,7 @@ The [manual](https://lamng3.github.io/ontodb-docs/) covers installation, a tutor
   url    = {https://github.com/lamng3/OntoDB}
 }
 ```
+
+## License
+
+[CC BY 4.0](LICENSE). Copyright (c) 2026 Lam Nguyen.
