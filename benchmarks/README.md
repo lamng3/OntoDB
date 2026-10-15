@@ -15,7 +15,7 @@ Start a directory when the feature it measures exists. The first questions this 
 | Directory | Question | Waits on |
 | --- | --- | --- |
 | `eviction` | How do pool size and LRU-K change the hit ratio on one query mix? | Buffer pool |
-| `indexing` | Which permutations pay for themselves on LUBM? | RDF storage, bulk load |
+| `indexing` | Which permutations pay for themselves on LUBM? | Done: [results](indexing/results.md) |
 | `joins` | Nested loop, index nested loop, hash, and the optimizer's own choice | Query execution, optimizer |
 | `recovery` | Group commit and checkpoint interval against throughput and restart time | Recovery |
 

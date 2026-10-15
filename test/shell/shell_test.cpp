@@ -76,7 +76,7 @@ TEST(Shell, IndexedBackendAnswersLikeMemoryAndMovesBack) {
       "SELECT ?s ?o WHERE { ?s <http://www.w3.org/2000/01/rdf-schema#subClassOf> ?o . }\n";
   const auto out = RunScript("\\load " + test::DataFile("tiny.owl").string() + "\n" + query +
                              "\\set backend indexed\n" + query +
-                             "\\bpm\n\\tree spo\n\\tree pos\n"
+                             "\\bpm\n\\tree spo\n\\tree sop\n"
                              "INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/b> . }\n"
                              "\\set backend mem\n"
                              "SELECT ?o WHERE { <http://ex/a> <http://ex/p> ?o . }\n\\quit\n");
@@ -88,7 +88,7 @@ TEST(Shell, IndexedBackendAnswersLikeMemoryAndMovesBack) {
             out.substr(out.rfind('(', second), second - out.rfind('(', second)));
   EXPECT_NE(out.find("buffer pool: 64 frames"), std::string::npos) << out;
   EXPECT_NE(out.find("spo: root"), std::string::npos) << out;
-  EXPECT_NE(out.find("no index named pos"), std::string::npos) << out;
+  EXPECT_NE(out.find("no index named sop; this store has spo, pos, osp"), std::string::npos) << out;
   EXPECT_NE(out.find("<http://ex/b>"), std::string::npos) << out;
 }
 

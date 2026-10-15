@@ -24,6 +24,9 @@ class IndexedTripleIterator : public TripleIterator {
                         std::array<int, 3> order, TriplePattern filter);
   void Init() override;
   auto Next(Triple* out) -> bool override;
+  // Keys read from the index since construction, matched or filtered out.
+  // Benchmarks use it to see how much of a scan was wasted on the filter.
+  auto KeysExamined() const -> uint64_t { return examined_; }
 
  private:
   BPlusTree* tree_;
@@ -33,6 +36,7 @@ class IndexedTripleIterator : public TripleIterator {
   TriplePattern filter_;
   IndexIterator cursor_;
   bool started_{false};
+  uint64_t examined_{0};
 };
 
 }  // namespace ontodb
