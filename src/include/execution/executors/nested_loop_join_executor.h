@@ -8,9 +8,10 @@
 
 namespace ontodb {
 
-// Nested loop over two scans. The inner scan is not rebound with outer
-// values; that is PLAN 4.1. Shared variables must be equal or the pair is
-// skipped.
+// Nested loop over two inputs. For each outer row the inner side is
+// re-opened with InitWith(outer row), so an inner scan sees the outer
+// bindings as constants and, on an indexed store, becomes a prefix probe.
+// Shared variables must still be equal or the pair is skipped.
 class NestedLoopJoinExecutor : public AbstractExecutor {
  public:
   NestedLoopJoinExecutor(std::unique_ptr<AbstractExecutor> left,

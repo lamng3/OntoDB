@@ -1,5 +1,7 @@
 #include "execution/executors/triple_scan_executor.h"
 
+#include <optional>
+
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -26,6 +28,10 @@ auto TripleScanExecutor::BindPosition(const BoundTerm& term, term_id_t value,
 }
 
 void TripleScanExecutor::Init() {
+  InitWith(Row{});
+}
+
+void TripleScanExecutor::InitWith(const Row& bindings) {
   yielded_vacuous_ = false;
   iter_.reset();
   if (Vacuous()) {
@@ -37,16 +43,19 @@ void TripleScanExecutor::Init() {
       return;
     }
   }
+  auto value = [&](const BoundTerm& term) -> std::optional<term_id_t> {
+    if (!term.is_variable) {
+      return term.id;
+    }
+    if (term.slot < bindings.size() && bindings[term.slot] != INVALID_TERM_ID) {
+      return bindings[term.slot];
+    }
+    return std::nullopt;
+  };
   TriplePattern store_pattern;
-  if (!pattern.subject.is_variable) {
-    store_pattern.subject = pattern.subject.id;
-  }
-  if (!pattern.predicate.is_variable) {
-    store_pattern.predicate = pattern.predicate.id;
-  }
-  if (!pattern.object.is_variable) {
-    store_pattern.object = pattern.object.id;
-  }
+  store_pattern.subject = value(pattern.subject);
+  store_pattern.predicate = value(pattern.predicate);
+  store_pattern.object = value(pattern.object);
   iter_ = ctx_->GetStore()->Scan(store_pattern);
   iter_->Init();
 }

@@ -99,6 +99,22 @@ finite, never negative, and binding one more position never increases them.
 Join ordering starts greedy and left-deep.
 \end{ontodb}
 
+\begin{decision}{The inner side is re-opened with the outer row}
+\dpart{Choice} Every executor has \code{InitWith(row)}, which by default is
+\code{Init}. A triple scan overrides it: each variable that the outer row
+already binds becomes a constant in the pattern it hands the store. The nested
+loop re-opens its inner side this way for every outer row.
+\dpart{Alternatives} Open the inner scan once with its own pattern and compare
+every inner row with every outer row; or materialize the inner side once and
+loop over the copy.
+\dpart{Why} With the outer row filled in, the inner pattern usually binds the
+subject, so on an indexed store each probe is a short prefix range instead of
+a scan of every triple with that predicate. The cost per outer row drops from
+the size of the inner pattern to the size of its match.
+\dpart{Cost} One store scan opened, and one tree descent, per outer row, with
+no caching between rows that bind the same values.
+\end{decision}
+
 \begin{decision}{Forcing a join method rewrites the plan (planned)}
 \dpart{Choice} \code{\textbackslash set join hash} (or \code{nlj}, \code{inlj})
 is applied by the optimizer, which swaps the plan node. The executor factory
@@ -126,8 +142,9 @@ step wins, can be ordered badly.
 \end{decision}
 
 \begin{status}
-Today the planner always joins in textual order with nested loop. Rebinding the
-inner scan, index nested-loop join, hash join, statistics, cardinality, join
+Today the planner always joins in textual order with nested loop, and the
+nested loop rebinds its inner scan for every outer row (plan 4.1). Index
+nested-loop join, hash join, statistics, cardinality, join
 ordering, and \code{\textbackslash explain analyze} are plans 4.1 to 4.3 and
 5.1 to 5.5.
 \end{status}
@@ -137,6 +154,7 @@ ordering, and \code{\textbackslash explain analyze} are plans 4.1 to 4.3 and
 \item When does a hash join beat index nested loop?
 \item A store has $|T| = 10^6$, $|p| = 10^4$, $|o| = 10^3$. What does the independence formula estimate for \code{(?, p, o)}? The true count is 1,000. What is the q-error?
 \item Why do estimation errors multiply up a plan?
+\item \code{?s a ub:Student . ?s ub:name ?n}: the first pattern matches 1,000 students and the second 1,000,000 triples. How many triples does the nested loop read with rebinding on an indexed store, and how many without it?
 \item Why does forcing a join method in the optimizer, and not in the executor, matter for \code{\textbackslash explain}?
 \end{checkyourself}
 

@@ -86,7 +86,7 @@ auto RowsOf(AbstractExecutor* exec) -> std::vector<Row> {
   return rows;
 }
 
-TEST(P4_1_Rebind, DISABLED_InnerScanSeesOuterBinding) {
+TEST(P4_1_Rebind, InnerScanSeesOuterBinding) {
   RecordingStore store;
   store.triples = {{10, 1, 100}, {10, 2, 200}, {10, 2, 201}, {20, 1, 100}, {20, 2, 300}};
   Config config;
