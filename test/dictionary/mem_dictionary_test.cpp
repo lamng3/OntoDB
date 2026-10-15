@@ -20,6 +20,12 @@ TEST(MemDictionary, InsertLookupBothWays) {
   EXPECT_FALSE(dict.Lookup(term_id_t{99}).has_value());
 }
 
+TEST(MemDictionary, NeverAssignsTheUnboundMarker) {
+  EXPECT_NO_THROW(Dictionary::CheckAssignable(1));
+  EXPECT_NO_THROW(Dictionary::CheckAssignable(INVALID_TERM_ID - 1));
+  EXPECT_THROW(Dictionary::CheckAssignable(INVALID_TERM_ID), StorageException);
+}
+
 TEST(MemDictionary, IdsStartAtOneAndIncrease) {
   MemDictionary dict;
   EXPECT_EQ(dict.Size(), 0);
