@@ -9,6 +9,7 @@
 #include "catalog/catalog.h"
 #include "common/exception.h"
 #include "dictionary/disk_dictionary.h"
+#include "dictionary/mem_dictionary.h"
 #include "loader/rdf_loader.h"
 #include "storage/env.h"
 #include "storage/index/b_plus_tree.h"
@@ -108,7 +109,7 @@ TEST(P3_1_TermHeap, CompactionKeepsSlotsAndContentsAgainstAMap) {
   EXPECT_EQ(page.FreeSpace(), PAGE_SIZE - 16);
 }
 
-TEST(P3_2_DiskDictionary, DISABLED_BothDirectionsAndRestart) {
+TEST(P3_2_DiskDictionary, BothDirectionsAndRestart) {
   test::TempDir dir;
   const auto path = (dir.path() / "db").string();
   term_id_t id = INVALID_TERM_ID;
@@ -133,6 +134,46 @@ TEST(P3_2_DiskDictionary, DISABLED_BothDirectionsAndRestart) {
   DiskDictionary dict(&bpm, &catalog);
   EXPECT_EQ(dict.Lookup("<http://ex/Alice>"), id);
   EXPECT_EQ(dict.Lookup(id), "<http://ex/Alice>");
+  EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
+}
+
+// Thousands of terms on a small pool: dense ids, both directions, the same
+// answers after a restart, and a spelling never interned twice.
+TEST(P3_2_DiskDictionary, ManyTermsMatchMemoryDictionaryAcrossRestart) {
+  test::TempDir dir;
+  const auto path = (dir.path() / "db").string();
+  MemDictionary expect;
+  auto spelling = [](int i) {
+    return i % 3 == 0 ? "<http://ex/item" + std::to_string(i) + ">"
+                      : "\"literal " + std::to_string(i * 7919) + "\"@en";
+  };
+  {
+    DiskManager disk(path);
+    BufferPoolManager bpm(6, &disk, 2);
+    Catalog catalog(&bpm);
+    DiskDictionary dict(&bpm, &catalog);
+    for (int round = 0; round < 2; round++) {
+      for (int i = 0; i < 2000; i++) {
+        ASSERT_EQ(dict.Insert(spelling(i)), expect.Insert(spelling(i)));
+      }
+    }
+    EXPECT_EQ(dict.Size(), 2000u);
+    EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
+    bpm.FlushAllPages();
+    disk.ShutDown();
+  }
+  DiskManager disk(path);
+  BufferPoolManager bpm(6, &disk, 2);
+  Catalog catalog(&bpm);
+  DiskDictionary dict(&bpm, &catalog);
+  EXPECT_EQ(dict.Size(), 2000u);
+  for (int i = 0; i < 2000; i += 37) {
+    const auto id = expect.Lookup(spelling(i));
+    EXPECT_EQ(dict.Lookup(spelling(i)), id);
+    EXPECT_EQ(dict.Lookup(*id), spelling(i));
+  }
+  EXPECT_FALSE(dict.Lookup(term_id_t{2001}).has_value());
+  EXPECT_EQ(dict.Insert("<http://ex/new>"), 2001u);
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
 }
 

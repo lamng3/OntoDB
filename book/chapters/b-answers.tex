@@ -56,6 +56,7 @@ line is the point.
 \item Object bound: OSP. Subject and object bound: OSP, whose prefix is object then subject.
 \item Otherwise one term gets two ids, and a join between loaded data and a query constant silently matches nothing. Example: a datatype written with a prefix, \code{"21"\^{}\^{}xsd:integer}, and the same datatype written as a full IRI must become one spelling.
 \item Every operator would read that term as ``unbound'': a join would overwrite the slot from the other side, a scan would treat a constant as a variable, and the saturated upper bound could exclude a real key. The answers would be wrong without any error.
+\item The prefix scan on the hash returns both ids; the dictionary reads each candidate's spelling from the heap and returns the one that is equal. A collision costs an extra read, never a wrong answer.
 \item A root moves whenever it splits or collapses; the header page absorbs those changes. The catalog changes only when an index is created or dropped.
 \end{enumerate}
 
