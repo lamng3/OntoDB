@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DOWNLOADS = ROOT / "data" / "downloads"
 PIZZA_URL = "https://raw.githubusercontent.com/owlcs/pizza-ontology/master/pizza.owl"
 UBA_URL = "http://swat.cse.lehigh.edu/projects/lubm/uba1.7.zip"
+# The ontology IRI the generated data and data/lubm/queries use.
+UNIV_BENCH = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl"
 
 
 def fetch(url, dest):
@@ -57,10 +59,16 @@ def lubm():
             "0",
             "-seed",
             "0",
+            "-onto",
+            UNIV_BENCH,
         ],
         cwd=out,
         check=True,
     )
+    # The generator joins user.dir and the file name with a backslash, so on
+    # macOS and Linux it writes "lubm\\University0_0.owl" next to the directory.
+    for stray in out.parent.glob(out.name + "\\*"):
+        stray.replace(out / stray.name.split("\\", 1)[1])
     produced = out / "University0_0.owl"
     if not produced.exists():
         raise SystemExit(f"generator did not write {produced}")
