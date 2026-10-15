@@ -2,6 +2,8 @@
 
 #include "common/exception.h"
 #include "execution/executors/filter_executor.h"
+#include "execution/executors/hash_join_executor.h"
+#include "execution/executors/index_nested_loop_join_executor.h"
 #include "execution/executors/nested_loop_join_executor.h"
 #include "execution/executors/projection_executor.h"
 #include "execution/executors/triple_scan_executor.h"
@@ -34,9 +36,12 @@ auto ExecutorFactory::Create(const AbstractPlanNode* plan,
                                                   static_cast<const ProjectionPlan*>(plan));
     }
     case PlanType::kIndexNestedLoopJoin:
-      throw NotImplementedException("PLAN 4.2: IndexNestedLoopJoinExecutor");
+      return std::make_unique<IndexNestedLoopJoinExecutor>(
+          ctx, Create(plan->GetChildAt(0), ctx), static_cast<const IndexNestedLoopJoinPlan*>(plan));
     case PlanType::kHashJoin:
-      throw NotImplementedException("PLAN 4.3: HashJoinExecutor");
+      return std::make_unique<HashJoinExecutor>(Create(plan->GetChildAt(0), ctx),
+                                                Create(plan->GetChildAt(1), ctx),
+                                                static_cast<const HashJoinPlan*>(plan));
     case PlanType::kDistinct:
       throw NotImplementedException("PLAN 4.4: DistinctExecutor");
     case PlanType::kLimit:

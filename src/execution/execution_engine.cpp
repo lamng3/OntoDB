@@ -6,6 +6,7 @@
 #include "common/exception.h"
 #include "dictionary/dictionary.h"
 #include "execution/executor_factory.h"
+#include "optimizer/optimizer.h"
 #include "planner/planner.h"
 #include "store/triple_store.h"
 
@@ -31,8 +32,14 @@ auto ExecutionEngine::Decode(term_id_t id) const -> std::string {
   return "?";
 }
 
+// The plan that runs: the planner's tree with the join operator forced by
+// \set join. \explain prints exactly this tree.
+auto ExecutionEngine::PlanFor(const BoundQuery& query) const -> PlanNodeRef {
+  return Optimizer::ApplyJoinMethod(Planner().Plan(query), ctx_->GetConfig()->join);
+}
+
 auto ExecutionEngine::Explain(const BoundQuery& query) const -> std::string {
-  return Planner().Plan(query)->ToString();
+  return PlanFor(query)->ToString();
 }
 
 auto ExecutionEngine::ExplainAnalyze(const BoundQuery&) -> std::string {
@@ -42,7 +49,7 @@ auto ExecutionEngine::ExplainAnalyze(const BoundQuery&) -> std::string {
 auto ExecutionEngine::Execute(const BoundQuery& query) -> StatementResult {
   const auto started = std::chrono::steady_clock::now();
   StatementResult result;
-  const auto plan = Planner().Plan(query);
+  const auto plan = PlanFor(query);
   result.plan = plan->ToString();
 
   if (query.kind == BoundQuery::Kind::kInsert || query.kind == BoundQuery::Kind::kDelete) {
@@ -57,12 +64,6 @@ auto ExecutionEngine::Execute(const BoundQuery& query) -> StatementResult {
     result.message =
         CountMessage(query.kind == BoundQuery::Kind::kInsert ? "inserted" : "deleted", changed);
   } else {
-    if (ctx_->GetConfig()->join == JoinMethod::kIndexNestedLoop) {
-      throw NotImplementedException("PLAN 4.2: IndexNestedLoopJoinExecutor");
-    }
-    if (ctx_->GetConfig()->join == JoinMethod::kHash) {
-      throw NotImplementedException("PLAN 4.3: HashJoinExecutor");
-    }
     auto executor = ExecutorFactory::Create(plan.get(), ctx_);
     executor->Init();
     result.is_query = true;

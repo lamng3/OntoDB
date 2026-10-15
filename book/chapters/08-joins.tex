@@ -115,10 +115,40 @@ the size of the inner pattern to the size of its match.
 no caching between rows that bind the same values.
 \end{decision}
 
-\begin{decision}{Forcing a join method rewrites the plan (planned)}
+\begin{decision}{Index nested loop probes the store directly}
+\dpart{Choice} The index nested-loop join requires its inner side to be one
+triple pattern. It has no inner executor: for each outer row it builds the
+probe pattern from the outer row and asks the store, which picks the index
+whose order starts with the bound positions.
+\dpart{Alternatives} Treat any nested loop over a rebound scan as an index
+nested loop, since with rebinding it already probes.
+\dpart{Why} With rebinding, the nested loop already probes an index, so the
+two operators read the same triples. The separate operator skips the inner
+executor and the generic row merge, and it names the strategy in the plan,
+where \code{\textbackslash explain} and the optimizer can see it.
+\dpart{Cost} Only a scan can be the inner side; a join whose inner side is
+itself a join stays a nested loop.
+\end{decision}
+
+\begin{decision}{Hash join builds on the inner side}
+\dpart{Choice} The hash join reads its inner (right) input once into a table
+keyed by the ids of the variables both sides produce, then streams the outer
+input through it. A row whose key slot is unbound is not hashed but compared
+with every row of the other side.
+\dpart{Alternatives} Build on whichever side is smaller, or partition both
+sides to disk when the table does not fit (a grace hash join).
+\dpart{Why} Choosing the smaller side needs cardinality estimates, which
+arrive with the optimizer (plans 5.1 and 5.2); until then the inner side of a
+left-deep plan is a single pattern, usually the smaller input.
+\dpart{Cost} The whole inner side lives in memory; a large inner pattern can
+make the build expensive or exhaust memory. There is no spilling.
+\end{decision}
+
+\begin{decision}{Forcing a join method rewrites the plan}
 \dpart{Choice} \code{\textbackslash set join hash} (or \code{nlj}, \code{inlj})
-is applied by the optimizer, which swaps the plan node. The executor factory
-only reads node types.
+is applied by the optimizer (\code{Optimizer::ApplyJoinMethod}), which swaps
+each nested-loop node for the chosen one before the plan is explained or run.
+The executor factory only reads node types.
 \dpart{Alternatives} Keep one join node and let the executor read the setting
 at run time.
 \dpart{Why} \code{\textbackslash explain} then always prints the plan that
@@ -143,10 +173,12 @@ step wins, can be ordered badly.
 
 \begin{status}
 Today the planner always joins in textual order with nested loop, and the
-nested loop rebinds its inner scan for every outer row (plan 4.1). Index
-nested-loop join, hash join, statistics, cardinality, join
-ordering, and \code{\textbackslash explain analyze} are plans 4.1 to 4.3 and
-5.1 to 5.5.
+nested loop rebinds its inner scan for every outer row (plan 4.1). The index
+nested-loop join (plan 4.2) and hash join (plan 4.3) run, chosen with
+\code{\textbackslash set join}, and the differential test checks every query
+file under all three against the memory store. Statistics, cardinality, join
+ordering, the automatic choice, and \code{\textbackslash explain analyze} are
+plans 5.1 to 5.5.
 \end{status}
 
 \begin{checkyourself}
@@ -154,6 +186,7 @@ ordering, and \code{\textbackslash explain analyze} are plans 4.1 to 4.3 and
 \item When does a hash join beat index nested loop?
 \item A store has $|T| = 10^6$, $|p| = 10^4$, $|o| = 10^3$. What does the independence formula estimate for \code{(?, p, o)}? The true count is 1,000. What is the q-error?
 \item Why do estimation errors multiply up a plan?
+\item A hash join builds on \code{?c a ub:Course} (2,000 rows) and probes with \code{?s ub:takesCourse ?c} (50,000 rows). What does it keep in memory, and how many hash lookups does it make? What changes if the sides are swapped?
 \item \code{?s a ub:Student . ?s ub:name ?n}: the first pattern matches 1,000 students and the second 1,000,000 triples. How many triples does the nested loop read with rebinding on an indexed store, and how many without it?
 \item Why does forcing a join method in the optimizer, and not in the executor, matter for \code{\textbackslash explain}?
 \end{checkyourself}

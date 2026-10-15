@@ -97,11 +97,21 @@ TEST(Differential, MemAndIndexed) {
       for (const auto& item : cases) {
         const auto left = mem.Execute(item.text, nullptr);
         const auto bound = Binder(dictionary).Bind(Parser(item.text).Parse());
-        const auto right = engine.Execute(bound);
-        EXPECT_EQ(JoinRows(left.rows), JoinRows(right.rows)) << item.name;
-        if (item.name.rfind("update", 0) == 0) {
-          EXPECT_EQ(left.message, right.message) << item.name;
+        const bool update = item.name.rfind("update", 0) == 0;
+        // Every join operator must return the nested loop's rows. Updates run
+        // once, since running one again would change the store.
+        for (const auto join :
+             {JoinMethod::kNestedLoop, JoinMethod::kIndexNestedLoop, JoinMethod::kHash}) {
+          config.join = join;
+          const auto right = engine.Execute(bound);
+          EXPECT_EQ(JoinRows(left.rows), JoinRows(right.rows))
+              << item.name << " with join " << static_cast<int>(join);
+          if (update) {
+            EXPECT_EQ(left.message, right.message) << item.name;
+            break;
+          }
         }
+        config.join = JoinMethod::kNestedLoop;
         EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u) << item.name;
       }
     }

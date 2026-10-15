@@ -40,6 +40,9 @@ class AbstractPlanNode {
     return children_.at(index).get();
   }
   auto GetChildren() const -> const std::vector<PlanNodeRef>& { return children_; }
+  // For plan rewrites: take the children out, and put (rewritten) ones back.
+  auto ReleaseChildren() -> std::vector<PlanNodeRef> { return std::move(children_); }
+  void SetChildren(std::vector<PlanNodeRef> children) { children_ = std::move(children); }
   auto ToString() const -> std::string { return Pretty(0); }
 
  protected:
