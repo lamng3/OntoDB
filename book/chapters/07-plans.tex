@@ -157,8 +157,10 @@ before their executors are written.
 \dpart{Alternatives} Add a plan node only together with its executor.
 \dpart{Why} The plan's shape and the planner's tests can be fixed first; each
 executor then arrives into a slot that is already wired and printed.
-\dpart{Cost} For a while, \code{\textbackslash explain} shows plans that cannot
-run, and running one throws ``not built yet''.
+\dpart{Cost} For a while, \code{\textbackslash explain} showed plans that could
+not run, and running one threw ``not built yet''. Since plan 4.6 every node
+has its executor; insert and delete stopped being a special case in the
+engine and became an operator like the rest.
 \end{decision}
 
 \begin{decision}{\code{ORDER BY} uses a total order on values}
@@ -221,8 +223,8 @@ larger than the answer.
 
 \begin{status}
 Parsing, binding, planning, triple scans, the three joins, filter,
-projection, distinct, limit, offset, and sort run on both backends (plans 4.1
-to 4.5). On the indexed backend a sort larger than half the pool spills to
+projection, distinct, limit, offset, sort, insert, and delete run on both
+backends as operators (plans 4.1 to 4.6). On the indexed backend a sort larger than half the pool spills to
 pages; a test sorts 3,000 rows on an 8-frame pool through three runs and one
 intermediate merge.
 \end{status}

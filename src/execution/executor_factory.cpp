@@ -5,6 +5,7 @@
 #include "execution/executors/filter_executor.h"
 #include "execution/executors/hash_join_executor.h"
 #include "execution/executors/index_nested_loop_join_executor.h"
+#include "execution/executors/modify_executor.h"
 #include "execution/executors/nested_loop_join_executor.h"
 #include "execution/executors/projection_executor.h"
 #include "execution/executors/sort_executor.h"
@@ -54,9 +55,9 @@ auto ExecutorFactory::Create(const AbstractPlanNode* plan,
       return std::make_unique<SortExecutor>(ctx, Create(plan->GetChildAt(0), ctx),
                                             static_cast<const SortPlan*>(plan));
     case PlanType::kInsert:
-      throw NotImplementedException("PLAN 4.6: InsertExecutor");
+      return std::make_unique<ModifyExecutor>(ctx, plan, true);
     case PlanType::kDelete:
-      throw NotImplementedException("PLAN 4.6: DeleteExecutor");
+      return std::make_unique<ModifyExecutor>(ctx, plan, false);
   }
   throw NotImplementedException("PLAN 4.1: ExecutorFactory::Create");
 }

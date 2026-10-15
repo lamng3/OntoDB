@@ -18,9 +18,9 @@ struct StatementResult {
   double milliseconds{0};
 };
 
-// Runs a bound statement. SELECT goes through the volcano executors.
-// INSERT DATA and DELETE DATA write the memory store directly until
-// InsertExecutor and DeleteExecutor exist (PLAN 4.6).
+// Runs a bound statement through the volcano executors: SELECT as a tree of
+// scans, joins, and the rest; INSERT DATA and DELETE DATA as one
+// ModifyExecutor, whose single output row is the number of triples changed.
 class ExecutionEngine {
  public:
   explicit ExecutionEngine(ExecutorContext* ctx);

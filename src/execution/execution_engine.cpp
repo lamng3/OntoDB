@@ -53,14 +53,10 @@ auto ExecutionEngine::Execute(const BoundQuery& query) -> StatementResult {
   result.plan = plan->ToString();
 
   if (query.kind == BoundQuery::Kind::kInsert || query.kind == BoundQuery::Kind::kDelete) {
-    size_t changed = 0;
-    for (const auto& triple : query.ground_triples) {
-      if (query.kind == BoundQuery::Kind::kInsert) {
-        changed += ctx_->GetStore()->Insert(triple) ? 1 : 0;
-      } else {
-        changed += ctx_->GetStore()->Delete(triple) ? 1 : 0;
-      }
-    }
+    auto executor = ExecutorFactory::Create(plan.get(), ctx_);
+    executor->Init();
+    Row count;
+    const size_t changed = executor->Next(&count) ? static_cast<size_t>(count.at(0)) : 0;
     result.message =
         CountMessage(query.kind == BoundQuery::Kind::kInsert ? "inserted" : "deleted", changed);
   } else {

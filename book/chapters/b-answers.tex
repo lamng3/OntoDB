@@ -93,6 +93,7 @@ line is the point.
 \item $r_1(A)$ before $w_2(A)$ gives $T_1 \to T_2$; $r_2(B)$ before $w_1(B)$ gives $T_2 \to T_1$. The graph has a cycle, so the schedule is not conflict-serializable.
 \item $r_1(A)\, w_2(A)\, c_2\, r_1(A)$: $T_1$ reads two different values. Repeatable read is the first level that forbids it.
 \item Validity is defined by the application's invariants, such as ``every student has a name''. The engine cannot know them; it provides atomicity, isolation, and durability, so that the application can keep them.
+\item Nothing from the statement: the insert operator deletes the two triples it had added before the error propagates. That holds even with no log.
 \item Both read $N$ and both insert a student they believe is number $N + 1$: an anomaly built on a phantom (write skew). It is possible at read uncommitted, read committed, and repeatable read. Serializable's range locks make one insert wait; if both hold the range in S and both want to insert, it is a deadlock, and the younger transaction is aborted.
 \end{enumerate}
 
