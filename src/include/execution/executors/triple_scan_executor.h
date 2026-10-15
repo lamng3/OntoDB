@@ -14,6 +14,9 @@ class TripleScanExecutor : public AbstractExecutor {
   TripleScanExecutor(ExecutorContext* ctx, const TripleScanPlan* plan);
 
   void Init() override;
+  // Opens the scan with each variable that `bindings` already binds filled in
+  // as a constant, so the store sees the narrowest pattern it can.
+  void InitWith(const Row& bindings) override;
   auto Next(Row* row) -> bool override;
   auto GetOutputSchema() const -> const Schema& override;
 

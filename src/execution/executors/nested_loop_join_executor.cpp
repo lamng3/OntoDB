@@ -11,7 +11,7 @@ void NestedLoopJoinExecutor::Init() {
   left_->Init();
   left_ok_ = left_->Next(&left_row_);
   if (left_ok_) {
-    right_->Init();
+    right_->InitWith(left_row_);
   }
 }
 
@@ -39,7 +39,7 @@ auto NestedLoopJoinExecutor::Next(Row* row) -> bool {
     }
     left_ok_ = left_->Next(&left_row_);
     if (left_ok_) {
-      right_->Init();
+      right_->InitWith(left_row_);
     }
   }
   return false;

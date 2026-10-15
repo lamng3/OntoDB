@@ -81,6 +81,7 @@ line is the point.
 \item Nested loop: $10^3 \times 10^6 = 10^9$ comparisons. Index nested loop: 1,000 prefix probes, each a root-to-leaf descent (mostly cached) plus the few matching triples.
 \item When both inputs are large, no index makes a probe selective, and the build side fits in memory.
 \item $(10^4 \times 10^3) / 10^6 = 10$. The q-error is $\max(10/1000,\ 1000/10) = 100$.
+\item With rebinding, each of the 1,000 outer rows binds \code{?s}, so the inner scan is a prefix probe returning that student's names: about 1,000 probes reading a few triples each. Without it, every outer row rescans all 1,000,000 \code{ub:name} triples: $10^9$ triples read.
 \item A join's estimate is built from its inputs' estimates, so their errors multiply: two inputs each off by 10 give an output off by up to 100.
 \item \code{\textbackslash explain} prints the optimizer's plan. If the executor swapped algorithms at run time, the printed plan would not be the one that ran.
 \end{enumerate}
