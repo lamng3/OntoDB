@@ -224,7 +224,7 @@ TEST(P3_4_IndexedStore, InsertDeleteScan) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P3_5_BoundPatterns, DISABLED_AllEightCombinations) {
+TEST(P3_5_BoundPatterns, AllEightCombinations) {
   test::DiskEnv env;
   Catalog catalog(&env.bpm);
   DiskDictionary dict(&env.bpm, &catalog);
@@ -246,7 +246,7 @@ TEST(P3_5_BoundPatterns, DISABLED_AllEightCombinations) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P3_6_Restart, DISABLED_CleanShutdownKeepsTriples) {
+TEST(P3_6_Restart, CleanShutdownKeepsTriples) {
   test::TempDir dir;
   const auto path = (dir.path() / "db").string();
   {
