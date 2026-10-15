@@ -41,7 +41,7 @@ void ExpectSame(const std::vector<TripleKey>& got, const std::vector<TripleKey>&
   }
 }
 
-TEST(P2_1_PageLayout, DISABLED_LeafInternalAndHeader) {
+TEST(P2_1_PageLayout, LeafInternalAndHeader) {
   Page raw;
   EXPECT_GE(BPlusTreeLeafPage::MaxSize(), 2);
   EXPECT_GE(BPlusTreeInternalPage::MaxSize(), 2);

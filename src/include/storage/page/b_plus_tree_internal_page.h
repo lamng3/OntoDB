@@ -10,6 +10,11 @@ namespace ontodb {
 // than KeyAt(i), and keys in ValueAt(i) are greater than or equal to KeyAt(i).
 // Keys are strictly increasing. MaxSize() is at least 2 and the page fits in
 // PAGE_SIZE after the pageLSN.
+//
+//   offset      size  field
+//   20 + 28*i     24  KeyAt(i) (slot 0's key bytes are unused)
+//   44 + 28*i      4  ValueAt(i), the child page id
+// n keys use n + 1 slots; MaxSize() = (4096 - 20) / 28 - 1 = 144 keys.
 class BPlusTreeInternalPage : public BPlusTreePage {
  public:
   explicit BPlusTreeInternalPage(Page* page);

@@ -34,7 +34,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 2. Plan 4.6's insert executor writes every index the catalog knows, and the dictionary, or writes nothing if the triple is already present.
 3. `src/dictionary/disk_dictionary.cpp` (plan 3.2) turns the three spellings into ids. Bytes live in `src/storage/term/term_heap.cpp` on `src/include/storage/page/term_heap_page.h` (plan 3.1).
 4. `src/storage/index/triple_key.cpp` (plan 0.2, done) packs the three ids into 24 big-endian bytes. `memcmp` is the order.
-5. `src/store/indexed_store.cpp` (plan 3.4) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3) has a root for. The tree is `src/storage/index/b_plus_tree.cpp`. Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1). The iterator is `src/storage/index/index_iterator.cpp`.
+5. `src/store/indexed_store.cpp` (plan 3.4) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3) has a root for. The tree is `src/storage/index/b_plus_tree.cpp`. Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1, done; the byte layout is in those headers). The iterator is `src/storage/index/index_iterator.cpp`.
 6. The tree pins pages with `src/storage/page/page_guard.cpp` (plan 1.5, done). Frames live in `src/buffer/buffer_pool_manager.cpp` (plan 1.4, done; one latch, I/O through the scheduler, no flush in the destructor). Eviction is `src/buffer/lru_k_replacer.cpp` (plan 1.3, done).
 7. A dirty frame is written by `src/storage/disk/disk_scheduler.cpp` (plan 1.2, done; one thread, requests in order, errors through the promise) onto `src/storage/disk/disk_manager.cpp` (plan 1.1, done; the file length records allocation, and freed ids are not reused). Every page image starts with the pageLSN in `src/storage/page/page.cpp`.
 8. Before the page is written, the buffer pool flushes the log up to that pageLSN (plan 8.3). The record is a `src/include/recovery/log_record.h` (plan 8.1) appended by `src/include/recovery/log_manager.h` (plan 8.2). Commit forces the log. The commit record is the acknowledgement the crash harness trusts.
@@ -54,7 +54,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - `MemStore` and `MemDictionary` take a mutex so two shell sessions can share them. That mutex is not isolation.
 - `DiskManager`, `DiskScheduler`, and `BufferPoolManager` take optional `IoStats*` and `TraceSink*`.
 - `INSERT DATA` / `DELETE DATA` run in `ExecutionEngine` until plan 4.6. The executors stay stubs.
-- B+ tree page classes wrap a `Page*` and do not freeze the byte layout. That layout is plan 2.1.
+- B+ tree page classes wrap a `Page*`. The byte layout (plan 2.1) is documented in their headers.
 - `Transaction` accessors and `LogRecord` factories hold data. The manager and the serialization are stubs.
 - `TransactionManager` takes an optional `LogManager*`. Null means write-set undo (plan 7.2). Non-null means log undo (plan 8.4). The pointer is in the signature now so plan 8.4 does not have to change it.
 - `\trace on|off` switches `SwitchableTraceSink`, which prints component events to stderr. `\bpm` and `\page` report that the memory backend has no buffer pool.

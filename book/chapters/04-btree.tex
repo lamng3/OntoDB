@@ -163,6 +163,22 @@ Bulk load sorts ids, not strings, because the tree's order is the order of the
 ids.
 \end{ontodb}
 
+\begin{decision}{Fixed slots, no key compression}
+\dpart{Choice} A page header of 12 bytes follows the pageLSN: type, size, and
+max size. A leaf then holds its right sibling's id and an array of 24-byte keys,
+169 per 4 KiB page. An internal page holds slots of a 24-byte key and a 4-byte
+child id, 144 keys and 145 children per page. Every key is stored whole.
+\dpart{Alternatives} Prefix compression, which stores each key as the bytes it
+does not share with its neighbour (most keys in an SPO leaf share their subject),
+or a slotted layout with variable-length keys.
+\dpart{Why} Fixed slots make \code{KeyAt(i)} an address computation and binary
+search trivial, and a key copied out of a page is complete on its own. With
+fanouts above 140, a billion triples still fit in a tree of five levels.
+\dpart{Cost} Keys that share a long prefix waste most of their bytes, roughly
+a third of each leaf for a subject-heavy SPO index. Leaf compression is on the
+list of later work, with the question of what it does to prefix bounds.
+\end{decision}
+
 \begin{decision}{The key is the record (planned)}
 \dpart{Choice} A leaf stores the 24-byte \code{TripleKey} and nothing else.
 There is no value field and no record id pointing to a heap.
@@ -199,11 +215,13 @@ every test.
 \end{decision}
 
 \begin{status}
-The B+ tree is the next major build (plans 2.1 to 2.7): layout, invariants,
-search, insert and split, iterator, bulk load, and delete.
+The page layout runs (plan 2.1): 169 keys per leaf and 144 per internal page.
+Invariants, search, insert and split, the iterator, bulk load, and delete are
+plans 2.2 to 2.7.
 \end{status}
 
 \begin{checkyourself}
+\item OntoDB's internal page has 145 slots of 28 bytes after a 20-byte header. Where do the 28 bytes come from, and why does slot 0's key go unused?
 \item A page holds 300 separators. About how many levels does a tree of $10^8$ keys need, and how many of those are likely in the buffer pool?
 \item During a leaf split the separator 14 is copied up. Which leaf must it stay in, and what breaks if it stays in the other one?
 \item Why does an internal split \emph{push up} its middle key, while a leaf split \emph{copies} it?

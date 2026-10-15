@@ -38,6 +38,7 @@ line is the point.
 \end{enumerate}
 
 \answers{ch:btree}{4}
+\item A 24-byte key plus a 4-byte child page id. $n$ keys separate $n + 1$ children, so the leftmost child has no key of its own, and storing slots uniformly simply leaves that key unused.
 \item $300^3 = 2.7 \times 10^7 < 10^8 \le 300^4$, so four levels. The root and the roughly 300 pages below it are always cached, so a lookup costs about two reads.
 \item The right (new) leaf, whose first key it is. Left in the left leaf, a key equal to the separator sits in the left child, which breaks the separator rule, and a search for 14 goes right.
 \item Leaf keys are the data, and every key must stay in a leaf. Internal keys only route searches, so the middle one can move up and leave both halves.
