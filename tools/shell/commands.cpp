@@ -172,6 +172,15 @@ auto Page(Database& db, const std::string& arg) -> CommandResult {
   return Text(db.PageDebug(static_cast<page_id_t>(std::stoi(arg))));
 }
 
+auto Trace(Database& db, const std::string& arg) -> CommandResult {
+  const std::string lower = Lower(arg);
+  if (lower != "on" && lower != "off") {
+    return Text("error: usage: \\trace on|off");
+  }
+  db.SetTracing(lower == "on");
+  return Text("trace " + lower);
+}
+
 auto Log(Database& db, const std::string& arg) -> CommandResult {
   const size_t n = arg.empty() ? kDefaultLogTail : static_cast<size_t>(std::stoul(arg));
   return Text(db.LogDebug(n));
@@ -201,18 +210,12 @@ auto BuildCommands() -> std::vector<ShellCommand> {
        {"\\set backend mem|indexed", "\\set pool_size N", "\\set lru_k K",
         "\\set join auto|nlj|inlj|hash", "\\set isolation ru|rc|rr|ser"},
        Set},
-      {"\\bpm", "\\bpm", "buffer pool frames (PLAN 1.6)", {}, no_arg([](Database& db) {
+      {"\\bpm", "\\bpm", "buffer pool frames", {}, no_arg([](Database& db) {
          return Text(db.BufferPoolDebug());
        })},
       {"\\tree", "\\tree spo|pos|osp [dot]", "index shape (PLAN 2.2)", {}, Tree},
-      {"\\page", "\\page <id>", "one page (PLAN 1.6)", {}, Page},
-      {"\\trace",
-       "\\trace on|off",
-       "operator trace (PLAN 1.6)",
-       {},
-       [](Database&, const std::string&) -> CommandResult {
-         throw NotImplementedException("PLAN 1.6: Shell::CmdTrace");
-       }},
+      {"\\page", "\\page <id>", "one page: pageLSN and the first payload bytes", {}, Page},
+      {"\\trace", "\\trace on|off", "print component events to stderr", {}, Trace},
       {"\\begin", "\\begin", "start a transaction (PLAN 7.2)", {}, no_arg([](Database& db) {
          db.Begin();
          return Ok();

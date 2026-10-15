@@ -53,7 +53,9 @@ TEST(Shell, ExplainStatsSetAndUnbuiltCommands) {
       "\\explain analyze SELECT ?s WHERE { ?s <http://ex/p> <http://ex/o> }\n\\help\n\\quit\n");
   EXPECT_NE(out.find("page reads: 0"), std::string::npos);
   EXPECT_NE(out.find("pool_size 8"), std::string::npos);
-  EXPECT_NE(out.find("not built yet (PLAN 1.6)"), std::string::npos);
+  EXPECT_EQ(out.find("not built yet (PLAN 1.6)"), std::string::npos);
+  EXPECT_NE(out.find("no buffer pool"), std::string::npos);
+  EXPECT_NE(out.find("trace on"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 2.2)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 7.2)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 7.3)"), std::string::npos);

@@ -57,7 +57,7 @@ understand \emph{why}, not to read an implementation.
 \begin{status}
 OntoDB is built feature by feature, and parts of this book describe designs
 that are specified but not yet implemented. Each chapter's \emph{Status} box
-says which. At the time of writing, the SPARQL shell, the triple key, the disk manager, its I/O scheduler, the LRU-K replacer, the buffer pool and its page guards, the log
+says which. At the time of writing, the SPARQL shell, the triple key, the disk manager, its I/O scheduler, the buffer pool (disk manager, I/O scheduler, LRU-K, page guards, and inspection), the log
 records, the log manager, and durable databases (snapshots, a checksummed write-ahead log,
 recovery, and verification) run; the B+ tree, the indexed
 store, the optimizer, concurrency control, and page-level ARIES are designed

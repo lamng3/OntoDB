@@ -1,8 +1,11 @@
 #include "common/database.h"
 
 #include <cstdlib>
+#include <iomanip>
+#include <sstream>
 
 #include "binder/binder.h"
+#include "buffer/buffer_pool_manager.h"
 #include "common/exception.h"
 #include "dictionary/mem_dictionary.h"
 #include "parser/parser.h"
@@ -15,8 +18,8 @@ Database::Database()
 
 Database::~Database() = default;
 
-auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
-                    OpenReport* report) -> std::unique_ptr<Database> {
+auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode, OpenReport* report)
+    -> std::unique_ptr<Database> {
   auto db = std::make_unique<Database>();
   db->durability_ =
       std::make_unique<Durability>(dir, db->dictionary_.get(), db->store_.get(), &db->stats_);
@@ -89,12 +92,47 @@ auto Database::ExplainAnalyze(const std::string& sparql) -> std::string {
   return ExecutionEngine(&ctx).ExplainAnalyze(bound);
 }
 
+namespace {
+
+constexpr char kNoPool[] =
+    "no buffer pool: the memory backend keeps triples in memory; the indexed backend (PLAN 3.4) "
+    "has one";
+
+}  // namespace
+
 auto Database::BufferPoolDebug() const -> std::string {
-  throw NotImplementedException("PLAN 1.6: BufferPoolManager::DebugString");
+  if (bpm_ == nullptr) {
+    return kNoPool;
+  }
+  return bpm_->DebugString();
 }
 
-auto Database::PageDebug(page_id_t) const -> std::string {
-  throw NotImplementedException("PLAN 1.6: Shell::CmdPage");
+// The pageLSN, then a hex dump of the first 64 payload bytes. Reading the page
+// pins it for the length of this call only.
+auto Database::PageDebug(page_id_t page_id) const -> std::string {
+  if (bpm_ == nullptr) {
+    return kNoPool;
+  }
+  ReadPageGuard guard = bpm_->FetchPageRead(page_id);
+  const char* data = guard.GetData();
+  lsn_t lsn = 0;
+  for (size_t i = 0; i < kPageLsnSize; i++) {
+    lsn |= static_cast<lsn_t>(static_cast<unsigned char>(data[kPageLsnOffset + i])) << (8 * i);
+  }
+  std::ostringstream out;
+  out << "page " << page_id << ": pageLSN " << lsn << "\n";
+  constexpr size_t kDumpBytes = 64;
+  constexpr size_t kRow = 16;
+  for (size_t row = 0; row < kDumpBytes; row += kRow) {
+    out << "  +" << std::setw(4) << std::setfill('0') << (kPagePayloadOffset + row) << ' ';
+    for (size_t i = 0; i < kRow; i++) {
+      out << ' ' << std::hex << std::setw(2) << std::setfill('0')
+          << static_cast<int>(static_cast<unsigned char>(data[kPagePayloadOffset + row + i]))
+          << std::dec;
+    }
+    out << '\n';
+  }
+  return out.str();
 }
 
 auto Database::TreeDebug(const std::string&, bool) const -> std::string {

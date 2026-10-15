@@ -428,7 +428,7 @@ TEST(P1_5_PageGuard, LatchOnlyIsCleanWriterExcludesReaderFullPoolThrows) {
   EXPECT_THROW(env.bpm.NewPageGuarded(&none), StorageException);
 }
 
-TEST(P1_6_Inspection, DISABLED_DebugAndTrace) {
+TEST(P1_6_Inspection, DebugAndTrace) {
   class MemTrace : public TraceSink {
    public:
     void Event(std::string_view component, std::string_view message) override {

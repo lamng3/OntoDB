@@ -16,7 +16,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2).
-- The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4) and its page guards (1.5); the pool flushes the log up to a page's pageLSN before writing it.
+- The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
 Without a directory, the shell starts an empty memory database that keeps nothing.
@@ -26,8 +26,8 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Feature | Check | What it adds |
 | --- | --- | --- |
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
-| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. 1.1 to 1.5 are done; 1.6 is next. |
-| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. |
+| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. Done. |
+| B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. This is the next feature. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. |
@@ -67,7 +67,7 @@ Pages are 4096 bytes. The first 8 bytes are the pageLSN. The scaffold never incr
 
 **1.5 Guards.** Done. A read guard is a shared latch and one pin. A write guard is an exclusive latch and one pin. Both unpin once, in `Drop` or the destructor. Move leaves the source empty. Copying is forbidden. Pin, then latch; unlatch, then unpin. A write guard dirties the page only if `GetData` was called.
 
-**1.6 Inspection.** `\bpm`, `\page <id>`, and `\trace on|off` use the pool and `SwitchableTraceSink`.
+**1.6 Inspection.** Done. `\bpm`, `\page <id>`, and `\trace on|off` use the pool and `SwitchableTraceSink`. With the memory backend there is no pool, and `\bpm` and `\page` say so.
 
 ## B+ tree
 
