@@ -27,7 +27,7 @@ auto Pattern(char mark) -> std::array<char, PAGE_SIZE> {
   return page;
 }
 
-TEST(P1_1_DiskManager, DISABLED_ReadWriteAndRestart) {
+TEST(P1_1_DiskManager, ReadWriteAndRestart) {
   test::TempDir dir;
   const auto path = (dir.path() / "db").string();
   IoStats stats;
@@ -57,6 +57,35 @@ TEST(P1_1_DiskManager, DISABLED_ReadWriteAndRestart) {
   std::array<char, PAGE_SIZE> back{};
   again.ReadPage(written, back.data());
   EXPECT_EQ(back, image);
+}
+
+TEST(P1_1_DiskManager, IdsSurviveRestartAndAreNeverReused) {
+  test::TempDir dir;
+  const auto path = (dir.path() / "db").string();
+  {
+    DiskManager disk(path);
+    EXPECT_EQ(disk.AllocatePage(), 0);  // page 0 is an ordinary page
+    EXPECT_EQ(disk.AllocatePage(), 1);
+    disk.DeallocatePage(1);
+    EXPECT_EQ(disk.AllocatePage(), 2);  // a freed id is not handed out again
+    disk.ShutDown();
+  }
+  DiskManager again(path);
+  std::array<char, PAGE_SIZE> page{};
+  again.ReadPage(2, page.data());  // allocated, never written: zeros
+  EXPECT_EQ(page, (std::array<char, PAGE_SIZE>{}));
+  EXPECT_EQ(again.AllocatePage(), 3);
+}
+
+TEST(P1_1_DiskManager, RejectsPagesNeverAllocated) {
+  test::TempDir dir;
+  DiskManager disk((dir.path() / "db").string());
+  std::array<char, PAGE_SIZE> page{};
+  EXPECT_THROW(disk.ReadPage(0, page.data()), StorageException);
+  EXPECT_THROW(disk.WritePage(INVALID_PAGE_ID, page.data()), StorageException);
+  const auto id = disk.AllocatePage();
+  disk.ShutDown();
+  EXPECT_THROW(disk.ReadPage(id, page.data()), StorageException);
 }
 
 TEST(P1_2_DiskScheduler, DISABLED_BackgroundReadWrite) {

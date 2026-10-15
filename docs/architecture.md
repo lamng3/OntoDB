@@ -36,7 +36,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 4. `src/storage/index/triple_key.cpp` (plan 0.2, done) packs the three ids into 24 big-endian bytes. `memcmp` is the order.
 5. `src/store/indexed_store.cpp` (plan 3.4) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3) has a root for. The tree is `src/storage/index/b_plus_tree.cpp`. Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1). The iterator is `src/storage/index/index_iterator.cpp`.
 6. The tree pins pages with `src/storage/page/page_guard.cpp` (plan 1.5). Frames live in `src/buffer/buffer_pool_manager.cpp` (plan 1.4). Eviction is `src/buffer/lru_k_replacer.cpp` (plan 1.3).
-7. A dirty frame is written by `src/storage/disk/disk_scheduler.cpp` (plan 1.2) onto `src/storage/disk/disk_manager.cpp` (plan 1.1). Every page image starts with the pageLSN in `src/storage/page/page.cpp`.
+7. A dirty frame is written by `src/storage/disk/disk_scheduler.cpp` (plan 1.2) onto `src/storage/disk/disk_manager.cpp` (plan 1.1, done; the file length records allocation, and freed ids are not reused). Every page image starts with the pageLSN in `src/storage/page/page.cpp`.
 8. Before the page is written, the buffer pool flushes the log up to that pageLSN (plan 8.3). The record is a `src/include/recovery/log_record.h` (plan 8.1) appended by `src/include/recovery/log_manager.h` (plan 8.2). Commit forces the log. The commit record is the acknowledgement the crash harness trusts.
 9. On the next open, `src/include/recovery/log_recovery.h` (plan 8.6) runs analysis, redo, and undo. Undo of a triple is logical and writes a CLR (plan 8.4). A split or merge is redone, not logically undone.
 

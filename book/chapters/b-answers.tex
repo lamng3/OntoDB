@@ -20,6 +20,7 @@ line is the point.
 \item No: it was only in the operating system's page cache. \code{fsync} on the file (and, for a new file, on its directory) makes it durable.
 \item The kernel may already have dropped the dirty pages and cleared the error, so the second \code{fsync} ``succeeds'' with the data gone. The only safe response is to stop and recover from the log.
 \item Zero is what unwritten memory and files contain. With $-1$ as the sentinel, a forgotten initialization shows up as an error instead of as a tree rooted at page 0, which is a legal page.
+\item Allocation grew the file, but the new length was never made durable (no \code{fsync} before the crash), while the log record that uses the page was forced. Redo must extend the file, treat the page as zeros, and reapply the record.
 \end{enumerate}
 
 \answers{ch:buffer}{3}
