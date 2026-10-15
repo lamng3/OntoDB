@@ -31,7 +31,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. Done. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. Done. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. Done. |
-| Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. 5.1 and 5.2 are done. |
+| Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. 5.1 to 5.3 are done. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). |
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
@@ -126,7 +126,7 @@ The memory nested-loop join already returns the right rows. These slices change 
 
 **5.2 Cardinality.** Done. Estimates are finite and never negative. An unbound pattern estimates `TripleCount`. Binding another position never increases the estimate. A pattern's estimate is its exact count; joins divide by the larger number of distinct join values (System R), from per-predicate distinct subjects and objects.
 
-**5.3 Join order.** Rewrite the left-deep tree. Greedy is enough to start.
+**5.3 Join order.** Done. Rewrite the left-deep tree. Greedy is enough to start: start from the smallest pattern, add the cheapest connected one, take a cross product last. The engine optimizes whenever statistics exist; the database collects them after a load or a backend switch.
 
 **5.4 Join method.** The forced hash plan contains a hash join. The forced nested-loop plan does not. Swap the plan node. The factory already reads the node type.
 

@@ -147,7 +147,7 @@ TEST(P5_2_Cardinality, DistinctValuesGetStarAndClassJoinsRight) {
   EXPECT_DOUBLE_EQ(estimator.EstimateJoin(300, 10, 1), 10);  // the fallback's guess
 }
 
-TEST(P5_3_JoinOrder, DISABLED_PreservesResults) {
+TEST(P5_3_JoinOrder, PreservesResults) {
   MemDictionary dict;
   MemStore store;
   const auto a = dict.Insert("<http://ex/a>");
@@ -176,6 +176,22 @@ TEST(P5_3_JoinOrder, DISABLED_PreservesResults) {
                       nullptr);
   auto original = Planner().Plan(bound);
   EXPECT_EQ(CollectRows(rewritten.get(), &ctx), CollectRows(original.get(), &ctx));
+}
+
+// Written in the worst order, the unbound pattern first; the optimizer puts
+// the selective type pattern first, and the answer does not change.
+TEST(P5_3_JoinOrder, SelectivePatternGoesFirst) {
+  Database db;
+  db.Load(test::DataFile("tiny.ttl").string());
+  const std::string query =
+      "PREFIX ub: <http://example.edu/univ#> "
+      "SELECT ?s ?p ?o WHERE { ?s ?p ?o . ?s a ub:Professor . }";
+  const auto plan = db.Explain(query);
+  const auto first = plan.find("TripleScan");
+  ASSERT_NE(first, std::string::npos) << plan;
+  EXPECT_NE(plan.substr(first, plan.find('\n', first) - first).find("Professor"), std::string::npos)
+      << plan;
+  EXPECT_FALSE(db.Execute(query, nullptr).rows.empty());
 }
 
 TEST(P5_4_JoinAlgorithm, DISABLED_KnobSelectsTheAlgorithm) {

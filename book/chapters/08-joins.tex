@@ -96,7 +96,7 @@ happens in the optimizer, not the executor, so the plan that
 are collected at load: the triple count, distinct counts per position,
 per-predicate counts, and counts for partially bound patterns. Estimates are
 finite, never negative, and binding one more position never increases them.
-Join ordering starts greedy and left-deep.
+Join ordering is greedy and left-deep.
 \end{ontodb}
 
 \begin{decision}{Exact counts for single patterns}
@@ -194,10 +194,13 @@ running it.
 everything.
 \end{decision}
 
-\begin{decision}{Greedy, left-deep join ordering first (planned)}
-\dpart{Choice} Start from the most selective pattern and repeatedly add the
-cheapest pattern connected to what is already joined, producing a left-deep
-tree.
+\begin{decision}{Greedy, left-deep join ordering first}
+\dpart{Choice} Start from the pattern with the fewest estimated rows and
+repeatedly add the pattern connected to what is already joined (sharing a
+variable with it) whose join is estimated smallest, producing a left-deep
+tree. A cross product is taken only when no remaining pattern is connected,
+and ties keep the order the query was written in. The optimizer runs whenever
+statistics exist, which in the shell is always.
 \dpart{Alternatives} Selinger's dynamic programming over subsets, or a search
 that also considers bushy trees.
 \dpart{Why} Most SPARQL basic graph patterns are stars around one subject, for
@@ -212,9 +215,11 @@ Today the planner always joins in textual order with nested loop, and the
 nested loop rebinds its inner scan for every outer row (plan 4.1). The index
 nested-loop join (plan 4.2) and hash join (plan 4.3) run, chosen with
 \code{\textbackslash set join}, and the differential test checks every query
-file under all three against the memory store. Statistics (plan 5.1) and cardinality estimation (plan 5.2) run. Join
-ordering, the automatic choice, and \code{\textbackslash explain analyze} are
-plans 5.3 to 5.5.
+file under all three against the memory store. Statistics (plan 5.1), cardinality estimation (plan 5.2), and greedy join
+ordering (plan 5.3) run: a query written with \code{?s ?p ?o} first is
+reordered to start from its selective pattern, and \code{\textbackslash
+explain} shows the reordered plan. The automatic choice of join and
+\code{\textbackslash explain analyze} are plans 5.4 and 5.5.
 \end{status}
 
 \begin{checkyourself}

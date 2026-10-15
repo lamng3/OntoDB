@@ -13,6 +13,7 @@
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
 #include "recovery/durability.h"
+#include "stats/statistics.h"
 #include "store/mem_store.h"
 
 namespace ontodb {
@@ -74,6 +75,12 @@ class Database {
  private:
   struct IndexedBackend;
 
+  // The statistics the optimizer plans with: collected on first use after a
+  // load or a backend switch, and not refreshed by updates (like a table not
+  // re-ANALYZEd). Sessions share one immutable snapshot.
+  auto CurrentStatistics() -> std::shared_ptr<const Statistics>;
+  void InvalidateStatistics();
+
   std::unique_ptr<MemDictionary> dictionary_;
   std::unique_ptr<MemStore> store_;
   IoStats stats_;
@@ -84,6 +91,8 @@ class Database {
   std::unique_ptr<Durability> durability_;
   std::unique_ptr<IndexedBackend> indexed_;
   std::mutex indexed_mu_;  // one statement at a time on the indexed backend
+  std::mutex statistics_mu_;
+  std::shared_ptr<const Statistics> statistics_;
 };
 
 }  // namespace ontodb
