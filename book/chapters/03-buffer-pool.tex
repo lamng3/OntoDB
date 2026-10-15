@@ -86,8 +86,10 @@ C (scanned once) & 7 & --- & $\infty$ \\
 \label{tab:lruk}
 \end{table}
 
-When several pages have infinite distance, a tie-breaking rule is needed;
-evicting the one whose most recent access is oldest is the usual choice.
+When several pages have infinite distance, a tie-breaking rule is needed.
+A common choice is the page whose oldest remembered access is earliest; with
+$K = 2$ such a page has exactly one access, so this is plain LRU among the
+pages seen once.
 
 \section{Steal and force}
 
@@ -149,18 +151,23 @@ them.
 requests in flight, and one slow read delays every request behind it.
 \end{decision}
 
-\begin{decision}{LRU-K with $K = 2$ (planned)}
-\dpart{Choice} Evict the unpinned frame with the largest backward 2-distance;
-frames seen fewer than twice have infinite distance, and ties go to the older
-access.
+\begin{decision}{LRU-K with $K = 2$}
+\dpart{Choice} Evict the unpinned frame with the largest backward 2-distance.
+Frames seen fewer than twice have infinite distance and go first, earliest
+oldest access first. Time is a logical clock that ticks on every access, not
+the wall clock, and a pinned frame keeps its history.
 \dpart{Alternatives} LRU, CLOCK, 2Q, ARC.
 \dpart{Why} SPARQL plans scan: an unselective pattern reads every leaf of a
 permutation once. LRU and CLOCK let that scan push out the index's upper levels;
-LRU-K does not. The tie-break makes eviction deterministic, so a test can
-predict exactly which frame goes.
-\dpart{Cost} Each frame keeps a history of $K$ timestamps, and choosing a victim
-is a search over the evictable frames. A second policy is planned as a measured
-comparison, not as a replacement.
+LRU-K does not. A logical clock and a fixed tie-break make eviction
+deterministic, so a test can predict exactly which frame goes; the replacer's
+tests replay \cref{tab:lruk} and check that C, not B, is evicted. Keeping
+history while a frame is pinned stops a hot page from looking new each time it
+is unpinned.
+\dpart{Cost} Each frame keeps $K$ timestamps, and choosing a victim scans every
+frame: linear in the pool size, which is cheap for the default 64 frames but
+would need a priority structure for pools of millions. A second policy is
+planned as a measured comparison, not as a replacement.
 \end{decision}
 
 \begin{decision}{Pages only through guards (planned)}
@@ -179,8 +186,8 @@ every caller must follow, and a little ceremony for one-line accesses.
 \end{decision}
 
 \begin{status}
-The disk manager and the I/O scheduler run (plans 1.1 and 1.2). The LRU-K
-replacer, the pool, and the guards are being built (plans 1.3 to 1.5).
+The disk manager, the I/O scheduler, and the LRU-K replacer run (plans 1.1 to
+1.3). The pool and the guards are being built (plans 1.4 and 1.5).
 The experiment that checks them is simple: run a scan with a pool of 4 frames
 and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
 \end{status}
@@ -188,6 +195,7 @@ and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbacks
 \begin{checkyourself}
 \item A frame has pin count 0 and is dirty. What must happen before a different page is read into it?
 \item In \cref{tab:lruk}, add an access to C at time 10. Which page does LRU-K evict at time 11 now?
+\item With $K = 3$, frame X has accesses at times 2 and 9, and frame Y only at time 5. Both are unpinned. Which does OntoDB evict, and why is X's more recent access irrelevant?
 \item Explain sequential flooding, and why $K = 2$ resists it while $K = 1$ does not.
 \item Which cell of the steal/force table needs \emph{undo} information in the log, and why?
 \item A thread schedules a write of page 9 and then, without waiting, a read of page 9 into another buffer. What does the read return in OntoDB, and what could go wrong with a pool of I/O threads?

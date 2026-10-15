@@ -16,7 +16,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2).
-- The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread.
+- The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, and the LRU-K replacer (1.3).
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
 Without a directory, the shell starts an empty memory database that keeps nothing.
@@ -26,7 +26,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Feature | Check | What it adds |
 | --- | --- | --- |
 | Triple key | `scripts/check key` | 24-byte big-endian key and prefix bounds. Done. |
-| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. 1.1 and 1.2 are done; 1.3 is next. |
+| Buffer pool | `scripts/check buffer` | The database file, background I/O, LRU-K, pins, guards, `\bpm`. 1.1 to 1.3 are done; 1.4 is next. |
 | B+ tree | `scripts/check index` | The triple index: layout, search, split, scan, bulk load, delete. |
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. |
@@ -61,7 +61,7 @@ Pages are 4096 bytes. The first 8 bytes are the pageLSN. The scaffold never incr
 
 **1.2 Scheduler.** Done. One background thread drains `DiskRequest`. `Schedule` returns immediately. The promise is completed on that thread. Trace component `"io"`.
 
-**1.3 LRU-K.** Fewer than `k` accesses means infinite backward k-distance, and that frame is evicted first. `Evict` returns false when nothing is evictable and does not write the frame id. `SetEvictable(false)` keeps history. Thread-safe. Trace component `"replacer"`.
+**1.3 LRU-K.** Done. Fewer than `k` accesses means infinite backward k-distance, and that frame is evicted first. `Evict` returns false when nothing is evictable and does not write the frame id. `SetEvictable(false)` keeps history. Thread-safe. Trace component `"replacer"`. Time is a logical clock; among infinite distances, the earliest oldest access goes first.
 
 **1.4 Pool.** Thread-safe. `NewPage` pins a zeroed frame. `FetchPage` reads on a miss. `UnpinPage` drops one pin. `FlushPage` writes a dirty frame only. If a log manager is installed, flush the log up to pageLSN, reach `BufferPoolManager::FlushPage::before_disk_write`, then write the page. `GetPinnedFrameCount` is safe during a query. Trace component `"bpm"`.
 

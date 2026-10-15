@@ -6,6 +6,7 @@
 #include <cstring>
 #include <future>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -163,7 +164,7 @@ TEST(P1_2_DiskScheduler, ErrorsReachTheWaiterAndQueuedWorkFinishes) {
   }
 }
 
-TEST(P1_3_LRUKReplacer, DISABLED_EvictsByKDistance) {
+TEST(P1_3_LRUKReplacer, EvictsByKDistance) {
   LRUKReplacer replacer(3, 2);
   frame_id_t none = 77;
   EXPECT_FALSE(replacer.Evict(&none));
@@ -202,7 +203,51 @@ TEST(P1_3_LRUKReplacer, DISABLED_EvictsByKDistance) {
   EXPECT_EQ(ranked.Size(), 0u);
 }
 
-TEST(P1_3_LRUKReplacer, DISABLED_ConcurrentAccess) {
+TEST(P1_3_LRUKReplacer, ScanResistanceAndHistoryKeptWhilePinned) {
+  // The chapter's example (Table 3.2): A is hot, B was touched twice long ago,
+  // C was touched once by a scan. LRU would evict B; LRU-K evicts C.
+  LRUKReplacer replacer(3, 2);
+  const frame_id_t a = 0;
+  const frame_id_t b = 1;
+  const frame_id_t c = 2;
+  for (frame_id_t frame : {a, b, a, b, c, a, a}) {
+    replacer.RecordAccess(frame);
+  }
+  for (frame_id_t frame : {a, b, c}) {
+    replacer.SetEvictable(frame, true);
+  }
+  frame_id_t victim = -1;
+  ASSERT_TRUE(replacer.Evict(&victim));
+  EXPECT_EQ(victim, c);
+  ASSERT_TRUE(replacer.Evict(&victim));
+  EXPECT_EQ(victim, b);
+
+  // Pinning (not evictable) keeps history: a frame pinned and unpinned does
+  // not look new.
+  LRUKReplacer pinned(2, 2);
+  pinned.RecordAccess(0);
+  pinned.RecordAccess(0);
+  pinned.SetEvictable(0, false);
+  pinned.RecordAccess(1);
+  pinned.SetEvictable(0, true);
+  pinned.SetEvictable(1, true);
+  ASSERT_TRUE(pinned.Evict(&victim));
+  EXPECT_EQ(victim, 1);
+  EXPECT_THROW(pinned.RecordAccess(2), std::invalid_argument);
+}
+
+TEST(P1_3_LRUKReplacer, KOfOneIsLru) {
+  LRUKReplacer lru(3, 1);
+  for (frame_id_t frame : {0, 1, 2, 0}) {
+    lru.RecordAccess(frame);
+    lru.SetEvictable(frame, true);
+  }
+  frame_id_t victim = -1;
+  ASSERT_TRUE(lru.Evict(&victim));
+  EXPECT_EQ(victim, 1);
+}
+
+TEST(P1_3_LRUKReplacer, ConcurrentAccess) {
   LRUKReplacer replacer(16, 2);
   EXPECT_EQ(replacer.Size(), 0u);
   std::vector<std::thread> threads;
