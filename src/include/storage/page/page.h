@@ -1,6 +1,6 @@
 #pragma once
 
-#include <new>
+#include <memory>
 #include <shared_mutex>
 
 #include "common/config.h"
@@ -17,6 +17,10 @@ namespace ontodb {
 class Page {
  public:
   Page() = default;
+  Page(const Page&) = delete;
+  auto operator=(const Page&) -> Page& = delete;
+  Page(Page&&) = delete;
+  auto operator=(Page&&) -> Page& = delete;
 
   auto GetData() -> char* { return data_; }
   auto GetData() const -> const char* { return data_; }
@@ -31,10 +35,10 @@ class Page {
   auto IsDirty() const -> bool { return is_dirty_; }
   void SetDirty(bool dirty) { is_dirty_ = dirty; }
 
-  void RLatch() { latch_.lock_shared(); }
-  void RUnlatch() { latch_.unlock_shared(); }
-  void WLatch() { latch_.lock(); }
-  void WUnlatch() { latch_.unlock(); }
+  void RLatch() { latch_->lock_shared(); }
+  void RUnlatch() { latch_->unlock_shared(); }
+  void WLatch() { latch_->lock(); }
+  void WUnlatch() { latch_->unlock(); }
 
   auto GetLSN() const -> lsn_t;
   void SetLSN(lsn_t lsn);
@@ -43,7 +47,10 @@ class Page {
   // none). Guards pin before they latch, so no thread holds or waits on the
   // latch, and the frame gets a fresh one: a latch then belongs to one page,
   // not to every page the frame has held, and lock-order checkers such as
-  // ThreadSanitizer do not see an order between unrelated pages.
+  // ThreadSanitizer do not see an order between unrelated pages. The new latch
+  // is a new allocation, made before the old one is freed: ThreadSanitizer
+  // forgets a mutex when its memory is freed, but not when a statically
+  // initialized std::shared_mutex is destroyed in place.
   void Reset() {
     page_id_ = INVALID_PAGE_ID;
     pin_count_ = 0;
@@ -51,8 +58,7 @@ class Page {
     for (size_t i = 0; i < PAGE_SIZE; i++) {
       data_[i] = 0;
     }
-    latch_.~shared_mutex();
-    new (&latch_) std::shared_mutex();
+    latch_ = std::make_unique<std::shared_mutex>();
   }
 
  private:
@@ -60,7 +66,7 @@ class Page {
   page_id_t page_id_{INVALID_PAGE_ID};
   int pin_count_{0};
   bool is_dirty_{false};
-  std::shared_mutex latch_;
+  std::unique_ptr<std::shared_mutex> latch_{std::make_unique<std::shared_mutex>()};
 };
 
 }  // namespace ontodb
