@@ -1,10 +1,13 @@
 #include "optimizer/optimizer.h"
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 #include "common/exception.h"
+#include "execution/plans/nested_loop_join_plan.h"
 #include "execution/plans/stub_plans.h"
+#include "execution/plans/triple_scan_plan.h"
 
 namespace ontodb {
 
@@ -97,8 +100,120 @@ auto Optimizer::ApplyJoinMethod(PlanNodeRef plan, JoinMethod method) -> PlanNode
   return plan;
 }
 
-auto Optimizer::Optimize(PlanNodeRef) -> PlanNodeRef {
-  throw NotImplementedException("PLAN 5.3: Optimizer::Optimize");
+namespace {
+
+void Flatten(PlanNodeRef node, std::vector<PlanNodeRef>* leaves) {
+  if (node->GetType() != PlanType::kNestedLoopJoin) {
+    leaves->push_back(std::move(node));
+    return;
+  }
+  auto children = node->ReleaseChildren();
+  Flatten(std::move(children[0]), leaves);
+  Flatten(std::move(children[1]), leaves);
+}
+
+auto VariableSlots(const BoundTriplePattern& p) -> std::vector<size_t> {
+  std::vector<size_t> slots;
+  for (const BoundTerm* term : {&p.subject, &p.predicate, &p.object}) {
+    if (term->is_variable && std::find(slots.begin(), slots.end(), term->slot) == slots.end()) {
+      slots.push_back(term->slot);
+    }
+  }
+  return slots;
+}
+
+}  // namespace
+
+auto Optimizer::Optimize(PlanNodeRef plan) -> PlanNodeRef {
+  std::vector<JoinStep> steps;
+  plan = Reorder(std::move(plan), &steps);
+  return ApplyJoinMethod(std::move(plan), config_->join);
+}
+
+auto Optimizer::Reorder(PlanNodeRef plan, std::vector<JoinStep>* steps) -> PlanNodeRef {
+  if (plan->GetType() != PlanType::kNestedLoopJoin) {
+    auto children = plan->ReleaseChildren();
+    for (auto& child : children) {
+      child = Reorder(std::move(child), steps);
+    }
+    plan->SetChildren(std::move(children));
+    return plan;
+  }
+  const Schema schema = plan->OutputSchema();
+  const size_t width = static_cast<const NestedLoopJoinPlan*>(plan.get())->RowWidth();
+  std::vector<PlanNodeRef> leaves;
+  Flatten(std::move(plan), &leaves);
+  std::vector<const BoundTriplePattern*> patterns;
+  for (const auto& leaf : leaves) {
+    if (leaf->GetType() != PlanType::kTripleScan) {
+      patterns.clear();  // not a chain of scans: keep the order it came in
+      break;
+    }
+    patterns.push_back(&static_cast<const TripleScanPlan*>(leaf.get())->Pattern());
+  }
+
+  std::vector<size_t> order;
+  if (patterns.size() == leaves.size()) {
+    std::vector<bool> used(leaves.size(), false);
+    double rows = 0;
+    std::map<size_t, double> distinct;  // variable slot -> distinct values so far
+    for (size_t step = 0; step < leaves.size(); step++) {
+      size_t best = leaves.size();
+      double best_rows = 0;
+      bool best_connected = false;
+      for (size_t i = 0; i < leaves.size(); i++) {
+        if (used[i]) {
+          continue;
+        }
+        const double inner = estimator_->EstimateTriplePattern(*patterns[i]);
+        double joined = inner;
+        bool connected = false;
+        if (step > 0) {
+          joined = rows * inner;
+          for (const size_t slot : VariableSlots(*patterns[i])) {
+            if (const auto it = distinct.find(slot); it != distinct.end()) {
+              connected = true;
+              joined /=
+                  std::max({it->second, estimator_->EstimateDistinct(*patterns[i], slot), 1.0});
+            }
+          }
+        }
+        const bool better = best == leaves.size() || (connected && !best_connected) ||
+                            (connected == best_connected && joined < best_rows);
+        if (better) {
+          best = i;
+          best_rows = joined;
+          best_connected = connected;
+        }
+      }
+      if (step > 0) {
+        steps->push_back(
+            {best_connected, rows, estimator_->EstimateTriplePattern(*patterns[best])});
+      }
+      used[best] = true;
+      order.push_back(best);
+      rows = best_rows;
+      for (const size_t slot : VariableSlots(*patterns[best])) {
+        const double v = estimator_->EstimateDistinct(*patterns[best], slot);
+        const auto it = distinct.find(slot);
+        distinct[slot] = it == distinct.end() ? v : std::min(it->second, v);
+      }
+      for (auto& [slot, v] : distinct) {
+        v = std::min(v, rows);
+      }
+    }
+  } else {
+    for (size_t i = 0; i < leaves.size(); i++) {
+      order.push_back(i);
+    }
+  }
+
+  PlanNodeRef chain = std::move(leaves[order[0]]);
+  for (size_t i = 1; i < order.size(); i++) {
+    chain = std::make_unique<NestedLoopJoinPlan>(schema, std::move(chain),
+                                                 std::move(leaves[order[i]]), width);
+  }
+  return chain;
 }
 
 }  // namespace ontodb

@@ -12,7 +12,8 @@
 
 namespace ontodb {
 
-ExecutionEngine::ExecutionEngine(ExecutorContext* ctx) : ctx_(ctx) {}
+ExecutionEngine::ExecutionEngine(ExecutorContext* ctx, const Statistics* statistics)
+    : ctx_(ctx), statistics_(statistics) {}
 
 auto ExecutionEngine::CountMessage(const char* verb, size_t n) -> std::string {
   std::string text = verb;
@@ -32,10 +33,16 @@ auto ExecutionEngine::Decode(term_id_t id) const -> std::string {
   return "?";
 }
 
-// The plan that runs: the planner's tree with the join operator forced by
-// \set join. \explain prints exactly this tree.
+// The plan that runs: the planner's tree, optimized when statistics exist,
+// otherwise with only the join operator \set join forces. \explain prints
+// exactly this tree.
 auto ExecutionEngine::PlanFor(const BoundQuery& query) const -> PlanNodeRef {
-  return Optimizer::ApplyJoinMethod(Planner().Plan(query), ctx_->GetConfig()->join);
+  auto plan = Planner().Plan(query);
+  if (statistics_ == nullptr) {
+    return Optimizer::ApplyJoinMethod(std::move(plan), ctx_->GetConfig()->join);
+  }
+  const CardinalityEstimator estimator(statistics_);
+  return Optimizer(&estimator, ctx_->GetConfig()).Optimize(std::move(plan));
 }
 
 auto ExecutionEngine::Explain(const BoundQuery& query) const -> std::string {

@@ -6,6 +6,7 @@
 #include "binder/bound_query.h"
 #include "execution/executor_context.h"
 #include "execution/plans/abstract_plan.h"
+#include "stats/statistics.h"
 
 namespace ontodb {
 
@@ -23,7 +24,9 @@ struct StatementResult {
 // ModifyExecutor, whose single output row is the number of triples changed.
 class ExecutionEngine {
  public:
-  explicit ExecutionEngine(ExecutorContext* ctx);
+  // With statistics, plans go through the optimizer (join order, then the
+  // join operator); without, only \set join's forced operator is applied.
+  explicit ExecutionEngine(ExecutorContext* ctx, const Statistics* statistics = nullptr);
 
   auto Execute(const BoundQuery& query) -> StatementResult;
   auto Explain(const BoundQuery& query) const -> std::string;
@@ -35,6 +38,7 @@ class ExecutionEngine {
   static auto CountMessage(const char* verb, size_t n) -> std::string;
 
   ExecutorContext* ctx_;
+  const Statistics* statistics_;
 };
 
 }  // namespace ontodb
