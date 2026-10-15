@@ -1,0 +1,124 @@
+\chapter{What a Database Engine Is}
+\label{ch:engine}
+
+A database management system (DBMS) accepts declarative requests, such as
+``find every student and their name'', and answers them correctly and quickly,
+while many clients read and write at once and while machines fail. Each of
+those words is a subsystem. \emph{Correctly} under concurrency is the job of
+the transaction manager. \emph{Quickly} is the job of indexes and the query
+optimizer. \emph{While machines fail} is the job of the log and recovery.
+
+\section{The layers}
+
+Almost every engine, relational or not, is built from the same layers. A request
+travels down them, and data travels up.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[layer/.style={draw,minimum width=7cm,minimum height=0.62cm,font=\small,fill=white},
+                    side/.style={draw,minimum width=2.3cm,minimum height=2.8cm,font=\small,align=center,fill=boxbg}]
+\node[layer] (shell) {Shell / client interface};
+\node[layer,below=2pt of shell] (parse) {Parser and binder};
+\node[layer,below=2pt of parse] (plan) {Planner and optimizer};
+\node[layer,below=2pt of plan] (exec) {Execution engine (operators)};
+\node[layer,below=2pt of exec] (access) {Access methods (B+ trees, dictionary)};
+\node[layer,below=2pt of access] (bpm) {Buffer pool};
+\node[layer,below=2pt of bpm] (disk) {Disk manager and files};
+\node[side,right=0.3cm of exec,yshift=-0.35cm] (txn) {Transactions\\and locks};
+\node[side,right=0.2cm of txn] (log) {Log and\\recovery};
+\draw[arrow] ([xshift=-0.35cm]shell.north west) -- node[left,font=\scriptsize,align=right]{request\\down} ([xshift=-0.35cm]disk.south west);
+\end{tikzpicture}
+\caption{The layers of a database engine. Transactions and recovery cut across the stack.}
+\label{fig:layers}
+\end{figure}
+
+\begin{description}[leftmargin=1.2em]
+\item[Interface] Reads text, returns results. For OntoDB this is the \code{ontodb} shell.
+\item[Parser and binder] Turn text into a tree, check names, and replace each constant with an internal id.
+\item[Planner and optimizer] Choose \emph{how} to answer: which index to use, in what order to join, with which algorithm.
+\item[Execution engine] Runs the chosen plan as a tree of operators that pass rows to each other.
+\item[Access methods] The data structures that find data: B+ trees for ranges, hash tables for exact matches, the dictionary for term ids.
+\item[Buffer pool] Caches disk pages in memory, decides which to evict, and enforces the write-ahead rule when a page goes back to disk.
+\item[Disk manager] Reads and writes fixed-size pages of a file.
+\end{description}
+
+Two subsystems do not fit in one layer. The \textbf{transaction manager} and
+\textbf{lock manager} touch every read and write. The \textbf{log manager}
+and \textbf{recovery} touch every update, every page write, and every restart.
+Most of the difficulty of building an engine lives in how these cross-cutting
+pieces interact with the layers.
+
+\begin{keyidea}
+Each layer hides a cost from the one above. The buffer pool hides the disk; the
+B+ tree hides how many pages a lookup needs; the optimizer hides that a query
+can be answered in a thousand ways. Understanding an engine means knowing what
+each layer hides, and when the hiding fails.
+\end{keyidea}
+
+\section{RDF in one page}
+
+RDF represents knowledge as a set of \term{triples}. A triple is
+\emph{(subject, predicate, object)}: the subject is a thing, the predicate a
+relationship, and the object another thing or a value.
+
+\begin{lstlisting}
+<http://ex.org/Alice>  <http://ex.org/name>       "Alice"
+<http://ex.org/Alice>  rdf:type                   <http://ex.org/Student>
+<http://ex.org/Metal>  rdfs:subClassOf            <http://ex.org/Material>
+\end{lstlisting}
+
+Things are named by IRIs (\code{<http://...>}); values are literals, optionally
+with a language (\code{"Métal"@fr}) or a datatype (\code{"21"\^{}\^{}xsd:integer}).
+An \term{ontology} is RDF that describes concepts and their relations:
+\code{Metal subClassOf Material}, \code{Alloy subClassOf Metal}. OWL, the
+standard ontology language, is itself written as RDF triples, so a triple store
+can store any OWL ontology without understanding it.
+
+\section{SPARQL in one page}
+
+SPARQL asks questions by \emph{pattern}. A \term{triple pattern} is a triple in
+which some positions are variables. A \term{basic graph pattern} is a set of
+triple patterns that share variables; its answers are every way of binding the
+variables so that every pattern becomes a stored triple.
+
+\begin{lstlisting}
+PREFIX ub: <http://example.edu/univ#>
+SELECT ?name WHERE {
+  ?s a ub:Student .        # ?s is a student
+  ?s ub:name ?name .       # ... and has a name
+}
+\end{lstlisting}
+
+Two patterns that share \code{?s} are a \emph{join}. That is the single most
+important fact about evaluating SPARQL: a query with $k$ patterns is a $k$-way
+self-join of one large table of triples. Everything in \cref{ch:rdf-indexing}
+and \cref{ch:joins} follows from it.
+
+\section{The running example}
+
+\begin{ontodb}
+OntoDB is a database management system for ontologies, written in C++20. It
+loads Turtle, N-Triples, and RDF/XML (so OWL files load as triples), and it
+answers SPARQL basic graph patterns with filters, \code{INSERT DATA}, and
+\code{DELETE DATA}. Its layers map one to one onto \cref{fig:layers}:
+a shell (\code{tools/shell}), a lexer, parser, and binder (\code{src/parser},
+\code{src/binder}), a planner and optimizer, volcano executors
+(\code{src/execution}), a dictionary and a store (\code{src/dictionary},
+\code{src/store}), a buffer pool and disk manager (\code{src/buffer},
+\code{src/storage}), and a log and recovery manager (\code{src/recovery}).
+\end{ontodb}
+
+A single query, followed through OntoDB, touches every layer:
+
+\begin{enumerate}
+\item The shell reads lines until the query's braces balance.
+\item The parser builds a syntax tree; the binder resolves prefixes, turns every IRI and literal into a 64-bit id from the dictionary, and gives each variable a column number.
+\item The planner builds a tree: one scan per triple pattern, joins between them, a filter, a projection.
+\item The execution engine pulls rows of ids up that tree, one at a time.
+\item The shell turns ids back into text through the dictionary and prints them.
+\end{enumerate}
+
+An insert adds a sixth step: before the shell says \code{inserted 1 triple},
+a log record describing the insert must be on disk. Why that order is
+non-negotiable, and how it lets the engine survive a crash, is the subject of
+\cref{part:recovery-ref}. First, storage.

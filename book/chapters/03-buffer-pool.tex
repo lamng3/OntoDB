@@ -1,0 +1,145 @@
+\chapter{The Buffer Pool}
+\label{ch:buffer}
+
+The database is larger than memory, but queries must run at memory speed. The
+\term{buffer pool} bridges the two: a fixed array of in-memory \term{frames},
+each able to hold one page, plus the bookkeeping that decides which pages are
+in memory and when they go back to disk.
+
+\section{Frames, the page table, and pins}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize]
+\node[draw,minimum width=2.4cm,minimum height=2.4cm,align=left,fill=boxbg] (pt) {\textbf{page table}\\page 7 $\to$ frame 0\\page 3 $\to$ frame 2\\page 12 $\to$ frame 1};
+\foreach \i/\p/\pin/\d in {0/7/2/clean,1/12/0/dirty,2/3/0/clean,3/--/--/free}{
+  \node[draw,minimum width=2.2cm,minimum height=0.55cm,fill=white] (f\i) at (4.4,1.0-0.6*\i) {frame \i: page \p};
+  \node[right=2pt of f\i,align=left,minimum width=1.9cm] (s\i) {pin \pin, \d};
+}
+\node[draw,cylinder,shape border rotate=90,aspect=0.2,minimum height=1.6cm,minimum width=1.4cm,fill=white] (disk) at (10.4,-0.1) {file};
+\draw[arrow] (s1.east) -- node[above]{write back} (disk.west |- s1.east);
+\end{tikzpicture}
+\caption{A buffer pool with four frames. The page table maps page ids to frames; each frame has a pin count and a dirty bit.}
+\label{fig:bpm}
+\end{figure}
+
+Each frame carries two pieces of state:
+
+\begin{description}[leftmargin=1.2em]
+\item[Pin count.] How many threads are using the page right now. A pinned page must not be evicted: someone holds a pointer into it.
+\item[Dirty bit.] Whether the in-memory copy differs from the one on disk. A dirty page must be written before its frame is reused.
+\end{description}
+
+The interface follows from that:
+
+\begin{itemize}
+\item \code{FetchPage(id)}: if the page is in a frame, increment its pin and return it (a \term{hit}); otherwise choose a victim frame, write it back if dirty, read the page into it, pin it (a \term{miss}).
+\item \code{UnpinPage(id, dirty)}: decrement the pin; mark the frame dirty if the caller changed it.
+\item \code{NewPage()}: allocate a page id on disk and return a zeroed, pinned frame.
+\item \code{FlushPage(id)}: write a dirty page now.
+\end{itemize}
+
+\begin{keyidea}
+A pin is a promise, and a leaked pin is a leak of memory the pool can never
+reclaim. Engines therefore wrap pins in a scoped object (a \term{page guard})
+that unpins exactly once when it goes out of scope.
+\end{keyidea}
+
+\section{Choosing a victim}
+
+When every frame is occupied and a miss arrives, the pool must evict an
+unpinned page. The choice matters: a bad policy turns hits into misses, and
+every miss is a disk read.
+
+\paragraph{LRU.} Evict the least recently used page. Simple, and good for many
+workloads. Its weakness is \term{sequential flooding}: one large scan touches
+every page once, and each touch makes a cold scan page look ``recent'', so the
+scan flushes out the hot index pages that every other query needs.
+
+\paragraph{CLOCK.} An approximation of LRU that avoids moving pages in a list on
+every access: each frame has a reference bit set on access, and a ``clock hand''
+sweeps the frames, clearing bits and evicting the first frame whose bit is
+already clear. Cheap, and still vulnerable to flooding.
+
+\paragraph{LRU-K.} O'Neil, O'Neil, and Weikum's fix for flooding \cite{lruk}.
+Remember the last $K$ access times of each page. The \term{backward
+$K$-distance} of a page is the time since its $K$-th most recent access; a page
+accessed fewer than $K$ times has infinite distance. Evict the page with the
+largest distance.
+
+With $K=2$, a page touched once by a scan has infinite distance, while an index
+root touched thousands of times has a small one. The scan page goes first. LRU
+is the special case $K = 1$.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Page & Accesses (time) & 2nd most recent & Backward 2-distance at $t=10$ \\
+\midrule
+A (index root) & 1, 4, 8, 9 & 8 & 2 \\
+B (index leaf) & 3, 6 & 3 & 7 \\
+C (scanned once) & 7 & --- & $\infty$ \\
+\bottomrule
+\end{tabular}
+\caption{LRU-K with $K=2$. LRU would evict B (least recently used at time 6); LRU-K evicts C, the page with no second access, even though C was touched more recently than B.}
+\label{tab:lruk}
+\end{table}
+
+When several pages have infinite distance, a tie-breaking rule is needed;
+evicting the one whose most recent access is oldest is the usual choice.
+
+\section{Steal and force}
+
+Two policy questions connect the buffer pool to recovery, and their answers
+decide what the log must contain.
+
+\begin{description}[leftmargin=1.2em]
+\item[Steal?] May the pool write a dirty page of an \emph{uncommitted} transaction to disk, to free its frame? If yes, the disk can hold changes that must later be \emph{undone}.
+\item[Force?] Must every page a transaction changed be written to disk \emph{before} it commits? If no, a committed change may exist only in memory at the time of a crash, and must later be \emph{redone}.
+\end{description}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+& Force & No force \\
+\midrule
+No steal & no undo, no redo (slow, memory-bound) & redo only \\
+Steal & undo only & undo and redo (fast, flexible) \\
+\bottomrule
+\end{tabular}
+\caption{The four combinations. High-performance engines choose steal and no force, and pay for it with a log that supports both undo and redo.}
+\label{tab:stealforce}
+\end{table}
+
+Steal lets the pool evict any unpinned page, so a long transaction cannot
+exhaust memory. No force lets a commit write one small log record instead of
+every page it touched. Both are wins, and \cref{ch:wal,ch:aries} show how the
+log makes them safe.
+
+\begin{ontodb}[: the buffer pool]
+OntoDB's pool uses \textbf{LRU-K} with $K = 2$ by default (\code{\textbackslash set lru\_k}),
+tie-breaking by the older $K$-th access. Its policy is \textbf{steal / no force}.
+Pages are reached only through \code{ReadPageGuard} (shared latch, one pin)
+and \code{WritePageGuard} (exclusive latch, one pin); both unpin exactly once.
+The test harness asserts that the number of pinned frames is zero after every
+query and every destroyed iterator: a leaked pin fails the test even when the
+query's rows were right.
+
+When the pool writes a dirty page and a log manager is installed, the order is
+fixed: first flush the log up to the page's pageLSN, then write the page. A
+named crash point sits between the two, so a test can kill the process after the
+log is durable and before the page is. That ordering is the write-ahead rule of
+\cref{ch:wal}.
+\end{ontodb}
+
+\begin{status}
+The LRU-K replacer, the pool, and the guards are being built (plans 1.3 to 1.5).
+The experiment that checks them is simple: run a scan with a pool of 4 frames
+and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
+\end{status}
+
+\section*{Further reading}
+Petrov \cite{petrov}, chapter 5 on buffer management. O'Neil et al.\ \cite{lruk}.
+Effelsberg and H\"arder \cite{effelsberg} on buffer management principles.

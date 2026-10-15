@@ -10,7 +10,7 @@
 [![Progress](https://img.shields.io/badge/plan-9%2F53-f59e0b)](PLAN.md)
 [![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
 
-[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [📊 Status](#-status) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📝 Citation](#-citation)
+[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [📊 Status](#-status) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
 
 </div>
 
@@ -148,6 +148,8 @@ scripts/crashtest --seeds 4  # the crash harness
 One query and one committed statement, followed through the code: [docs/architecture.md](docs/architecture.md), which also lists the design patterns the code uses. Benchmarks go in `benchmarks/`, and the writeup that cites them in `writeups/`.
 
 </details>
+
+The book, [*OntoDB: Database Internals by Example*](book/ontodb-book.pdf), explains the theory behind each part: pages and the buffer pool, B+ trees and RDF indexing, query plans and joins, transactions and locking, the write-ahead log, ARIES, and durability.
 
 The [manual](https://lamng3.github.io/ontodb-docs/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
 

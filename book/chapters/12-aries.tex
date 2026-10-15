@@ -1,0 +1,160 @@
+\chapter{ARIES}
+\label{ch:aries}
+
+ARIES (Algorithm for Recovery and Isolation Exploiting Semantics), published by
+Mohan, Haderle, Lindsay, Pirahesh, and Schwarz in 1992 \cite{aries}, is the
+recovery algorithm behind most disk-based database systems. It supports steal
+and no force, fine-grained locking, and partial rollbacks, and it recovers
+correctly even if the system crashes again \emph{during} recovery. Its central
+idea fits in three words: \textbf{repeat history, then undo}.
+
+\section{The data structures}
+
+\begin{description}[leftmargin=1.2em]
+\item[Log records] as in \cref{ch:wal}: LSN, transaction id, prevLSN, and type-specific fields.
+\item[pageLSN] on every page: the LSN of the last change applied to it.
+\item[Transaction table] for every active transaction: its status and \term{lastLSN}, the LSN of its most recent record.
+\item[Dirty page table] for every page dirty in the buffer pool: its \term{recLSN}, the LSN of the first record that made it dirty since it was last read from disk. Any change to the page before recLSN is already on disk.
+\item[Compensation log records (CLRs)] written when a change is undone. A CLR describes the undo, and carries \term{undoNextLSN}: the next record of that transaction still to undo.
+\end{description}
+
+\section{Checkpoints}
+
+Without checkpoints, recovery would read the log from the beginning of time. A
+\term{fuzzy checkpoint} writes the transaction table and the dirty page table
+into the log without stopping the system or forcing any pages, and records the
+checkpoint's LSN in a well-known place. Recovery then starts from the last
+checkpoint: the tables in it tell analysis everything that happened before.
+
+\section{Pass 1: Analysis}
+
+Scan the log forward from the last checkpoint, rebuilding the two tables as of
+the crash:
+
+\begin{itemize}
+\item On any record of a transaction not in the table, add it. Update its lastLSN.
+\item On a commit, mark it committed; on an end record, remove it.
+\item On an update or CLR for a page not in the dirty page table, add the page with recLSN = this LSN.
+\end{itemize}
+
+At the end, every transaction still in the table without a commit is a
+\term{loser}. The \term{redoLSN} is the smallest recLSN in the dirty page table:
+no earlier change can be missing from disk.
+
+\section{Pass 2: Redo}
+
+Scan forward from redoLSN, and reapply every update and every CLR, for winners
+and losers alike, unless the change is provably already on disk:
+
+\begin{lstlisting}[language=pseudo]
+for each update or CLR record r, from redoLSN forward:
+  if r.page not in dirty page table:          skip   // page was clean at the crash
+  if dirtyPageTable[r.page].recLSN > r.lsn:   skip   // flushed after r
+  fetch page
+  if page.pageLSN >= r.lsn:                   skip   // r already on the page
+  apply r to the page; page.pageLSN = r.lsn
+\end{lstlisting}
+
+Redo \textbf{repeats history}: it brings the database to exactly its state at
+the crash, uncommitted changes included. That sounds wasteful, but it makes undo
+simple: undo now starts from a precise, known state, and can use the same
+logical operations that a normal abort uses.
+
+\section{Pass 3: Undo}
+
+Undo the losers, newest change first, across all of them at once:
+
+\begin{lstlisting}[language=pseudo]
+toUndo = { lastLSN of each loser }
+while toUndo is not empty:
+  r = record with the largest LSN in toUndo; remove it
+  if r is a CLR:
+    if r.undoNextLSN exists: add r.undoNextLSN to toUndo
+    else: write an end record for r.txn
+  else if r is an update:
+    undo r; write CLR(undoNextLSN = r.prevLSN)
+    if r.prevLSN exists: add r.prevLSN to toUndo
+    else: write an end record for r.txn
+\end{lstlisting}
+
+\begin{keyidea}
+A CLR is redone but never undone. If the system crashes during undo, the next
+recovery redoes the CLRs (history repeats), then follows their undoNextLSN
+pointers past everything already undone. Recovery work is therefore bounded no
+matter how many times the system crashes during recovery.
+\end{keyidea}
+
+\section{A worked example}
+
+Two transactions run. $T_1$ commits; $T_2$ does not. The buffer pool happened
+to write page P2 (stealing $T_2$'s uncommitted change), but never wrote P1.
+
+\begin{center}
+\begin{tabular}{@{}rlll@{}}
+\toprule
+LSN & Transaction & Record & prevLSN \\
+\midrule
+10 & $T_1$ & update P1 & --- \\
+20 & $T_2$ & update P2 & --- \\
+30 & $T_1$ & commit & 10 \\
+40 & $T_2$ & update P1 & 20 \\
+\multicolumn{4}{@{}l}{\emph{crash.} On disk: P1 has pageLSN 0; P2 has pageLSN 20.} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Analysis.} $T_1$ committed; $T_2$ is a loser with lastLSN 40. The
+dirty page table is \{P1: recLSN 10, P2: recLSN 20\}, so redoLSN is 10.
+
+\paragraph{Redo.} LSN 10 on P1: pageLSN 0 $<$ 10, so redo; P1's pageLSN becomes
+10. LSN 20 on P2: pageLSN 20 $\ge$ 20, so skip; the stolen write already put it
+there. LSN 40 on P1: pageLSN 10 $<$ 40, so redo; pageLSN becomes 40. The
+database is now exactly as it was at the crash, including $T_2$'s two changes.
+
+\paragraph{Undo.} toUndo = \{40\}. Undo LSN 40 on P1, write CLR 50 with
+undoNextLSN 20. Undo LSN 20 on P2, write CLR 60 with no undoNextLSN, then an end
+record for $T_2$. $T_1$'s change survives; $T_2$ left no trace.
+
+If the system had crashed right after CLR 50, the next analysis would find $T_2$
+with lastLSN 50; redo would reapply CLR 50; undo would read CLR 50, jump straight
+to LSN 20, and never undo LSN 40 a second time.
+
+\section{Structure changes: nested top actions}
+
+A B+ tree split moves keys between pages. Suppose $T$ inserts a key, which
+splits a leaf, and later aborts. Undoing ``the split'' would be wrong: another
+transaction may have committed an insert into the new leaf since then. The
+split is a change to the \emph{structure}, which is valid regardless of who
+caused it; only the \emph{logical} insert belongs to $T$.
+
+ARIES logs a split as a \term{nested top action}: the split's page records,
+followed by a dummy CLR whose undoNextLSN points to the record just before the
+split. Redo replays the split like any other change. Undo, following the dummy
+CLR, skips over it. The logical ``insert key $k$'' is logged separately, and its
+undo is the logical ``delete key $k$'', performed wherever that key now lives,
+which is why undo in ARIES is logical while redo is physical.
+
+\begin{ontodb}[: ARIES]
+OntoDB's page-based recovery follows this chapter: steal and no force,
+page-oriented redo, logical undo of triples, CLRs that are redone and never
+undone, and B+ tree splits logged as redo-only nested top actions with the
+triple insert logged separately. On open, recovery prints one line per pass
+(\code{analysis}, \code{redo}, \code{undo}). The bar for the feature is a crash
+harness that kills the process at random points (including named crash points
+inside splits and between a log flush and a page write) and compares the
+reopened store with an oracle that replayed only acknowledged commits:
+\code{scripts/crashtest --seeds 200} must pass.
+\end{ontodb}
+
+\begin{status}
+The log record types used here, including CLRs and checkpoints, exist and
+serialize (plan 8.1). Abort by the log, checkpoints, the three passes, and the
+crash test are plans 8.4 to 8.7, after the buffer pool and B+ tree. The crash
+harness already detects a lost commit and a surviving uncommitted write on
+deliberately faulty test stores.
+\end{status}
+
+\section*{Further reading}
+Mohan et al.\ \cite{aries}, the whole paper; Ramakrishnan and Gehrke
+\cite{cowbook}, chapter 18, for a gentler walkthrough; Petrov \cite{petrov},
+chapter 5.

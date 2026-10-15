@@ -1,0 +1,75 @@
+\chapter{The Log-Structured Alternative}
+\label{ch:lsm}
+
+A B+ tree updates pages \emph{in place}: an insert finds the right leaf and
+changes it. The other great family of storage engines never updates in place.
+A \term{log-structured merge tree} (LSM tree), introduced by O'Neil et al.\
+\cite{lsm}, turns every write into a sequential append and pays for it later,
+in the background. RocksDB, LevelDB, Cassandra, and many modern stores are LSM
+trees. Knowing why OntoDB does \emph{not} use one teaches as much as knowing why
+it uses a B+ tree.
+
+\section{How an LSM tree works}
+
+\begin{enumerate}
+\item \textbf{Memtable.} Writes go to an in-memory sorted structure (often a skip list), and to a write-ahead log for durability.
+\item \textbf{Flush.} When the memtable is full, it is written to disk as an immutable sorted file, an \term{SSTable}, in one sequential write.
+\item \textbf{Compaction.} SSTables accumulate. A background process merges them into larger SSTables, dropping overwritten and deleted entries. In \term{leveled} compaction, level $L+1$ is about ten times larger than level $L$.
+\item \textbf{Reads} check the memtable, then SSTables from newest to oldest, and stop at the first hit.
+\item \textbf{Deletes} write a \term{tombstone}, a marker that hides older versions until compaction removes both.
+\end{enumerate}
+
+A read that misses must look in many files. \term{Bloom filters}, one per
+SSTable, answer ``is this key possibly here?'' in memory with no false
+negatives, so most files are skipped without a read.
+
+\section{Three amplifications}
+
+Every storage engine trades three costs against each other.
+
+\begin{description}[leftmargin=1.2em]
+\item[Write amplification] Bytes written to the device per byte of user data. An LSM tree rewrites data at every compaction; a B+ tree rewrites a whole page to change a few bytes.
+\item[Read amplification] Pages read per lookup. A B+ tree reads one path; an LSM tree may consult several levels.
+\item[Space amplification] Bytes stored per byte of live data. LSM trees hold obsolete versions until compaction; B+ trees hold half-empty pages.
+\end{description}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+& B+ tree & LSM tree \\
+\midrule
+Writes & random, in place & sequential, batched \\
+Point reads & one root-to-leaf path & memtable, then levels (Bloom filters help) \\
+Range scans & walk linked leaves & merge iterators across levels \\
+Deletes & remove now, merge pages & tombstone now, remove at compaction \\
+Background work & none required & compaction, always \\
+Best for & read-heavy, range-heavy & write-heavy, ingest-heavy \\
+\bottomrule
+\end{tabular}
+\caption{The two families, in broad strokes.}
+\end{table}
+
+\begin{keyidea}
+An LSM tree buys fast writes with deferred work. A B+ tree pays for each write
+immediately, and gets predictable reads and no background compaction in return.
+\end{keyidea}
+
+\begin{ontodb}[: why a B+ tree]
+OntoDB's workload is a SPARQL engine's: a bulk load, then queries that are joins
+of prefix range scans. Range scans over sorted permutations are a B+ tree's
+best case, and bulk loading builds full, sequential leaves without any
+compaction. A delete in OntoDB's tree shrinks the tree in place, inside
+\code{BPlusTree::Remove}; there is no tombstone for a reader to skip and no
+background job that rewrites sorted runs.
+
+The LSM ideas still appear in OntoDB, in smaller roles. Its persistent
+databases (\cref{ch:durability}) are log-plus-snapshot: every change is appended
+to a log, and a checkpoint rewrites the whole state as one sorted image, which
+is a compaction with a single level. And Bloom filters are a natural fit for
+``has this concept been modified recently?'' checks over a log.
+\end{ontodb}
+
+\section*{Further reading}
+O'Neil et al.\ \cite{lsm}; Petrov \cite{petrov}, chapter 7; Bloom
+\cite{bloom}.

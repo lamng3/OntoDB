@@ -1,0 +1,113 @@
+\chapter{From SPARQL to a Plan}
+\label{ch:plans}
+
+A query states \emph{what} to find. The engine must decide \emph{how}. This
+chapter follows a SPARQL query from text to an executable tree of operators,
+and introduces the iterator model that runs it.
+
+\section{Parsing and binding}
+
+The \term{parser} turns text into an abstract syntax tree: prefixes, the
+projected variables, the triple patterns, the filters. Syntax that the engine
+does not support should fail here, with a line and a column, rather than half
+work later.
+
+The \term{binder} then resolves names against the database:
+
+\begin{itemize}
+\item Prefixed names become full IRIs: \code{ub:Student} becomes\\ \code{<http://example.edu/univ\#Student>}.
+\item Every constant becomes a dictionary id. For a query, a constant that is not in the dictionary can match nothing; for an insert, it is added.
+\item Every variable gets a \term{slot}: a column number, assigned in order of first appearance.
+\end{itemize}
+
+After binding, a row is simply an array of ids indexed by slot. The same
+variable in two patterns is the same slot, and that shared slot is the join key.
+
+\section{Logical and physical plans}
+
+A \term{logical plan} says what to compute in terms of algebra: scan each
+pattern, join the results, filter, project. A \term{physical plan} picks an
+algorithm for each step: which index and range to scan, which join algorithm,
+in what order. The planner produces a correct physical plan; the optimizer
+(\cref{ch:joins}) rewrites it into a fast one that returns the same rows.
+
+For the query
+
+\begin{lstlisting}
+SELECT ?name WHERE {
+  ?s a ub:Student . ?s ub:name ?name . ?s ub:age ?age .
+  FILTER (?age > 21)
+}
+\end{lstlisting}
+
+a straightforward plan is left-deep, joining the patterns in the order written:
+
+\begin{lstlisting}
+Projection [?name]
+  Filter (?age > 21)
+    NestedLoopJoin
+      NestedLoopJoin
+        TripleScan {?s rdf:type ub:Student}
+        TripleScan {?s ub:name ?name}
+      TripleScan {?s ub:age ?age}
+\end{lstlisting}
+
+\section{The iterator (Volcano) model}
+
+Graefe's \term{Volcano} model \cite{graefe} gives every operator the same
+three-call interface:
+
+\begin{itemize}
+\item \code{Init()}: prepare, or restart from the beginning.
+\item \code{Next(\&row)}: produce the next row and return true, or return false when exhausted.
+\item destruction: release everything held (for a scan, its pinned leaf).
+\end{itemize}
+
+The root operator calls \code{Next} on its child, which calls \code{Next} on
+its children, and so on down to the scans. Rows flow up \emph{one at a time},
+on demand. Three properties make this model the default for decades:
+
+\begin{description}[leftmargin=1.2em]
+\item[Composability.] Any operator can sit above any other, because they share an interface.
+\item[Pipelining.] A row can travel from a scan to the client without any intermediate result being materialized. \code{LIMIT 10} stops the whole tree after ten rows.
+\item[Bounded memory.] Only operators that must see all their input first (sort, hash-join build, aggregation) hold rows.
+\end{description}
+
+Its cost is one virtual call per row per operator. Modern analytical engines
+reduce that with \term{vectorized} execution (batches of rows per call) or by
+compiling the plan into tight loops, but the logical structure is unchanged.
+
+\begin{keyidea}
+Planning builds a tree; execution pulls rows through it. Keeping the two
+separate is what allows \code{\textbackslash explain} to print a plan without
+running it, and an optimizer to swap one tree for another.
+\end{keyidea}
+
+\section{The operators}
+
+\begin{description}[leftmargin=1.2em]
+\item[Triple scan.] Reads the triples that match one pattern. With an index, the bound positions choose a permutation and a prefix range (\cref{ch:rdf-indexing}). If a variable occurs twice in one pattern (\code{?x ex:knows ?x}), the scan also checks that those positions are equal.
+\item[Join.] Combines rows from two children whose shared slots agree (\cref{ch:joins}).
+\item[Filter.] Passes rows whose expression is true. In SPARQL a type error makes the expression false, not the query fail.
+\item[Projection.] Keeps the selected slots.
+\item[Distinct, limit, offset, sort.] Distinct applies to \emph{projected} rows (two triples can share a name). Sort compares values, not ids: ids are assigned in load order, which is not value order.
+\end{description}
+
+\begin{ontodb}[: planning and execution]
+OntoDB's binder assigns slots in first-appearance order and represents ``not yet
+bound'' with a reserved id. The planner always produces the left-deep tree in
+textual order with nested-loop joins, which is correct but rarely fast;
+\code{\textbackslash explain} prints it. An executor factory maps each plan node
+to its executor, and the engine pulls rows with \code{Init}/\code{Next}.
+An empty pattern, with no triple to match, returns one empty row rather than
+none: the identity input for a join that has nothing to bind yet.
+\end{ontodb}
+
+\begin{status}
+Parsing, binding, planning, triple scans, nested-loop join, filter, and
+projection run today against the in-memory store. Distinct, limit, offset, and
+sort are parsed and planned; their executors are next (plans 4.4 and 4.5).
+\end{status}
+
+\section*{Further reading}
+Graefe \cite{graefe}; the W3C SPARQL 1.1 recommendation \cite{sparql}.

@@ -1,0 +1,33 @@
+\chapter{A Map from Chapters to OntoDB}
+\label{app:map}
+
+Each chapter's ideas, the OntoDB plan items that implement them, and where the
+code lives. Plan items are listed in the repository's \code{PLAN.md}; run
+\code{scripts/check <feature>} to build and test one.
+
+\begin{center}
+\small
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{2.4cm}>{\raggedright\arraybackslash}p{6.6cm}@{}}
+\toprule
+Chapter & Plan items & Where \\
+\midrule
+\ref{ch:engine} The engine & 0.1, 0.3 & \code{tools/shell}, \code{src/common/database.cpp} \\
+\ref{ch:pages} Pages & 1.1, 3.1 & \code{src/storage/disk}, \code{src/storage/page}, \code{src/storage/term} \\
+\ref{ch:buffer} Buffer pool & 1.2--1.6 & \code{src/buffer}, \code{src/storage/page/page\_guard.cpp} \\
+\ref{ch:btree} B+ trees & 2.1--2.7, 6.1--6.2 & \code{src/storage/index/b\_plus\_tree.cpp} \\
+\ref{ch:rdf-indexing} Indexing RDF & 0.2, 3.2--3.6 & \code{src/storage/index/triple\_key.cpp}, \code{src/dictionary}, \code{src/catalog}, \code{src/store} \\
+\ref{ch:lsm} LSM trees & --- & (contrast only) \\
+\ref{ch:plans} Plans & 4.4--4.6 & \code{src/parser}, \code{src/binder}, \code{src/planner}, \code{src/execution} \\
+\ref{ch:joins} Joins & 4.1--4.3, 5.1--5.5 & \code{src/execution/executors}, \code{src/optimizer}, \code{src/stats} \\
+\ref{ch:transactions} Transactions & 7.2, 7.4 & \code{src/concurrency}, \code{test/isolation/specs} \\
+\ref{ch:concurrency} Concurrency & 7.1--7.6 & \code{src/concurrency}, B+ tree crabbing \\
+\ref{ch:wal} Logging & 8.1--8.3 & \code{src/recovery/log\_record.cpp}, \code{src/recovery/log\_manager.cpp} \\
+\ref{ch:aries} ARIES & 8.4--8.7 & \code{src/recovery}, \code{test/recovery}, \code{scripts/crashtest} \\
+\ref{ch:durability} Durability & 9.1--9.7 & \code{src/recovery/durability.cpp}, \code{src/recovery/snapshot.cpp}, \code{test/durable} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The OntoDB manual (\url{https://lamng3.github.io/ontodb-docs/}) is the
+companion to this book: it documents how to use each feature, while this book
+explains why it is built the way it is.

@@ -1,0 +1,138 @@
+\chapter{Disks, Files, and Pages}
+\label{ch:pages}
+
+Every design decision in a storage engine starts from one fact: memory is fast
+and volatile, and storage is slow and durable. A database must keep its data on
+the slow, durable device and still answer queries at the speed of the fast,
+volatile one. This chapter is about the unit that moves between the two: the
+\term{page}.
+
+\section{The storage hierarchy}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Device & Typical access latency & Survives power loss \\
+\midrule
+CPU cache & 1--10 ns & no \\
+Main memory (DRAM) & about 100 ns & no \\
+NVMe SSD, random 4 KiB read & 10--100 $\mu$s & yes \\
+Spinning disk, random read & 5--10 ms & yes \\
+\bottomrule
+\end{tabular}
+\caption{Orders of magnitude, not benchmarks. The gap between memory and storage is a factor of a hundred to a hundred thousand.}
+\label{tab:hierarchy}
+\end{table}
+
+Two properties of storage shape everything above it.
+
+\begin{description}[leftmargin=1.2em]
+\item[Block granularity.] A device reads and writes whole blocks (typically 512 bytes or 4 KiB). Reading one byte costs a whole block. So the engine should arrange data so that one block read brings many useful bytes.
+\item[Sequential beats random.] Even on SSDs, sequential access is cheaper than random access, and on spinning disks it is dramatically cheaper. An engine that writes sequentially (a log) and reads mostly through an index (a tree) uses the device the way it wants to be used.
+\end{description}
+
+\section{Pages}
+
+A \term{page} is the engine's unit of I/O: a fixed-size block of the database
+file, usually 4, 8, or 16 KiB, aligned to the device's block size. The engine
+never reads half a page and never writes half a page. Fixing the size has three
+payoffs:
+
+\begin{itemize}
+\item \textbf{Addressing is arithmetic.} Page $i$ lives at byte offset $i \times \text{PAGE\_SIZE}$ in the file. A page id is all the engine needs to find it.
+\item \textbf{Memory is interchangeable.} Every buffer-pool frame holds exactly one page, so any frame can hold any page (\cref{ch:buffer}).
+\item \textbf{Failure is bounded.} A write either lands a whole page, or, if power fails mid-write, produces a \term{torn page}: part old, part new. Because the size is fixed and known, a checksum over the page detects the tear.
+\end{itemize}
+
+\begin{keyidea}
+A page id is a stable name. Pointers inside the database (a B+ tree child, a
+heap record's location) are page ids, never memory addresses, so they remain
+valid across restarts and across evictions.
+\end{keyidea}
+
+\section{Slotted pages}
+
+Fixed-size records are easy to place: record $k$ starts at byte $k \times
+\text{size}$. Real data is variable-sized: an IRI might be 20 bytes or 200.
+The standard answer is the \term{slotted page}.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[x=1cm,y=1cm,font=\scriptsize]
+\fill[boxbg] (0,0) rectangle (1.4,1.2); \node at (0.7,0.6) {header};
+\fill[ideabg] (1.4,0) rectangle (3.4,1.2); \node[align=center] at (2.4,0.6) {slot directory\\grows $\rightarrow$};
+\node at (6.4,0.6) {free space};
+\fill[statusbg] (9.2,0) rectangle (11.0,1.2); \node at (10.1,0.6) {record 2};
+\fill[statusbg] (11.0,0) rectangle (12.2,1.2); \node at (11.6,0.6) {rec 1};
+\fill[statusbg] (12.2,0) rectangle (14,1.2); \node at (13.1,0.6) {record 0};
+\draw (9.2,0) -- (9.2,1.2); \draw (11.0,0) -- (11.0,1.2); \draw (12.2,0) -- (12.2,1.2);
+\draw (1.4,0) -- (1.4,1.2); \draw (3.4,0) -- (3.4,1.2);
+\draw (0,0) rectangle (14,1.2);
+\node at (10.1,1.45) {$\leftarrow$ records grow};
+\foreach \sx/\tx in {1.8/13.1,2.4/11.6,3.0/10.1}{\draw[-{Stealth[length=1.6mm]},gray] (\sx,0) .. controls (\sx,-0.7) and (\tx,-0.7) .. (\tx,0);}
+\end{tikzpicture}
+\caption{A slotted page. The slot directory grows forward from the header, records grow backward from the end, and free space sits between them.}
+\label{fig:slotted}
+\end{figure}
+
+The header records how many slots exist and where free space begins. Each slot
+holds a record's offset and length. A record is addressed by a \term{record id}
+(RID): \emph{(page id, slot number)}. Two properties make this work:
+
+\begin{itemize}
+\item \textbf{Records can move without changing their RID.} To compact the page, slide records together and update the slot offsets. The slot number, and therefore the RID, is unchanged.
+\item \textbf{Deletion is cheap.} Mark the slot free; a later insert may reuse it. The space is reclaimed when the page is compacted, or when a new record fits in the hole.
+\end{itemize}
+
+\begin{ontodb}[: pages and the term heap]
+Every OntoDB page is 4096 bytes (\code{PAGE\_SIZE}). The first 8 bytes of
+\emph{every} page, from the very first version, are reserved for the
+\term{pageLSN}, the log sequence number of the last update applied to that
+page; the payload starts at byte 8. Reserving the field before any logging
+existed means the file format did not have to change when the write-ahead log
+arrived (\cref{ch:wal}).
+
+The spellings of IRIs and literals live in a \term{term heap} made of slotted
+pages. The B+ tree leaves never contain strings: they contain 24-byte keys of
+three ids. That separation keeps the tree's fanout high, and it is why a long
+IRI costs nothing in the index (\cref{ch:rdf-indexing}). A spelling is never
+deleted when a triple using it is deleted: the dictionary keeps the id, so a
+log record written earlier can still name it.
+\end{ontodb}
+
+\section{Talking to the file system}
+
+An engine reads and writes its file through the operating system, and two
+details of that conversation decide whether data survives a crash.
+
+\paragraph{The page cache.} A \code{write} call returns as soon as the bytes are
+in the operating system's page cache, in memory. They reach the device later.
+A crash after \code{write} returns can still lose them.
+
+\paragraph{\code{fsync}.} Calling \code{fsync} on a file asks the operating
+system to push that file's dirty data to the device and wait until the device
+reports it durable. It is the only promise of durability the engine gets, and
+it is expensive: a few milliseconds on a disk, tens to hundreds of microseconds
+on an SSD. Two consequences follow.
+
+\begin{enumerate}
+\item \textbf{Batch the expensive call.} Engines amortize \code{fsync} across many transactions; the log manager's \term{group commit} (\cref{ch:wal}) exists for this.
+\item \textbf{Never assume a failed \code{fsync} can be retried.} On several operating systems, after \code{fsync} reports an error the kernel may already have discarded the dirty pages and cleared the error, so a second \code{fsync} that ``succeeds'' has lost data. PostgreSQL learned this in 2018 and now treats a failed \code{fsync} as fatal \cite{fsyncgate,pillai2014}.
+\end{enumerate}
+
+\paragraph{Atomic replacement.} Renaming a file over another is atomic on POSIX
+file systems: a reader sees the old file or the new one, never a mixture. The
+idiom ``write to a temporary file, \code{fsync} it, \code{rename} it over the
+target, \code{fsync} the directory'' replaces a whole file atomically. OntoDB
+writes its snapshots this way (\cref{ch:durability}).
+
+\begin{status}
+The page frame and the pageLSN layout exist. The disk manager, which allocates
+pages and reads and writes them, and the term heap are being built (plans 1.1
+and 3.1).
+\end{status}
+
+\section*{Further reading}
+Petrov \cite{petrov}, chapters 2 and 3, on file formats and slotted pages.
+Pillai et al.\ \cite{pillai2014} on what file systems actually guarantee.

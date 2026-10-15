@@ -1,0 +1,112 @@
+\chapter{Joins and Query Optimization}
+\label{ch:joins}
+
+A SPARQL query of $k$ triple patterns is a $k$-way join, and its running time
+depends far more on \emph{how} it is joined than on anything else. This chapter
+covers the three join algorithms, how an optimizer estimates the size of
+intermediate results, and how it searches for a good join order.
+
+\section{Three join algorithms}
+
+Let the outer input have $|R|$ rows and the inner input $|S|$ rows.
+
+\paragraph{Nested-loop join.} For each outer row, scan the whole inner input and
+keep the pairs whose shared slots agree. Cost: $|R| \times |S|$ comparisons, no
+extra memory. Correct for any join, and the fallback when nothing better applies.
+
+\paragraph{Index nested-loop join.} For each outer row, substitute its bindings
+into the inner pattern and \emph{probe an index} for just the matching triples.
+If the outer row binds the subject and SPO exists, the inner side becomes a
+prefix range, often one or a handful of triples. Cost: $|R|$ index probes. This
+is the common, fast case in SPARQL: one pattern finds the entities, and each
+further pattern looks up an attribute of each entity.
+
+\paragraph{Hash join.} \emph{Build} a hash table on the shared slots of one input
+(ideally the smaller), then \emph{probe} it with each row of the other. Cost:
+linear in $|R| + |S|$, plus memory for the build side. It wins when both inputs
+are large and no index makes the probe selective, and it loses when the build
+side does not fit in memory, or when an index probe was already a point lookup.
+
+\begin{keyidea}
+Index nested loop is fast when the outer side is small and the inner side is
+indexed on the join key; hash join is fast when both sides are large; nested
+loop is always correct. An optimizer's job is to know which case it is in.
+\end{keyidea}
+
+\section{Cardinality estimation}
+
+To compare plans, the optimizer needs the \term{cardinality} of each
+intermediate result: how many rows each operator produces. It estimates them
+from \term{statistics} gathered at load time: the total triple count $|T|$,
+the number of distinct subjects, predicates, and objects, and per-predicate
+counts.
+
+For a pattern with predicate $p$ and object $o$ bound, the classic estimate
+assumes the positions are \term{independent}:
+\[
+  \widehat{\,|\{(s,p,o)\}|\,} \;=\; \frac{|p| \cdot |o|}{|T|},
+\]
+where $|p|$ and $|o|$ are the counts of triples with that predicate and that
+object. Independence is convenient and frequently wrong. In RDF, predicates and
+objects are strongly correlated (\code{rdf:type} goes with class objects; a
+\code{name} predicate never has a class as its object), so independence can be
+off by orders of magnitude.
+
+The \term{q-error} measures an estimate $\hat c$ against the true count $c$:
+\[
+  q(\hat c, c) = \max\!\left(\frac{\hat c}{c},\ \frac{c}{\hat c}\right) \ \ge 1 .
+\]
+It treats over- and underestimates symmetrically, and errors multiply as they
+propagate up a plan: a join of two inputs each off by 10 can be off by 100.
+
+\section{Searching for a join order}
+
+A left-deep plan over $k$ patterns has $k!$ orders, and each join can use
+several algorithms. Selinger's System R optimizer \cite{selinger} made the
+search tractable with dynamic programming:
+
+\begin{lstlisting}[language=pseudo]
+for each single pattern P:   best[{P}] = cheapest access path for P
+for size = 2 to k:
+  for each subset S of patterns with |S| = size:
+    for each pattern P in S:
+      candidate = join(best[S - {P}], P) with the cheapest algorithm
+      if cost(candidate) < cost(best[S]): best[S] = candidate
+return best[all patterns]
+\end{lstlisting}
+
+It keeps one best plan per subset rather than per order, which reduces $k!$ to
+about $k \cdot 2^k$. A simpler \term{greedy} strategy (start with the most
+selective pattern, then repeatedly add the cheapest connected pattern) is a
+good first step and often good enough for the star-shaped joins common in SPARQL.
+
+\section{Explain analyze}
+
+The single most useful optimizer tool is to \emph{run} the plan and print, next
+to each operator's estimated rows, the rows it actually produced. The node where
+the two diverge most is where a statistic is missing, usually a correlation that
+the independence assumption averaged away.
+
+\begin{ontodb}[: the optimizer]
+OntoDB's optimizer takes the planner's tree and returns another tree that must
+return the same rows. The shell setting \code{\textbackslash set join
+auto|nlj|inlj|hash} either lets it choose or forces one algorithm, and forcing
+happens in the optimizer, not the executor, so the plan that
+\code{\textbackslash explain} prints is always the plan that runs. Statistics
+are collected at load: the triple count, distinct counts per position,
+per-predicate counts, and counts for partially bound patterns. Estimates are
+finite, never negative, and binding one more position never increases them.
+Join ordering starts greedy and left-deep.
+\end{ontodb}
+
+\begin{status}
+Today the planner always joins in textual order with nested loop. Rebinding the
+inner scan, index nested-loop join, hash join, statistics, cardinality, join
+ordering, and \code{\textbackslash explain analyze} are plans 4.1 to 4.3 and
+5.1 to 5.5.
+\end{status}
+
+\section*{Further reading}
+Selinger et al.\ \cite{selinger}; Graefe \cite{graefe}; Leis et al.\
+\cite{leis2015} on how good cardinality estimates really are; Neumann and
+Weikum \cite{rdf3x} on RDF selectivity.

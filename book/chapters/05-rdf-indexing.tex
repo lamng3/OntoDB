@@ -1,0 +1,157 @@
+\chapter{Indexing RDF}
+\label{ch:rdf-indexing}
+
+A relational table has a schema, and each column can be indexed on its own.
+An RDF store has one table with three columns, and a query can bind any subset
+of them. This chapter shows how a triple store turns that into fixed-size keys
+in B+ trees: first by replacing strings with integers, then by laying out the
+integers so that byte order is query order, and finally by keeping more than
+one ordering of the same triples.
+
+\section{Dictionary encoding}
+
+IRIs are long and repeated: the same predicate appears in millions of triples.
+Storing strings in the index would waste space and make every comparison a
+string comparison. Instead, a \term{dictionary} maps each distinct term to a
+dense integer id, once.
+
+\begin{center}
+\begin{tabular}{@{}rl@{}}
+\toprule
+id & canonical spelling \\
+\midrule
+1 & \code{<http://example.edu/univ\#Alice>} \\
+2 & \code{<http://www.w3.org/1999/02/22-rdf-syntax-ns\#type>} \\
+3 & \code{<http://example.edu/univ\#Student>} \\
+4 & \code{"Alice"} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A triple becomes three integers, \code{(1, 2, 3)}. Comparing ids is one machine
+instruction, and the index stores 24 bytes per triple regardless of how long
+the IRIs are.
+
+Two rules keep the dictionary correct:
+
+\begin{itemize}
+\item \textbf{One spelling per term.} The loader and the query binder must produce the same canonical text for the same term, or one IRI becomes two ids and every join on it silently fails. Escapes, datatype IRIs, and language tags are part of the spelling.
+\item \textbf{Ids never change.} An id assigned once keeps its meaning across restarts. A log record that names id 18 must still mean the same term when it is replayed (\cref{ch:durability}).
+\end{itemize}
+
+\begin{ontodb}[: the dictionary]
+Ids are 64-bit and start at 1; 0 is never a valid id, so a zeroed key never
+names a real term, and the maximum value means ``unbound''. A single codec
+produces canonical spellings for both the loader and the binder: \code{<iri>},
+\code{"lex"}, \code{"lex"@en}, \code{"lex"\^{}\^{}<datatype>}, and \code{\_:b0}.
+Numeric literals compare by value in filters; everything else compares by id
+for equality and by spelling for order.
+\end{ontodb}
+
+\section{A key whose bytes sort correctly}
+
+A B+ tree compares keys. The fastest comparison is \code{memcmp} on raw bytes,
+which works only if byte order equals the intended order. For a key made of
+three unsigned integers, that requires \textbf{big-endian} encoding: the most
+significant byte first.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize]
+\foreach \i in {0,...,7}{\node[draw,minimum width=0.5cm,minimum height=0.5cm,fill=boxbg] at (\i*0.5,0) {};}
+\foreach \i in {8,...,15}{\node[draw,minimum width=0.5cm,minimum height=0.5cm,fill=ideabg] at (\i*0.5,0) {};}
+\foreach \i in {16,...,23}{\node[draw,minimum width=0.5cm,minimum height=0.5cm,fill=statusbg] at (\i*0.5,0) {};}
+\node at (1.75,0.55) {subject (8 bytes)};
+\node at (5.75,0.55) {predicate (8 bytes)};
+\node at (9.75,0.55) {object (8 bytes)};
+\node at (0,-0.5) {0}; \node at (3.5,-0.5) {7}; \node at (4,-0.5) {8}; \node at (11.5,-0.5) {23};
+\end{tikzpicture}
+\caption{A 24-byte triple key: three big-endian unsigned 64-bit ids.}
+\label{fig:key}
+\end{figure}
+
+Why big-endian: little-endian stores the least significant byte first, so the
+id 256 (\code{00 01 00\ldots} in little-endian) would compare below the id 1
+(\code{01 00 00\ldots}). With big-endian, integer order and byte order agree,
+and the comparison needs no decoding at all.
+
+\section{Prefix scans}
+
+A triple pattern with some positions bound is a \emph{prefix} of the key, if the
+bound positions come first. ``Every triple with subject 5'' is every key whose
+first 8 bytes encode 5. Such a prefix is a contiguous range of keys, so a scan
+is one descent plus a walk along leaves. The range is $[\text{lower},
+\text{upper})$, where lower is the prefix padded with zeros and upper is the
+prefix's last component plus one:
+
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Bound components & Lower bound & Upper bound (exclusive) \\
+\midrule
+0 & \code{(0, 0, 0)} & past every key \\
+1 & \code{(5, 0, 0)} & \code{(6, 0, 0)} \\
+2 & \code{(5, 7, 0)} & \code{(5, 8, 0)} \\
+3 & \code{(5, 7, 9)} & \code{(5, 7, 10)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{One ordering is not enough}
+
+An index ordered subject, predicate, object (SPO) serves any pattern whose bound
+positions are a prefix of S-P-O. It does not serve ``which subjects have object
+\code{Material}?'': the object is the last component, so the matching keys are
+scattered across the whole tree. The fix is to store the same triples in more
+than one order.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+Bound positions in the pattern & Answered as a prefix of \\
+\midrule
+subject & SPO \\
+subject, predicate & SPO \\
+predicate & POS \\
+predicate, object & POS \\
+object & OSP \\
+object, subject & OSP \\
+all three & any (a point lookup) \\
+none & any (a full scan) \\
+\bottomrule
+\end{tabular}
+\caption{Three permutations (SPO, POS, OSP) make every bound/unbound combination a prefix scan.}
+\label{tab:perm}
+\end{table}
+
+Hexastore \cite{hexastore} keeps all six permutations; RDF-3X \cite{rdf3x} also
+keeps six but compresses them heavily and adds aggregated indexes. Each
+permutation is another full copy of the triples, so the right number is a
+measurement, not a default: three cover every pattern as a prefix, and the
+other three only add sorted orders that some joins can exploit.
+
+\begin{keyidea}
+Extra permutations change the \emph{cost} of answering a pattern, never the
+\emph{answer}. With only SPO, every pattern is still answerable by scanning and
+filtering; the other permutations turn scans into prefix ranges.
+\end{keyidea}
+
+\begin{ontodb}[: keys, permutations, and the catalog]
+OntoDB's \code{TripleKey} is exactly \cref{fig:key}: three big-endian
+\code{uint64}s, compared with \code{memcmp}. \code{PrefixLower(key, n)} and
+\code{PrefixUpper(key, n)} produce the bounds for $n = 0, 1, 2, 3$ bound
+components. The catalog names three B+ tree roots, \code{"spo"}, \code{"pos"},
+and \code{"osp"}, and an insert or delete updates every permutation the catalog
+has, or none. The plan builds SPO first and then \emph{measures} whether POS and
+OSP pay for their space on real SPARQL workloads before adding them.
+\end{ontodb}
+
+\begin{status}
+The triple key is the next item to implement (plan 0.2). The indexed store and
+the permutation measurement follow the B+ tree (plans 3.4 and 3.5).
+\end{status}
+
+\section*{Further reading}
+Weiss, Karras, and Bernstein \cite{hexastore}; Neumann and Weikum \cite{rdf3x},
+the sections on the dictionary and on permutations.

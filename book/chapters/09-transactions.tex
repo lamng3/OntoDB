@@ -1,0 +1,96 @@
+\chapter{Transactions and Isolation}
+\label{ch:transactions}
+
+A \term{transaction} is a group of reads and writes that the database treats as
+one unit. Transactions let an application reason about one operation at a time,
+even though many run concurrently and any of them may be interrupted by a crash.
+
+\section{ACID}
+
+\begin{description}[leftmargin=1.2em]
+\item[Atomicity.] All of a transaction's writes happen, or none do. A transaction that aborts, or is cut off by a crash, leaves no trace. (Provided by the log: \cref{ch:wal,ch:aries}.)
+\item[Consistency.] A transaction takes the database from one valid state to another, where ``valid'' is defined by the application's invariants. The engine helps with constraints, but consistency is mostly the application's promise.
+\item[Isolation.] Concurrent transactions do not see each other's intermediate states; the result is as if they ran in some order. (Provided by concurrency control: \cref{ch:concurrency}.)
+\item[Durability.] Once a commit is acknowledged, its effects survive any later crash. (Provided by the log and \code{fsync}.)
+\end{description}
+
+\section{Schedules and serializability}
+
+A \term{schedule} is the interleaved order in which the operations of
+concurrent transactions actually execute. A schedule is \term{serializable} if
+its effect equals that of \emph{some} serial order of the same transactions.
+Serializability is the gold standard of isolation: the application cannot tell
+that concurrency happened.
+
+Two operations \term{conflict} if they come from different transactions, touch
+the same item, and at least one is a write. A schedule is
+\term{conflict-serializable} if it can be turned into a serial one by swapping
+adjacent non-conflicting operations. The test is a graph: draw an edge
+$T_i \to T_j$ for every pair of conflicting operations where $T_i$'s comes
+first. The schedule is conflict-serializable exactly when the graph has no cycle.
+
+\section{Anomalies}
+
+Weaker isolation admits specific bad interleavings. Naming them is the clearest
+way to define the isolation levels \cite{berenson}.
+
+\begin{description}[leftmargin=1.2em]
+\item[Dirty read.] $T_2$ reads a value $T_1$ wrote but has not committed. If $T_1$ aborts, $T_2$ read data that never existed.
+\item[Non-repeatable read.] $T_1$ reads an item, $T_2$ changes it and commits, and $T_1$ reads it again and sees a different value.
+\item[Phantom.] $T_1$ reads the set of items matching a condition (``every student''), $T_2$ inserts a new matching item and commits, and $T_1$ repeats the query and sees an extra row.
+\item[Lost update.] Both transactions read a counter, both add one, both write: one increment disappears.
+\end{description}
+
+\section{Isolation levels}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Level & Dirty read & Non-repeatable read & Phantom \\
+\midrule
+Read uncommitted & possible & possible & possible \\
+Read committed & --- & possible & possible \\
+Repeatable read & --- & --- & possible \\
+Serializable & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\caption{The SQL standard's levels, defined by the anomalies they forbid.}
+\label{tab:isolation}
+\end{table}
+
+Berenson et al.\ \cite{berenson} showed that defining levels by these phenomena
+alone is ambiguous, and that real systems' levels (notably snapshot isolation,
+which forbids all three but admits a ``write skew'') do not fit the table
+cleanly. The table remains the right first mental model.
+
+\begin{keyidea}
+Isolation is a dial, not a switch. Lower levels allow more concurrency and
+specific anomalies; serializable allows none. Each level is defined by what it
+forbids, and each forbidden anomaly corresponds to a specific lock held for a
+specific time (\cref{ch:concurrency}).
+\end{keyidea}
+
+\begin{ontodb}[: transactions]
+Every shell statement is its own transaction unless \code{\textbackslash begin}
+opens an explicit one, ended by \code{\textbackslash commit} or
+\code{\textbackslash abort}. Isolation is a setting,
+\code{\textbackslash set isolation ru|rc|rr|ser}, defaulting to read committed.
+The isolation contract is written as executable schedules: twelve specs, each a
+scripted interleaving of two sessions with expectations such as ``session 2 is
+blocked'', ``the read returns Dana'', or ``session 2 is aborted''. They cover
+dirty reads, non-repeatable reads, lost updates, lock upgrades, two deadlock
+shapes, write--write conflicts, locks released on abort, and phantoms.
+
+In a persistent database today, each update statement (or \code{\textbackslash
+load}) is one atomic, durable transaction (\cref{ch:durability}).
+\end{ontodb}
+
+\begin{status}
+Statement-level atomicity and durability run today. Explicit multi-statement
+transactions and isolation levels are plans 7.2 to 7.6.
+\end{status}
+
+\section*{Further reading}
+Gray and Reuter \cite{grayreuter}; Berenson et al.\ \cite{berenson}; Petrov
+\cite{petrov}, chapter 5.

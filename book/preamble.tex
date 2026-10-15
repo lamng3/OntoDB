@@ -1,0 +1,74 @@
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tgpagella}
+\usepackage[scaled=0.95]{inconsolata}
+\usepackage[letterpaper,margin=1.1in]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,shapes.multipart,shapes.geometric,decorations.pathreplacing}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{caption}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\usepackage{bookmark}
+\usepackage[nameinlink]{cleveref}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parskip}{0.45em}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2em}
+
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{boxbg}{HTML}{F4F7FB}
+\definecolor{ideabg}{HTML}{FFF8E7}
+\definecolor{statusbg}{HTML}{EEF6EE}
+
+\titleformat{\chapter}[display]{\normalfont\bfseries\color{accent}}{\large\scshape Chapter \thechapter}{0.4em}{\huge}
+\titlespacing*{\chapter}{0pt}{-10pt}{24pt}
+\titleformat{\section}{\normalfont\Large\bfseries\color{accent}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{0.8em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[RE]{\small\scshape OntoDB: Database Internals by Example}
+\fancyhead[LO]{\small\scshape\nouppercase{\leftmark}}
+\renewcommand{\headrulewidth}{0.3pt}
+
+% The running example: how OntoDB does it.
+\newtcolorbox{ontodb}[1][]{enhanced,breakable,colback=boxbg,colframe=accent,
+  boxrule=0.6pt,arc=2pt,left=8pt,right=8pt,top=6pt,bottom=6pt,
+  title={In OntoDB#1},fonttitle=\bfseries\small,coltitle=white}
+% The one idea to keep from a section.
+\newtcolorbox{keyidea}{enhanced,breakable,colback=ideabg,colframe=Goldenrod!70!black,
+  boxrule=0.5pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  title={Key idea},fonttitle=\bfseries\small,coltitle=black,colbacktitle=Goldenrod!25}
+% What is built today and what is planned.
+\newtcolorbox{status}{enhanced,breakable,colback=statusbg,colframe=ForestGreen!70!black,
+  boxrule=0.5pt,arc=2pt,left=8pt,right=8pt,top=5pt,bottom=5pt,
+  title={Status},fonttitle=\bfseries\small,coltitle=white}
+
+\lstset{basicstyle=\ttfamily\small,columns=fullflexible,keepspaces=true,
+  frame=single,framerule=0.4pt,rulecolor=\color{black!25},backgroundcolor=\color{black!3},
+  xleftmargin=6pt,xrightmargin=6pt,aboveskip=8pt,belowskip=8pt,
+  commentstyle=\color{black!55}\itshape,keywordstyle=\color{accent}\bfseries,
+  showstringspaces=false,breaklines=true}
+\lstdefinelanguage{pseudo}{morekeywords={function,if,else,then,for,each,while,return,do,end,and,or,not,in},
+  sensitive=true,morecomment=[l]{//}}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\term}[1]{\emph{#1}}
+
+\tikzset{
+  page/.style={draw,minimum width=1.25cm,minimum height=0.6cm,font=\scriptsize\ttfamily},
+  node box/.style={draw,rectangle split,rectangle split horizontal,rectangle split parts=#1,
+    font=\scriptsize\ttfamily,inner sep=3pt,fill=white},
+  arrow/.style={-{Stealth[length=2mm]},thick},
+}

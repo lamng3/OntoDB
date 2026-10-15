@@ -1,0 +1,148 @@
+\chapter{Concurrency Control}
+\label{ch:concurrency}
+
+Isolation levels say \emph{what} must hold; concurrency control is \emph{how}.
+This chapter covers locking, the approach OntoDB takes: two-phase locking,
+multi-granularity locks, deadlock handling, phantoms, and the separate problem
+of protecting the B+ tree's own structure.
+
+\section{Two-phase locking}
+
+A transaction takes a \term{shared} (S) lock to read an item and an
+\term{exclusive} (X) lock to write it. S is compatible with S; X is compatible
+with nothing. \term{Two-phase locking} (2PL) adds one rule: a transaction may
+not acquire any lock after it has released one. Its life has a growing phase
+and a shrinking phase.
+
+2PL guarantees conflict-serializability: the order in which transactions reach
+their \term{lock point} (the moment they hold all their locks) is an equivalent
+serial order.
+
+Plain 2PL has a flaw. If $T_1$ releases an X lock before committing and $T_2$
+reads the value, then $T_1$ aborts, $T_2$ has read a value that never existed,
+and must abort too: a \term{cascading abort}. \term{Strict 2PL} holds every
+X lock until commit or abort, which rules this out.
+
+\begin{keyidea}
+Exclusive locks are held to the end of the transaction at every isolation
+level, because releasing one early lets others see a write that may still be
+undone. The isolation levels differ only in how long \emph{shared} locks are
+held, and whether ranges are locked.
+\end{keyidea}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+Level & Shared locks \\
+\midrule
+Read uncommitted & none \\
+Read committed & released at the end of each statement \\
+Repeatable read & held until commit \\
+Serializable & held until commit, plus range or predicate locks against phantoms \\
+\bottomrule
+\end{tabular}
+\caption{Isolation levels as locking rules, given strict 2PL for writes.}
+\end{table}
+
+\section{Locking at several granularities}
+
+Locking every triple is precise but expensive for a query that reads the whole
+store; locking the whole store is cheap but serializes everything. Gray et al.\
+\cite{gray1976} let a transaction choose its granularity, using
+\term{intention} locks on the coarser levels: before locking a key in S, take
+IS (``intends to share something below'') on the index and on the database.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Held \textbackslash{} Requested & IS & IX & S & SIX & X \\
+\midrule
+IS  & yes & yes & yes & yes & --- \\
+IX  & yes & yes & --- & --- & --- \\
+S   & yes & --- & yes & --- & --- \\
+SIX & yes & --- & --- & --- & --- \\
+X   & --- & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\caption{Multi-granularity lock compatibility. SIX is S on the whole node plus the intention to write below it.}
+\label{tab:compat}
+\end{table}
+
+The point of intention locks: a transaction that wants to lock a whole index in
+S can check one lock on the index, instead of every key below it, because any
+writer below must already hold IX there.
+
+\section{Deadlock}
+
+$T_1$ holds a lock $T_2$ wants, and $T_2$ holds a lock $T_1$ wants: both wait
+forever. Engines either \emph{prevent} deadlock (order locks, or abort on
+conflicts by timestamp, as in wait--die and wound--wait) or \emph{detect} it:
+maintain a \term{waits-for graph} with an edge $T_i \to T_j$ when $T_i$ waits for
+a lock $T_j$ holds, find a cycle, and abort one transaction in it, the
+\term{victim}. Choosing the youngest transaction (the one that has done the least
+work) is a common and deterministic policy.
+
+\section{Phantoms}
+
+Repeatable read locks the triples a transaction read. A phantom is a triple it
+did \emph{not} read, because it did not exist yet; no lock covers it. Preventing
+phantoms needs a lock on what \emph{could} match, not on what does:
+
+\begin{description}[leftmargin=1.2em]
+\item[Predicate locks] lock the query's condition itself. Precise, but testing whether two predicates overlap is expensive in general \cite{eswaran}.
+\item[Key-range (next-key) locks] lock the gap between index keys, so an insert into the scanned range must wait. Practical, and natural on a B+ tree.
+\end{description}
+
+\section{Latches are not locks}
+
+A B+ tree split rewrites several pages at once. Even a single-transaction
+engine with many threads must stop two threads from splitting the same page at
+the same time. That protection is a \term{latch}: a short-term reader--writer
+mutex on a page, held for the duration of one tree operation, never for a
+transaction. Locks protect \emph{logical contents} for transactional isolation;
+latches protect \emph{physical structure} for thread safety.
+
+The classic latch protocol for B+ trees is \term{crabbing}: latch the child,
+and release the parent if the child is \emph{safe}, meaning it cannot split (for
+an insert) or merge (for a delete) as a result of this operation. A thread
+therefore holds latches only on the part of the path a structure change could
+reach. An \term{optimistic} variant takes shared latches down to the leaf,
+latches only the leaf exclusively, and restarts pessimistically if the leaf
+turns out to need a split. Lehman and Yao's B-link tree \cite{lehmanyao} goes
+further and lets readers run without latching the path at all, by following
+right-links when a split has moved their key.
+
+\section{The alternative: multiversion concurrency}
+
+Locking makes readers and writers wait for each other. \term{Multiversion
+concurrency control} (MVCC) keeps old versions of items, so a reader sees a
+consistent snapshot as of its start time and never waits for a writer. Writers
+still conflict with writers. The cost is storing old versions and cleaning them
+up once no reader can need them. Most modern systems use MVCC with snapshot
+isolation by default.
+
+\begin{ontodb}[: concurrency control]
+OntoDB uses strict 2PL with five lock modes on three granularities: the
+database, an index (\code{"spo"}, \code{"pos"}, \code{"osp"}), and a key, with
+FIFO grant order and in-place upgrades that do not jump ahead of waiters. A
+blocked shell session prints why it is waiting, for example
+\code{session 2 waiting: X lock held by txn 5}. A background thread builds the
+waits-for graph and aborts the \emph{youngest} transaction in each cycle (the
+larger id), so deadlock outcomes are deterministic and testable. Serializable
+adds one phantom mechanism, chosen and documented in the code. B+ tree
+operations use latch crabbing, and the whole feature runs under
+ThreadSanitizer. MVCC is a deliberate future comparison, not part of the plan.
+\end{ontodb}
+
+\begin{status}
+Concurrency control is plans 7.1 to 7.6: crabbing, transactions, the lock
+manager, isolation, deadlock detection, and phantoms. The isolation harness
+already exists and checks itself.
+\end{status}
+
+\section*{Further reading}
+Gray et al.\ \cite{gray1976}; Eswaran et al.\ \cite{eswaran}; Lehman and Yao
+\cite{lehmanyao}; Bayer and Schkolnick \cite{bayerschkolnick}; Petrov
+\cite{petrov}, chapters 5 and 6.
