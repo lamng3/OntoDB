@@ -82,6 +82,7 @@ line is the point.
 \answers{ch:joins}{8}
 \item Nested loop: $10^3 \times 10^6 = 10^9$ comparisons. Index nested loop: 1,000 prefix probes, each a root-to-leaf descent (mostly cached) plus the few matching triples.
 \item When both inputs are large, no index makes a probe selective, and the build side fits in memory.
+\item The exact number of triples with that predicate and object, read from the pair counts. Errors return at joins, where the estimator must assume how join values are distributed, and after updates, until the statistics are collected again.
 \item $(10^4 \times 10^3) / 10^6 = 10$. The q-error is $\max(10/1000,\ 1000/10) = 100$.
 \item It keeps the 2,000 course rows, keyed by \code{?c}, and makes 50,000 lookups, one per probe row. Swapped, it would keep 50,000 rows to answer 2,000 lookups: the same answer for 25 times the memory, which is why the build side should be the smaller one once estimates exist.
 \item With rebinding, each of the 1,000 outer rows binds \code{?s}, so the inner scan is a prefix probe returning that student's names: about 1,000 probes reading a few triples each. Without it, every outer row rescans all 1,000,000 \code{ub:name} triples: $10^9$ triples read.
