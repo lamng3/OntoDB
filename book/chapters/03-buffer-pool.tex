@@ -211,7 +211,7 @@ operation and release what it holds.
 into an error close to the cause.
 \end{decision}
 
-\begin{decision}{Pages only through guards (planned)}
+\begin{decision}{Pages only through guards}
 \dpart{Choice} Code above the pool reaches a page only through a
 \code{ReadPageGuard} or \code{WritePageGuard}: one pin plus a latch, released
 exactly once by \code{Drop} or the destructor. Guards move but never copy, and a
@@ -226,11 +226,37 @@ results. Tying the pin to a scope removes both.
 every caller must follow, and a little ceremony for one-line accesses.
 \end{decision}
 
+\begin{decision}{Pin, then latch; unlatch, then unpin}
+\dpart{Choice} Each frame has a reader--writer latch. A guard asks the pool to
+pin the page, then takes the latch, outside the pool's own latch. Dropping
+releases the latch first and the pin second. A null page from the pool becomes
+an error at the call that asked for it.
+\dpart{Alternatives} Take the page latch while still holding the pool latch;
+or release the pin before the latch.
+\dpart{Why} Waiting for a page latch while holding the pool latch would block
+every thread behind one busy page, and could deadlock with the thread that
+holds the page and needs the pool. Unpinning first would let the frame be
+evicted and reused while its latch is still held.
+\dpart{Cost} Between the pin and the latch, another writer may get the page
+first; callers must not assume what they will find.
+\end{decision}
+
+\begin{decision}{A write guard dirties only if written}
+\dpart{Choice} A write guard marks the page dirty on drop only if its mutable
+\code{GetData} was called.
+\dpart{Alternatives} Every write guard marks its page dirty.
+\dpart{Why} B+ tree latch crabbing takes exclusive latches on pages it may
+never change. Marking those dirty would write clean pages back to disk.
+\dpart{Cost} Code that writes through a pointer obtained earlier, after
+dropping the guard, escapes the dirty bit, which is one more reason never to
+keep that pointer.
+\end{decision}
+
 \begin{status}
 The disk manager, the I/O scheduler, the LRU-K replacer, and the pool run
-(plans 1.1 to 1.4). The pool already flushes the log up to a page's pageLSN
-before writing the page. Guards and the shell's inspection commands are plans
-1.5 and 1.6.
+(plans 1.1 to 1.4), and so do page guards with per-frame reader--writer latches
+(plan 1.5). The pool already flushes the log up to a page's pageLSN before
+writing the page. The shell's inspection commands are plan 1.6.
 The experiment that checks them is simple: run a scan with a pool of 4 frames
 and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbackslash stats}.
 \end{status}
@@ -244,6 +270,7 @@ and of 64, with $K=1$ and $K=2$, and compare hits and misses in \code{\textbacks
 \item A thread schedules a write of page 9 and then, without waiting, a read of page 9 into another buffer. What does the read return in OntoDB, and what could go wrong with a pool of I/O threads?
 \item Two threads miss on two different pages at the same moment. In OntoDB's pool, how long does the second thread wait, and why?
 \item A test arms the crash point between the log flush and the page write, and the exception unwinds through the pool's destructor. Why would a destructor that flushes dirty pages ruin the test?
+\item Why does a guard release its latch \emph{before} it unpins the page, and not after?
 \item A query returns the right rows, but afterwards one frame is still pinned. What will go wrong later, and how do OntoDB's guards prevent it?
 \end{checkyourself}
 

@@ -162,16 +162,41 @@ auto BufferPoolManager::DebugString() const -> std::string {
   throw NotImplementedException("PLAN 1.6: BufferPoolManager::DebugString");
 }
 
-auto BufferPoolManager::FetchPageRead(page_id_t) -> ReadPageGuard {
-  throw NotImplementedException("PLAN 1.5: BufferPoolManager::FetchPageRead");
+// The guards turn a null page (a full pool, or a deleted page) into an error
+// at the call that asked for it. The latch is taken after FetchPage returns,
+// outside mu_, so waiting for a page never blocks the whole pool.
+auto BufferPoolManager::FetchPageRead(page_id_t page_id) -> ReadPageGuard {
+  Page* page = FetchPage(page_id);
+  if (page == nullptr) {
+    throw StorageException("cannot fetch page " + std::to_string(page_id) + ": " +
+                           NullReason(page_id));
+  }
+  return {this, page};
 }
 
-auto BufferPoolManager::FetchPageWrite(page_id_t) -> WritePageGuard {
-  throw NotImplementedException("PLAN 1.5: BufferPoolManager::FetchPageWrite");
+auto BufferPoolManager::FetchPageWrite(page_id_t page_id) -> WritePageGuard {
+  Page* page = FetchPage(page_id);
+  if (page == nullptr) {
+    throw StorageException("cannot fetch page " + std::to_string(page_id) + ": " +
+                           NullReason(page_id));
+  }
+  return {this, page};
 }
 
-auto BufferPoolManager::NewPageGuarded(page_id_t*) -> WritePageGuard {
-  throw NotImplementedException("PLAN 1.5: BufferPoolManager::NewPageGuarded");
+auto BufferPoolManager::NewPageGuarded(page_id_t* page_id) -> WritePageGuard {
+  Page* page = NewPage(page_id);
+  if (page == nullptr) {
+    throw StorageException("cannot allocate a page: every frame is pinned");
+  }
+  return {this, page};
+}
+
+auto BufferPoolManager::NullReason(page_id_t page_id) const -> std::string {
+  std::lock_guard<std::mutex> guard(mu_);
+  if (page_id < 0 || deleted_.count(page_id) != 0) {
+    return "the page was deleted or never existed";
+  }
+  return "every frame is pinned";
 }
 
 // A free frame first; otherwise evict, writing the victim back if dirty.

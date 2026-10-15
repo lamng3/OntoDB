@@ -35,7 +35,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 3. `src/dictionary/disk_dictionary.cpp` (plan 3.2) turns the three spellings into ids. Bytes live in `src/storage/term/term_heap.cpp` on `src/include/storage/page/term_heap_page.h` (plan 3.1).
 4. `src/storage/index/triple_key.cpp` (plan 0.2, done) packs the three ids into 24 big-endian bytes. `memcmp` is the order.
 5. `src/store/indexed_store.cpp` (plan 3.4) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3) has a root for. The tree is `src/storage/index/b_plus_tree.cpp`. Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1). The iterator is `src/storage/index/index_iterator.cpp`.
-6. The tree pins pages with `src/storage/page/page_guard.cpp` (plan 1.5). Frames live in `src/buffer/buffer_pool_manager.cpp` (plan 1.4, done; one latch, I/O through the scheduler, no flush in the destructor). Eviction is `src/buffer/lru_k_replacer.cpp` (plan 1.3, done).
+6. The tree pins pages with `src/storage/page/page_guard.cpp` (plan 1.5, done). Frames live in `src/buffer/buffer_pool_manager.cpp` (plan 1.4, done; one latch, I/O through the scheduler, no flush in the destructor). Eviction is `src/buffer/lru_k_replacer.cpp` (plan 1.3, done).
 7. A dirty frame is written by `src/storage/disk/disk_scheduler.cpp` (plan 1.2, done; one thread, requests in order, errors through the promise) onto `src/storage/disk/disk_manager.cpp` (plan 1.1, done; the file length records allocation, and freed ids are not reused). Every page image starts with the pageLSN in `src/storage/page/page.cpp`.
 8. Before the page is written, the buffer pool flushes the log up to that pageLSN (plan 8.3). The record is a `src/include/recovery/log_record.h` (plan 8.1) appended by `src/include/recovery/log_manager.h` (plan 8.2). Commit forces the log. The commit record is the acknowledgement the crash harness trusts.
 9. On the next open, `src/include/recovery/log_recovery.h` (plan 8.6) runs analysis, redo, and undo. Undo of a triple is logical and writes a CLR (plan 8.4). A split or merge is redone, not logically undone.
@@ -60,7 +60,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - `\trace` prints `not built yet (PLAN 1.6)`. `SwitchableTraceSink` is already there to call.
 - The devcontainer installs `default-jre-headless` so `scripts/fetch-data lubm` can run the official generator.
 - Targets compile with `-Wno-unused-private-field` because stub objects store the pointers the student will use.
-- Page-guard move and `Drop` do not unpin yet. Plan 1.5 replaces `src/storage/page/page_guard.cpp`.
+- `Page` carries a reader-writer latch (`RLatch`/`WLatch`) for the guards, so a `Page` is neither copyable nor movable.
 - `.clang-tidy` enables `bugprone-*` and `clang-analyzer-*`. The broader `modernize` and `readability` sets are left off so the tidy job can stay green on a scaffold of intentional stubs.
 - `data/pizza.ttl` is a small original subset used by the query tests. `scripts/fetch-data pizza` downloads the real ontology into `data/downloads/`, which is gitignored.
 

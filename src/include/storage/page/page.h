@@ -1,5 +1,7 @@
 #pragma once
 
+#include <shared_mutex>
+
 #include "common/config.h"
 #include "common/types.h"
 
@@ -8,6 +10,9 @@ namespace ontodb {
 // One buffer-pool frame. Bytes [0, 8) of data_ are the on-disk pageLSN.
 // Pin count, dirty bit, and page id live beside the image; they are not
 // written by DiskManager. DiskManager copies GetData() for PAGE_SIZE bytes.
+// The latch is a reader-writer lock on the frame's bytes, taken by page guards
+// after the pin and released before the unpin. It is never waited on while
+// the pool's own latch is held. A Page is neither copyable nor movable.
 class Page {
  public:
   Page() = default;
@@ -24,6 +29,11 @@ class Page {
 
   auto IsDirty() const -> bool { return is_dirty_; }
   void SetDirty(bool dirty) { is_dirty_ = dirty; }
+
+  void RLatch() { latch_.lock_shared(); }
+  void RUnlatch() { latch_.unlock_shared(); }
+  void WLatch() { latch_.lock(); }
+  void WUnlatch() { latch_.unlock(); }
 
   auto GetLSN() const -> lsn_t;
   void SetLSN(lsn_t lsn);
@@ -42,6 +52,7 @@ class Page {
   page_id_t page_id_{INVALID_PAGE_ID};
   int pin_count_{0};
   bool is_dirty_{false};
+  std::shared_mutex latch_;
 };
 
 }  // namespace ontodb
