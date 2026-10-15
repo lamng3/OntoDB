@@ -161,6 +161,38 @@ commit carry over; what changes is that pages can be stolen, so recovery gains
 undo, pageLSNs, and the three passes of \cref{ch:aries}.
 \end{ontodb}
 
+\begin{decision}{Terms replay whatever their transaction did}
+\dpart{Choice} On recovery, every term record is applied in order, even if its
+transaction never committed; update records apply only for committed
+transactions.
+\dpart{Alternatives} Replay terms only for committed transactions.
+\dpart{Why} Ids are dense, and each term record carries the id it was given.
+If an aborted transaction's term were skipped, every later term would land on a
+different id than the log recorded. A term no committed triple uses is
+invisible.
+\dpart{Cost} Aborted transactions can leave unused terms behind.
+\end{decision}
+
+\begin{decision}{Point-in-time recovery by default}
+\dpart{Choice} A damaged log is truncated at the first bad record, and the
+database opens with everything before it, reporting what was dropped.
+\code{--strict} refuses to open instead.
+\dpart{Alternatives} Strict by default; or skip the bad record and continue.
+\dpart{Why} A torn final record is the ordinary result of a crash, and the
+right response is to open. Skipping a bad record would apply later
+transactions on top of a missing one.
+\dpart{Cost} Damage in the middle of the log silently loses every later commit
+apart from the report, which is why \code{\textbackslash verify} exists.
+\end{decision}
+
+\begin{checkyourself}
+\item Why can the memory database's log omit undo information?
+\item A crash happens after the snapshot rename but before the log is emptied. Which records does reopen apply?
+\item A transaction logs a term record for id 19 and then fails. A later committed transaction logs id 20. Why must replay still apply the term for 19?
+\item When would you choose \code{--strict} over point-in-time recovery?
+\item Why is the replay check of \code{\textbackslash verify} stronger than checking checksums alone?
+\end{checkyourself}
+
 \section*{Further reading}
 Gray and Reuter \cite{grayreuter} on redo-only logging; DeWitt et al.\
 \cite{dewitt1984} on recovery for main-memory databases; the RocksDB WAL

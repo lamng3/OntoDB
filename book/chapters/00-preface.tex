@@ -15,7 +15,8 @@ twice: first as theory, then as it appears in a real system. The real system
 is \textbf{OntoDB}, a database management system for ontologies. Its data is
 RDF, a graph of subject--predicate--object triples, and its query language is
 SPARQL. Every chapter ends its theory with an \emph{In OntoDB} box that shows
-the decision OntoDB made, and why.
+what OntoDB does, and design-decision boxes that show what it chose instead,
+and why.
 
 \section*{Why an ontology database}
 
@@ -38,6 +39,16 @@ The parts follow the path of a request through the engine, from the bottom up.
 \item[Transactions] What isolation means, and how locking provides it.
 \item[Recovery] Logging, the write-ahead rule, ARIES, and how OntoDB makes its databases durable today.
 \end{description}
+
+\section*{The boxes}
+
+Four kinds of box recur. A \emph{Key idea} is the one thing to keep from a
+section. \emph{In OntoDB} shows how the running example applies the theory. A
+\emph{Design decision} names a choice OntoDB made, the alternatives, why it chose
+as it did, and what the choice costs; a list of them follows the contents, and
+they are the best place to start if you want to know why the engine is built the
+way it is. \emph{Status} says what runs today. Each chapter ends with questions;
+the answers are in \cref{app:answers}.
 
 Code appears only where a picture or a sentence would be less precise: a key
 layout, a log record, a few lines of pseudocode for an algorithm. The aim is to

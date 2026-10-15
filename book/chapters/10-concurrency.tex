@@ -136,11 +136,53 @@ operations use latch crabbing, and the whole feature runs under
 ThreadSanitizer. MVCC is a deliberate future comparison, not part of the plan.
 \end{ontodb}
 
+\begin{decision}{Locking, not multiversioning (planned)}
+\dpart{Choice} Strict two-phase locking with multi-granularity locks.
+\dpart{Alternatives} MVCC with snapshot isolation, as PostgreSQL and most
+modern engines use; or optimistic concurrency control.
+\dpart{Why} Under locking, each anomaly is prevented by one specific lock held
+for one specific time, which makes isolation levels concrete and testable. It
+also pairs directly with ARIES, which was designed for it.
+\dpart{Cost} Readers and writers wait for each other. MVCC is planned as a
+measured comparison: what a reader no longer waits for, and what keeping old
+versions costs.
+\end{decision}
+
+\begin{decision}{Detect deadlocks and abort the youngest (planned)}
+\dpart{Choice} A background thread builds the waits-for graph and aborts the
+transaction with the largest id in each cycle.
+\dpart{Alternatives} Prevention by wait--die or wound--wait, or lock-wait
+timeouts.
+\dpart{Why} Detection aborts only when a cycle really exists. Choosing the
+youngest is deterministic, so a deadlock spec can name the victim, and it
+usually discards the least work.
+\dpart{Cost} A detector thread, and transactions sit blocked until it runs.
+\end{decision}
+
+\begin{decision}{The phantom mechanism is a written choice (planned)}
+\dpart{Choice} Serializable must block an insert into a range another
+transaction scanned, using key-range, gap, or predicate locks; whichever is
+chosen is written above the code, and repeatable read does not take it.
+\dpart{Alternatives} Lock the whole index for every scan at serializable.
+\dpart{Why} The difference between repeatable read and serializable should be
+exactly one mechanism, visible in one place.
+\dpart{Cost} Range locks interact with splits and merges, which is why this is
+the last slice of the feature.
+\end{decision}
+
 \begin{status}
 Concurrency control is plans 7.1 to 7.6: crabbing, transactions, the lock
 manager, isolation, deadlock detection, and phantoms. The isolation harness
 already exists and checks itself.
 \end{status}
+
+\begin{checkyourself}
+\item Why does plain 2PL allow cascading aborts, and how does strict 2PL prevent them?
+\item A transaction wants to read every triple in the \code{"spo"} index. Which locks does it take, and why is checking one lock enough to know no writer is below?
+\item $T_3$ waits for $T_5$, and $T_5$ waits for $T_3$. Which one does OntoDB abort?
+\item What is the difference between a latch and a lock? Give one thing each protects.
+\item In crabbing, when is a child ``safe'' for an insert? For a delete?
+\end{checkyourself}
 
 \section*{Further reading}
 Gray et al.\ \cite{gray1976}; Eswaran et al.\ \cite{eswaran}; Lehman and Yao

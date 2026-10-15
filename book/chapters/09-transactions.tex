@@ -86,10 +86,49 @@ In a persistent database today, each update statement (or \code{\textbackslash
 load}) is one atomic, durable transaction (\cref{ch:durability}).
 \end{ontodb}
 
+\begin{decision}{Every statement is a transaction}
+\dpart{Choice} Each update statement, and each \code{\textbackslash load}, is
+one atomic and durable transaction unless \code{\textbackslash begin} opens an
+explicit one.
+\dpart{Alternatives} Require an explicit \code{BEGIN}; or apply statements
+immediately with no atomicity.
+\dpart{Why} An ontology edit is usually one statement, and a load should be all
+or nothing: a half-loaded OWL file is a corrupt ontology.
+\dpart{Cost} A very large \code{\textbackslash load} is one very large
+transaction, logged and held in memory until its commit.
+\end{decision}
+
+\begin{decision}{Read committed by default (planned)}
+\dpart{Choice} \code{\textbackslash set isolation} defaults to \code{rc}.
+\dpart{Alternatives} Serializable, or repeatable read (MySQL's InnoDB default).
+\dpart{Why} It matches PostgreSQL's default, forbids dirty reads, and releases
+shared locks at the end of each statement, so readers block writers only
+briefly.
+\dpart{Cost} Non-repeatable reads and phantoms are possible unless a session
+raises its level.
+\end{decision}
+
+\begin{decision}{Isolation is specified as executable schedules}
+\dpart{Choice} The isolation contract is a set of spec files, each a scripted
+interleaving of two sessions with expected outcomes (blocked, returns a value,
+aborted).
+\dpart{Alternatives} Prose definitions, or randomized stress tests.
+\dpart{Why} Each anomaly becomes one small, deterministic scenario that either
+happens or does not. A stress test can pass by luck; a schedule cannot.
+\dpart{Cost} Only the interleavings someone wrote down are checked.
+\end{decision}
+
 \begin{status}
 Statement-level atomicity and durability run today. Explicit multi-statement
 transactions and isolation levels are plans 7.2 to 7.6.
 \end{status}
+
+\begin{checkyourself}
+\item Draw the conflict graph of $r_1(A)\, w_2(A)\, r_2(B)\, w_1(B)$. Is the schedule conflict-serializable?
+\item Give a schedule with a non-repeatable read, and say which isolation level first forbids it.
+\item Why is consistency mostly the application's promise and not the engine's?
+\item Two sessions both run ``read the count of \code{Student}s, insert one more''. Which anomaly can occur, and at which levels?
+\end{checkyourself}
 
 \section*{Further reading}
 Gray and Reuter \cite{grayreuter}; Berenson et al.\ \cite{berenson}; Petrov

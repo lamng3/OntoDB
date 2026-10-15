@@ -41,7 +41,8 @@ Two rules keep the dictionary correct:
 
 \begin{ontodb}[: the dictionary]
 Ids are 64-bit and start at 1; 0 is never a valid id, so a zeroed key never
-names a real term, and the maximum value means ``unbound''. A single codec
+names a real term, and the maximum value means ``unbound'' and is never
+assigned (see the design decision below). A single codec
 produces canonical spellings for both the loader and the binder: \code{<iri>},
 \code{"lex"}, \code{"lex"@en}, \code{"lex"\^{}\^{}<datatype>}, and \code{\_:b0}.
 Numeric literals compare by value in filters; everything else compares by id
@@ -150,11 +151,64 @@ has, or none. The plan builds SPO first and then \emph{measures} whether POS and
 OSP pay for their space on real SPARQL workloads before adding them.
 \end{ontodb}
 
+\begin{decision}{Ids start at 1; 0 and the maximum are reserved}
+\dpart{Choice} Term ids are dense 64-bit integers starting at 1. Id 0 is never
+used. The largest id, \code{INVALID\_TERM\_ID} ($2^{64}-1$), is the engine-wide
+marker for ``unbound'': a row slot that no pattern has filled, a pattern
+position that is a variable. \code{Dictionary::CheckAssignable} refuses to hand
+it out, so every dictionary enforces the reservation, not just the
+arithmetic.
+\dpart{Alternatives} An \code{optional} per row slot (a flag beside every id),
+or a separate bitmap of which slots are bound.
+\dpart{Why} A row stays a plain array of \code{uint64}, which joins compare and
+hash directly. And because no stored triple can contain the maximum id, the
+all-\code{0xFF} key lies above every real key, which the prefix bounds use.
+\dpart{Cost} Two ids out of $2^{64}$, and a contract every dictionary must keep;
+a dictionary that skipped the check could hand a real term an id that every
+operator reads as ``unbound''.
+\end{decision}
+
+\begin{decision}{Big-endian keys, compared with \code{memcmp}}
+\dpart{Choice} Each id is written most significant byte first, so comparing
+the 24 bytes with \code{memcmp} gives numeric $(s, p, o)$ order.
+\code{Compare} returns the sign of \code{memcmp}.
+\dpart{Alternatives} Store native integers and compare by decoding three
+\code{uint64}s; or store little-endian and use a custom comparator.
+\dpart{Why} Pages, binary search, and the iterator can treat keys as opaque
+bytes, with no knowledge of their structure. Note the contrast: the pageLSN and
+log records use the machine's own byte order (little-endian on x86 and ARM),
+because nothing ever compares them as bytes.
+\dpart{Cost} A byte swap on every encode and decode on little-endian machines,
+which is negligible.
+\end{decision}
+
+\begin{decision}{The upper bound saturates instead of failing}
+\dpart{Choice} \code{PrefixUpper} adds one to the prefix with carry. When there
+is nothing above the prefix ($n = 0$, or every bound id is the maximum), it
+returns the all-\code{0xFF} key rather than an error or a flag.
+\dpart{Alternatives} Return an optional bound meaning ``to the end of the
+tree'', or a flag the iterator checks.
+\dpart{Why} One key type for both ends keeps the scan loop to a single test:
+stop when the key reaches upper. Saturation is safe because of the reserved
+maximum id above.
+\dpart{Cost} The scan's correctness now depends on the dictionary's contract,
+which is why that contract is checked in code and tested.
+\end{decision}
+
 \begin{status}
 The triple key runs (plan 0.2): encode, decode, compare, and both prefix
 bounds, with the carry and saturation cases tested. The indexed store and the
 permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \end{status}
+
+\begin{checkyourself}
+\item Encode the id 258 as 8 big-endian bytes and as 8 little-endian bytes. Which encoding sorts correctly under \code{memcmp} against the id 3?
+\item Give the lower and upper bounds for the pattern \code{(5, ?, ?)} and for \code{(5, 7, ?)}.
+\item What is \code{PrefixUpper} of the key $(5, 2^{64}-1, 9)$ with $n = 2$? With $n = 1$ and subject $2^{64}-1$?
+\item Which permutation serves \code{?s ?p <Material>}? Which serves \code{<Alice> ?p <Student>}?
+\item Why must the loader and the binder share one canonical spelling for terms? Give a literal that two careless implementations might spell differently.
+\item What would go wrong if the dictionary assigned $2^{64}-1$ to a real term?
+\end{checkyourself}
 
 \section*{Further reading}
 Weiss, Karras, and Bernstein \cite{hexastore}; Neumann and Weikum \cite{rdf3x},

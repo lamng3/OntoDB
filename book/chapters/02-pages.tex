@@ -127,11 +127,57 @@ idiom ``write to a temporary file, \code{fsync} it, \code{rename} it over the
 target, \code{fsync} the directory'' replaces a whole file atomically. OntoDB
 writes its snapshots this way (\cref{ch:durability}).
 
+\begin{decision}{4 KiB pages}
+\dpart{Choice} \code{PAGE\_SIZE} is 4096 bytes, fixed for the whole system.
+\dpart{Alternatives} 8 KiB (PostgreSQL), 16 KiB (InnoDB), or a size chosen per
+database at creation.
+\dpart{Why} 4 KiB matches the operating system's page and a common device
+block, so one page is one block. It is also small enough that tests with a
+pool of three or four frames, and trees of a few hundred keys, exercise
+eviction, splits, and merges quickly.
+\dpart{Cost} Lower fanout than a 16 KiB page, so a very large index may need
+one more level; and fixed per-page overhead (the 8-byte pageLSN, the header) is
+a larger share of each page.
+\end{decision}
+
+\begin{decision}{Page 0 is a real page}
+\dpart{Choice} Page ids are \code{int32}, and page 0 is a legal page.
+``No page'' is \code{INVALID\_PAGE\_ID}, which is $-1$. The catalog (plan 3.3) will
+initialize its page explicitly, so a zero-filled file cannot be read as ``the root is page
+0''.
+\dpart{Alternatives} Reserve page 0 as a null page and use 0 as the sentinel.
+\dpart{Why} Zero is the value memory and files have by accident. A sentinel
+should be a value that never appears unless someone wrote it on purpose; then a
+missing initialization is a visible error, not a tree rooted at page 0.
+\dpart{Cost} Every reader of a stored page id must check for $-1$, and the
+largest file is $2^{31}$ pages, 8 TiB at 4 KiB.
+\end{decision}
+
+\begin{decision}{Spellings are never deleted}
+\dpart{Choice} Deleting the last triple that uses a term keeps the term and its
+id in the dictionary.
+\dpart{Alternatives} Reference-count terms and reclaim an id when its count
+reaches zero; or garbage-collect unused terms at checkpoint.
+\dpart{Why} Log records name terms by id. If id 18 could be reclaimed and
+reused, an old record that says ``insert (18, 9, 4)'' would silently mean a
+different triple on replay. Never deleting makes an id's meaning permanent.
+\dpart{Cost} The dictionary only grows. A workload that churns through unique
+literals keeps every one of them.
+\end{decision}
+
 \begin{status}
 The page frame and the pageLSN layout exist. The disk manager, which allocates
 pages and reads and writes them, and the term heap are being built (plans 1.1
 and 3.1).
 \end{status}
+
+\begin{checkyourself}
+\item Page 37 of a 4 KiB-page file: at what byte offset does it start, and why does the engine never need a table to find it?
+\item In a slotted page, a record is moved during compaction. Why does no index entry that points to it need to change?
+\item A \code{write} returned successfully and then the machine lost power. Was the data durable? What call would have made it so?
+\item \code{fsync} returns an error. Why is calling it again and continuing on success wrong?
+\item Why is $-1$ a better ``no page'' sentinel than 0?
+\end{checkyourself}
 
 \section*{Further reading}
 Petrov \cite{petrov}, chapters 2 and 3, on file formats and slotted pages.

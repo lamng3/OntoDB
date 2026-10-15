@@ -163,10 +163,53 @@ Bulk load sorts ids, not strings, because the tree's order is the order of the
 ids.
 \end{ontodb}
 
+\begin{decision}{The key is the record (planned)}
+\dpart{Choice} A leaf stores the 24-byte \code{TripleKey} and nothing else.
+There is no value field and no record id pointing to a heap.
+\dpart{Alternatives} The relational layout: a heap file of tuples, with each
+index mapping a key to a record id.
+\dpart{Why} A triple of ids \emph{is} its whole content. A heap would store the
+same 24 bytes again and cost an extra page read per match.
+\dpart{Cost} Each permutation is a complete copy of the data, so the number of
+permutations is a space decision (\cref{ch:rdf-indexing}).
+\end{decision}
+
+\begin{decision}{Strict deletion (planned)}
+\dpart{Choice} \code{Remove} keeps every node except the root at least half
+full, by redistributing from a sibling or merging with it.
+\dpart{Alternatives} Lazy deletion, as many production systems do: let nodes
+become sparse and free a page only when it is empty.
+\dpart{Why} The invariant checker can then assert a fill factor, and merges
+become real multi-page structure changes with crash points, which the recovery
+chapters need.
+\dpart{Cost} More page writes on delete-heavy workloads, and the most intricate
+code in the tree.
+\end{decision}
+
+\begin{decision}{The invariant checker comes before insert (planned)}
+\dpart{Choice} \code{CheckInvariants} (size, order, sibling links, the
+separator rule) is built and tested before \code{Insert}, and every insert and
+delete test runs it.
+\dpart{Alternatives} Test insert by looking up the keys afterwards.
+\dpart{Why} Lookups can succeed on a tree that is already wrong; the
+copied-up-key bug of this chapter does exactly that. A checker turns a
+structural mistake into a failure on the operation that caused it.
+\dpart{Cost} Code that never runs in production paths, and a full-tree walk in
+every test.
+\end{decision}
+
 \begin{status}
 The B+ tree is the next major build (plans 2.1 to 2.7): layout, invariants,
 search, insert and split, iterator, bulk load, and delete.
 \end{status}
+
+\begin{checkyourself}
+\item A page holds 300 separators. About how many levels does a tree of $10^8$ keys need, and how many of those are likely in the buffer pool?
+\item During a leaf split the separator 14 is copied up. Which leaf must it stay in, and what breaks if it stays in the other one?
+\item Why does an internal split \emph{push up} its middle key, while a leaf split \emph{copies} it?
+\item Why should a scan unpin its current leaf before pinning the sibling?
+\item Bulk load fills every leaf. Why can't a loop of \code{Insert} calls do the same?
+\end{checkyourself}
 
 \section*{Further reading}
 Bayer and McCreight \cite{bayer1972}; Comer \cite{comer1979}; Petrov

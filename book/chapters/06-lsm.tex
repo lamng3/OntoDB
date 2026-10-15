@@ -70,6 +70,13 @@ is a compaction with a single level. And Bloom filters are a natural fit for
 ``has this concept been modified recently?'' checks over a log.
 \end{ontodb}
 
+\begin{checkyourself}
+\item A workload inserts 10 million triples per hour and runs few queries. Which family fits better, and what does the other one pay?
+\item Why does an LSM delete write a tombstone instead of removing the key?
+\item A Bloom filter says ``maybe present'' for a key that is absent. What does that cost an LSM read? Can it say ``absent'' for a present key?
+\item In what sense is OntoDB's snapshot-plus-log a one-level LSM tree?
+\end{checkyourself}
+
 \section*{Further reading}
 O'Neil et al.\ \cite{lsm}; Petrov \cite{petrov}, chapter 7; Bloom
 \cite{bloom}.
