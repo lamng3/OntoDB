@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 
 #include "common/term_codec.h"
@@ -14,8 +15,10 @@ namespace {
 struct LoadContext {
   Dictionary* dictionary{nullptr};
   TripleStore* store{nullptr};
+  raptor_parser* parser{nullptr};
   uint64_t triples{0};
   std::string error;
+  std::exception_ptr failure;  // thrown by the dictionary or the store
 };
 
 auto SyntaxFor(const std::filesystem::path& path) -> const char* {
@@ -68,14 +71,25 @@ auto TermString(raptor_term* term) -> std::string {
   }
 }
 
+// Called from inside raptor's C code, so no exception may escape: unwinding
+// through C frames is undefined and skips raptor's cleanup. The first failure
+// is kept, parsing is aborted, and Load rethrows it after freeing raptor.
 void OnStatement(void* user, raptor_statement* statement) {
   auto* ctx = static_cast<LoadContext*>(user);
-  Triple triple;
-  triple.subject = ctx->dictionary->Insert(TermString(statement->subject));
-  triple.predicate = ctx->dictionary->Insert(TermString(statement->predicate));
-  triple.object = ctx->dictionary->Insert(TermString(statement->object));
-  ctx->store->Insert(triple);
-  ctx->triples++;
+  if (ctx->failure) {
+    return;
+  }
+  try {
+    Triple triple;
+    triple.subject = ctx->dictionary->Insert(TermString(statement->subject));
+    triple.predicate = ctx->dictionary->Insert(TermString(statement->predicate));
+    triple.object = ctx->dictionary->Insert(TermString(statement->object));
+    ctx->store->Insert(triple);
+    ctx->triples++;
+  } catch (...) {
+    ctx->failure = std::current_exception();
+    raptor_parser_parse_abort(ctx->parser);
+  }
 }
 
 void OnLog(void* user, raptor_log_message* message) {
@@ -119,6 +133,7 @@ auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
     raptor_free_world(world);
     throw std::runtime_error(std::string("raptor has no parser for ") + syntax);
   }
+  ctx.parser = parser;
   raptor_parser_set_statement_handler(parser, &ctx, OnStatement);
   raptor_parser_set_option(parser, RAPTOR_OPTION_NO_NET, nullptr, 1);
   raptor_parser_set_option(parser, RAPTOR_OPTION_LOAD_EXTERNAL_ENTITIES, nullptr, 0);
@@ -138,6 +153,9 @@ auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
   raptor_free_parser(parser);
   raptor_free_world(world);
 
+  if (ctx.failure) {
+    std::rethrow_exception(ctx.failure);
+  }
   if (rc != 0 || !ctx.error.empty()) {
     throw std::runtime_error(ctx.error.empty() ? "RDF parse failed" : ctx.error);
   }
