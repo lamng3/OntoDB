@@ -8,3 +8,8 @@ compile_commands.json
 *.o
 *.dSYM/
 .vscode/
+book/*.aux
+book/*.log
+book/*.out
+book/*.toc
+book/chapters/*.aux

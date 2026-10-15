@@ -1,0 +1,46 @@
+\documentclass[11pt,twoside,openany]{book}
+\input{preamble}
+
+\title{\color{accent}\Huge\bfseries OntoDB\\[0.4em]
+  \LARGE Database Internals by Example\\[1.2em]
+  \large\mdseries Storage, indexing, query processing, concurrency, and recovery,\\
+  taught through a database management system for ontologies}
+\author{Lam Nguyen}
+\date{October 2026}
+
+\begin{document}
+\frontmatter
+\maketitle
+\tableofcontents
+\input{chapters/00-preface}
+
+\mainmatter
+\part{Foundations}
+\input{chapters/01-engine}
+
+\part{Storage}
+\input{chapters/02-pages}
+\input{chapters/03-buffer-pool}
+\input{chapters/04-btree}
+\input{chapters/05-rdf-indexing}
+\input{chapters/06-lsm}
+
+\part{Query Processing}
+\input{chapters/07-plans}
+\input{chapters/08-joins}
+
+\part{Transactions}
+\input{chapters/09-transactions}
+\input{chapters/10-concurrency}
+
+\part{Recovery}\label{part:recovery-ref}
+\input{chapters/11-wal}
+\input{chapters/12-aries}
+\input{chapters/13-durability}
+
+\appendix
+\input{chapters/a-map}
+
+\backmatter
+\input{chapters/bibliography}
+\end{document}

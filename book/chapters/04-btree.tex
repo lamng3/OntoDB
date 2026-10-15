@@ -1,0 +1,173 @@
+\chapter{B-Trees and B+ Trees}
+\label{ch:btree}
+
+An index answers ``where is the data with this key?'' without reading all the
+data. For data on disk the answer has been the same since 1970: the B-tree of
+Bayer and McCreight \cite{bayer1972}, and its variant the B+ tree, described by
+Comer as ubiquitous \cite{comer1979}. This chapter explains why it fits disks so
+well, and how it stays balanced.
+
+\section{Why a tree of pages}
+
+A binary search tree has fanout 2: each node has two children, so finding one
+of $N$ keys takes about $\log_2 N$ steps. If every step is a page read, a
+billion keys need 30 reads. A B-tree makes each node a whole \emph{page} and
+packs as many keys into it as fit. With fanout $F$, a lookup takes
+$\log_F N$ reads.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{@{}rrr@{}}
+\toprule
+Fanout $F$ & Height for $10^9$ keys & Height for $10^{12}$ keys \\
+\midrule
+2 & 30 & 40 \\
+100 & 5 & 6 \\
+500 & 4 & 5 \\
+\bottomrule
+\end{tabular}
+\caption{Height is $\lceil\log_F N\rceil$. A large fanout turns a billion-key lookup into four page reads, and the top levels are almost always in the buffer pool.}
+\end{table}
+
+The upper levels are tiny (a tree of fanout 500 has 1 root and 500 children
+above a quarter-million leaves) and hot, so they stay in the buffer pool. In
+practice a lookup costs one or two actual disk reads.
+
+\begin{keyidea}
+A B-tree is a binary search tree redesigned for block devices: make each node a
+page, make the fanout as large as the page allows, and the tree is shallow
+enough that its top fits in memory.
+\end{keyidea}
+
+\section{B-tree versus B+ tree}
+
+A \term{B-tree} stores keys and values in every node. A \term{B+ tree} stores
+values only in the \term{leaves}; internal nodes hold only \term{separator keys}
+that direct the search. Two consequences favor the B+ tree for databases:
+
+\begin{itemize}
+\item \textbf{Higher fanout.} Internal nodes hold no values, so more separators fit per page and the tree is shallower.
+\item \textbf{Fast range scans.} Leaves are linked to their right sibling. A range query finds its first key with one descent, then walks sideways along the leaf chain without climbing back up.
+\end{itemize}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize]
+\node[node box=3] (root) at (0,0) {\nodepart{one}20\nodepart{two}40\nodepart{three}\phantom{0}};
+\node[node box=3] (l1) at (-4.2,-1.4) {\nodepart{one}5\nodepart{two}12\nodepart{three}17};
+\node[node box=3] (l2) at (0,-1.4) {\nodepart{one}20\nodepart{two}31\nodepart{three}36};
+\node[node box=3] (l3) at (4.2,-1.4) {\nodepart{one}40\nodepart{two}51\nodepart{three}\phantom{00}};
+\draw[arrow] (root.south west) -- (l1.north);
+\draw[arrow] (root.south) -- (l2.north);
+\draw[arrow] (root.south east) -- (l3.north);
+\draw[arrow,dashed] (l1.east) -- (l2.west);
+\draw[arrow,dashed] (l2.east) -- (l3.west);
+\node[below=2pt of l2] {leaves hold the keys; dashed arrows are sibling links};
+\end{tikzpicture}
+\caption{A B+ tree. Keys below separator 20 are in the left child; keys from 20 up to 40 in the middle; 40 and above in the right.}
+\label{fig:bptree}
+\end{figure}
+
+The \term{separator rule} is the tree's central invariant: in an internal node
+with separators $k_1 < k_2 < \dots < k_n$ and children $c_0, \dots, c_n$, every
+key in $c_{i-1}$ is less than $k_i$, and every key in $c_i$ is at least $k_i$.
+
+\section{Search}
+
+Start at the root. At each internal node, binary-search the separators to pick
+the child whose range contains the key, and descend. At the leaf, binary-search
+for the key. A range scan $[\ell, u)$ searches for $\ell$, then follows sibling
+links until a key reaches $u$.
+
+\section{Insertion and splits}
+
+Insert into the leaf the search reaches. If the leaf has room, done. If it is
+full, \term{split} it:
+
+\begin{enumerate}
+\item Allocate a new leaf. Move the upper half of the keys into it.
+\item Link it: the new leaf's sibling is the old leaf's sibling, and the old leaf's sibling becomes the new leaf.
+\item Insert a separator into the parent: the first key of the new leaf, which is \emph{copied up} (it stays in the leaf).
+\item If the parent is now full, split it too. An internal split \emph{pushes up} its middle key: the key moves to the grandparent and is removed from both halves.
+\item If the root splits, create a new root with two children. This is the only way the tree grows taller, so every leaf is always at the same depth.
+\end{enumerate}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize]
+\node at (-5.4,0.5) {before};
+\node[node box=3] (b) at (-3.6,0) {\nodepart{one}5\nodepart{two}12\nodepart{three}17};
+\node at (-1.2,0.1) {insert 14};
+\draw[arrow] (-1.9,-0.2) -- (-0.5,-0.2);
+\node[node box=2] (p) at (3.2,0.9) {\nodepart{one}14\nodepart{two}\phantom{0}};
+\node[node box=2] (a) at (1.6,-0.5) {\nodepart{one}5\nodepart{two}12};
+\node[node box=2] (c) at (4.8,-0.5) {\nodepart{one}14\nodepart{two}17};
+\draw[arrow] (p.south west) -- (a.north);
+\draw[arrow] (p.south) -- (c.north);
+\draw[arrow,dashed] (a.east) -- (c.west);
+\node at (3.2,-1.2) {14 is copied up; it stays in the right leaf};
+\end{tikzpicture}
+\caption{A full leaf with capacity 3 splits on insert. The new right leaf's first key becomes the separator.}
+\label{fig:split}
+\end{figure}
+
+A classic bug lives in step 3: if the middle key is copied up \emph{and} left in
+the \emph{left} leaf, the separator rule breaks, because the right child's keys
+must be at least the separator while a copy of it sits on the left. Writing an
+invariant checker before writing insert catches this at once.
+
+\section{Deletion}
+
+Remove the key from its leaf. If the leaf is still at least half full, done.
+Otherwise:
+
+\begin{itemize}
+\item \textbf{Redistribute}: if a sibling has more than half, move a key across and update the parent's separator, which must now reflect the new boundary.
+\item \textbf{Merge}: otherwise combine the leaf with a sibling, remove the separator between them from the parent, and free the empty page. The parent may now underflow, and the process repeats upward; if the root is left with one child, that child becomes the root.
+\end{itemize}
+
+Many production systems relax deletion and allow underfull nodes, merging only
+when a node empties: deletes are rarer than inserts, and a tree that gets a
+little sparse rarely matters.
+
+\section{Bulk loading}
+
+Building a tree by inserting keys one at a time leaves leaves about two thirds
+full and touches pages in random order. When the keys are available up front,
+\term{bulk loading} is far better: sort the keys, fill leaves completely from
+left to right, link them, then build each internal level from the first keys of
+the level below. One sequential pass per level, and every page is full.
+
+\section{Iterators and pins}
+
+A range scan returns rows one at a time to the query engine, so it is an
+\term{iterator} that holds a position: the current leaf and an index inside it.
+The leaf must stay pinned while the iterator points into it. When the iterator
+moves to the sibling, it should unpin the current leaf \emph{before} pinning the
+next one; holding both, plus a parent, can exhaust a small buffer pool and
+deadlock.
+
+\begin{ontodb}[: the B+ tree]
+OntoDB's index is a B+ tree. Its key is a 24-byte \code{TripleKey}
+(\cref{ch:rdf-indexing}), and the leaf stores the key itself: the triple
+\emph{is} the record, so there is no separate tuple id. Leaves link to their
+right sibling, the header page stores the root (or \code{INVALID\_PAGE\_ID} for
+an empty tree), and a scan holds at most one pinned leaf at a time.
+
+An invariant checker (\code{CheckInvariants}) verifies sizes, key order, sibling
+links, and the separator rule, and the shell can draw the tree
+(\code{\textbackslash tree spo dot}). Splits and merges are multi-page
+operations, so they have named crash points where a recovery test may kill the
+process; \cref{ch:aries} explains why a split is redone but never undone.
+Bulk load sorts ids, not strings, because the tree's order is the order of the
+ids.
+\end{ontodb}
+
+\begin{status}
+The B+ tree is the next major build (plans 2.1 to 2.7): layout, invariants,
+search, insert and split, iterator, bulk load, and delete.
+\end{status}
+
+\section*{Further reading}
+Bayer and McCreight \cite{bayer1972}; Comer \cite{comer1979}; Petrov
+\cite{petrov}, chapters 2, 4, and 6.

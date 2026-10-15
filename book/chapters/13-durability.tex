@@ -1,0 +1,167 @@
+\chapter{Durability in Practice}
+\label{ch:durability}
+
+ARIES is the general answer for a page-based engine. A simpler engine can make a
+simpler choice and still be correct. OntoDB's persistent databases, which run
+today, are such a design: an in-memory database made durable by a
+\textbf{snapshot} plus a \textbf{logical, redo-only write-ahead log}. This
+chapter explains the design through the ideas of the previous chapters, because
+every choice in it is one of those ideas in a smaller form.
+
+\section{Where it sits in the steal/force table}
+
+The database lives entirely in memory; the files are its durable copy. Nothing
+is ever written to the data files except a whole snapshot, and a snapshot is
+taken only between statements, when every change in memory is committed. In the
+terms of \cref{tab:stealforce}:
+
+\begin{itemize}
+\item \textbf{No steal.} Uncommitted changes never reach the snapshot. So recovery never needs to \emph{undo} anything on disk.
+\item \textbf{No force.} A commit does not rewrite the snapshot; it appends to the log. So recovery must \emph{redo} committed changes made since the last snapshot.
+\end{itemize}
+
+No steal plus no force is the \emph{redo-only} cell: the log needs redo
+information and nothing else, and recovery is a single forward pass.
+
+\begin{keyidea}
+Choosing a cell of the steal/force table chooses the recovery algorithm. Steal
+and no force need undo and redo (ARIES). No steal and no force need only redo.
+The price of no steal is that all uncommitted state must fit in memory, which an
+in-memory database accepts by definition.
+\end{keyidea}
+
+\section{Logical logging}
+
+Page-based ARIES logs \emph{physical} or \emph{physiological} changes: this page,
+these bytes, or this page, this slot. The memory database has no pages, so it
+logs \emph{logical} operations: ``insert triple (18, 9, 4)''. Logical records are
+small and independent of storage layout, and they are safe here only because
+there is no partially written page that could make a logical operation
+ambiguous on replay.
+
+Ids in those records must mean the same terms after a restart, so the log also
+carries the dictionary: a \term{term record} for each spelling the first time a
+transaction uses it.
+
+\section{One statement, one transaction}
+
+\begin{enumerate}
+\item The statement runs against a \term{recording store}, a decorator around the real store that remembers every triple it actually changed.
+\item The log receives \textbf{begin}, a \textbf{term} record for each new spelling, one \textbf{update} per changed triple, and \textbf{commit}.
+\item The commit is forced (\cref{ch:wal}) before the shell prints the result.
+\end{enumerate}
+
+If the statement fails part way, the recording store's changes are undone in
+memory, in reverse order, and nothing it needs reaches the log. A statement that
+changed nothing logs nothing.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize,rec/.style={draw,minimum height=0.55cm,inner sep=3pt,fill=white}]
+\node[rec,fill=boxbg] (b) {begin T2};
+\node[rec,right=0pt of b] (t) {term 18 = \textless...\#Ceramic\textgreater};
+\node[rec,right=0pt of t] (u) {update insert (18, 9, 4)};
+\node[rec,right=0pt of u,fill=statusbg] (c) {commit T2};
+\foreach \n/\l in {b/34,t/35,u/36,c/37}{\node[below=1pt of \n,font=\tiny] {LSN \l};}
+\draw[arrow] ([yshift=6pt]c.north) -- node[right]{fsync, then ``inserted 1 triple''} ++(0,0.6);
+\end{tikzpicture}
+\caption{The log records of one \code{INSERT DATA} in a persistent database.}
+\end{figure}
+
+\section{Recovery}
+
+Opening a database directory:
+
+\begin{enumerate}
+\item Load the snapshot, if there is one: every term in id order, then every triple.
+\item Scan the log and stop at the first record that is torn or fails its checksum (\cref{ch:wal}).
+\item Skip records at or below the snapshot's LSN; the snapshot already contains them.
+\item Apply \emph{every} term record in order, whatever its transaction did: the dictionary only grows, and a term no committed triple uses is invisible.
+\item Apply update records only for transactions that have a commit record, in log order.
+\end{enumerate}
+
+Step 5 is the whole of ``undo'' in a redo-only design: an uncommitted
+transaction's records are simply never applied.
+
+\section{Checkpoints as atomic snapshots}
+
+A checkpoint writes the full state to \code{snapshot.tmp}, \code{fsync}s it,
+\code{rename}s it over \code{snapshot}, \code{fsync}s the directory, and then
+empties the log. Each step is safe to crash after:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Crash after & On reopen \\
+\midrule
+writing \code{snapshot.tmp} & old snapshot, full log: nothing lost \\
+the rename & new snapshot, old log: records at or below its LSN are skipped \\
+emptying the log & new snapshot, empty log \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This is the log-structured idea of \cref{ch:lsm} with a single level: an
+append-only log, periodically compacted into one sorted image.
+
+\section{Damaged logs: recovery modes}
+
+When the scan in step 2 stops early, there are two defensible policies, named
+after RocksDB's WAL recovery modes:
+
+\begin{description}[leftmargin=1.2em]
+\item[Point in time] (the default). Keep every transaction before the bad record, truncate the log there, and report how many bytes were discarded. A torn final record is the normal shape of a crash, and this is the right answer for it; a transaction whose commit is after the damage is treated as uncommitted, exactly as a crash would.
+\item[Absolute consistency] (\code{--strict}). Refuse to open, so an operator can inspect the files before anything is truncated.
+\end{description}
+
+A damaged snapshot always refuses to open: it has no valid prefix to fall back
+to.
+
+\section{Verification}
+
+Detecting damage early is the other half of durability. The \code{\textbackslash
+verify} command follows the tradition of PostgreSQL's \code{pg\_amcheck},
+MySQL's \code{CHECK TABLE}, and RocksDB's \code{VerifyChecksum}: it changes
+nothing and reports four checks, one line each.
+
+\begin{lstlisting}
+snapshot: ok (lsn 37, 18 terms, 15 triples)
+wal: ok (0 records, 0 bytes)
+replay: matches the live database (15 triples)
+invariants: ok (no duplicate triples, every id in the dictionary)
+verify: ok
+\end{lstlisting}
+
+The replay check is the strongest: it rebuilds the database from the two files
+into a fresh store and compares it with the one in memory. If they differ, the
+files would not reproduce what the user sees.
+
+\section{Testing a recovery design}
+
+A recovery path that is never exercised does not work. OntoDB tests this one with
+\term{crash points}: named places in the code, such as just before a commit
+record is appended and just after a snapshot is renamed, where a test can make
+the operation stop as if the process died. Scenario tests then reopen the
+directory and check what survived: a crash before commit leaves no trace, a crash
+after the snapshot rename does not replay records twice, a torn tail keeps the
+committed prefix, a flipped byte in the middle of the log drops everything after
+it, and a tampered log fails verification.
+
+\begin{ontodb}[: what runs]
+All of this chapter runs today: start the shell as \code{ontodb mydb}.
+\code{\textbackslash load} and every update are durable transactions,
+\code{\textbackslash checkpoint} writes a snapshot, \code{\textbackslash log}
+prints the decoded log, \code{\textbackslash verify} checks the files, and
+\code{\textbackslash crash} exits without flushing, to try recovery by hand.
+Seventeen scenario tests cover the cases above, and they pass under
+AddressSanitizer, UndefinedBehaviorSanitizer, and ThreadSanitizer.
+
+When the indexed store arrives, the same log records, log manager, and group
+commit carry over; what changes is that pages can be stolen, so recovery gains
+undo, pageLSNs, and the three passes of \cref{ch:aries}.
+\end{ontodb}
+
+\section*{Further reading}
+Gray and Reuter \cite{grayreuter} on redo-only logging; DeWitt et al.\
+\cite{dewitt1984} on recovery for main-memory databases; the RocksDB WAL
+recovery-mode documentation \cite{rocksdbwal}.

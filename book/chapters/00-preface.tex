@@ -1,0 +1,61 @@
+\chapter*{Preface}
+\addcontentsline{toc}{chapter}{Preface}
+\markboth{Preface}{Preface}
+
+A database engine is a small number of ideas, applied with care. Data lives in
+fixed-size pages because disks move blocks. A buffer pool keeps the hot pages
+in memory because memory is fast and small. A B+ tree turns a key into a page
+in three or four reads because its fanout is in the hundreds. A lock manager
+makes concurrent transactions look sequential. A write-ahead log, and an
+algorithm called ARIES, make a committed transaction survive a crash that
+happens at any instant.
+
+This book explains those ideas from the ground up, and it explains each one
+twice: first as theory, then as it appears in a real system. The real system
+is \textbf{OntoDB}, a database management system for ontologies. Its data is
+RDF, a graph of subject--predicate--object triples, and its query language is
+SPARQL. Every chapter ends its theory with an \emph{In OntoDB} box that shows
+the decision OntoDB made, and why.
+
+\section*{Why an ontology database}
+
+A relational engine teaches the same ideas, so why a triple store? Two reasons.
+First, a triple store strips the problem to its core: there is one table, with
+three columns, and every interesting question is a join. That makes indexing
+and join ordering impossible to wave away. Second, ontologies are where
+correctness matters most and is checked least: a scientific ontology edited by
+many hands needs transactions, a log, and recovery just as much as a bank
+ledger does.
+
+\section*{How to read this book}
+
+The parts follow the path of a request through the engine, from the bottom up.
+
+\begin{description}[leftmargin=1.5em]
+\item[Foundations] What an engine is made of, and enough RDF and SPARQL to follow the examples.
+\item[Storage] Pages, the buffer pool, B+ trees, how RDF is indexed, and the log-structured alternative.
+\item[Query processing] How a SPARQL query becomes a tree of operators, and how joins are chosen.
+\item[Transactions] What isolation means, and how locking provides it.
+\item[Recovery] Logging, the write-ahead rule, ARIES, and how OntoDB makes its databases durable today.
+\end{description}
+
+Code appears only where a picture or a sentence would be less precise: a key
+layout, a log record, a few lines of pseudocode for an algorithm. The aim is to
+understand \emph{why}, not to read an implementation.
+
+\begin{status}
+OntoDB is built feature by feature, and parts of this book describe designs
+that are specified but not yet implemented. Each chapter's \emph{Status} box
+says which. At the time of writing, the SPARQL shell, the log records, the log
+manager, and durable databases (snapshots, a checksummed write-ahead log,
+recovery, and verification) run; the buffer pool, the B+ tree, the indexed
+store, the optimizer, concurrency control, and page-level ARIES are designed
+and being built.
+\end{status}
+
+\section*{Acknowledgments}
+
+The structure of this book owes much to Alex Petrov's \emph{Database Internals},
+whose division into storage engines and distributed systems it follows for the
+first half. The recovery chapters follow Mohan et al.'s ARIES paper closely,
+because nothing explains ARIES better than ARIES.

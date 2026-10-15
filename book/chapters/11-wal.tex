@@ -1,0 +1,132 @@
+\chapter{Logging and the Write-Ahead Rule}
+\label{ch:wal}
+
+The buffer pool steals and does not force (\cref{ch:buffer}). So at the moment of
+a crash, the disk can hold changes from transactions that never committed, and
+can lack changes from transactions that did. The \term{log} is what lets the
+engine repair both. This chapter explains what goes in it, and the one rule that
+makes it trustworthy.
+
+\section{The failure model}
+
+\begin{description}[leftmargin=1.2em]
+\item[Transaction failure.] A transaction aborts: a deadlock victim, a constraint violation, or the user's choice. Its effects must be removed.
+\item[System failure.] The process or machine stops. Memory is lost; the disk survives. Committed work must reappear; uncommitted work must vanish.
+\item[Media failure.] The disk is lost. Only a backup or a replica helps; it is outside the scope of the log alone.
+\end{description}
+
+The log handles the first two. It is an append-only file of \term{log records},
+each describing one change, written sequentially, which is the access pattern
+storage handles best.
+
+\section{Undo and redo}
+
+An update record carries enough to apply the change again (\term{redo}) and to
+reverse it (\term{undo}). For a page-oriented engine that might be the bytes
+before and after; for a triple store it can be logical: ``insert triple
+(5, 7, 9)'', whose undo is ``delete (5, 7, 9)''.
+
+Every record has a \term{log sequence number} (LSN), increasing, unique, and
+often simply the record's byte offset in the log. Records of one transaction are
+chained by a \term{prevLSN} field, so the engine can walk a transaction's history
+backward when it must undo it.
+
+Every page stores a \term{pageLSN}: the LSN of the last logged change applied to
+it. The pageLSN is how recovery knows whether a logged change already reached
+the page on disk: if pageLSN $\ge$ the record's LSN, it did.
+
+\section{The write-ahead rule}
+
+\begin{keyidea}
+\textbf{Write-ahead logging (WAL).} (1) A page may be written to disk only after
+every log record describing a change to it is durable: flush the log up to the
+page's pageLSN first. (2) A transaction commits only when its commit record, and
+therefore all its earlier records, are durable.
+\end{keyidea}
+
+Rule 1 makes steal safe: if an uncommitted change reaches the disk, its undo
+information is already in the log. Rule 2 makes no-force safe: if a committed
+change has not reached the disk, its redo information is already in the log.
+Between them, every possible state of the disk after a crash can be repaired.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize,x=1.05cm]
+\draw[thick,->] (0,0) -- (11,0) node[right]{time};
+\foreach \x/\l in {1/update (LSN 41),3.2/flush log $\le 41$,5.4/write page,7.6/commit record,9.6/flush log}{
+  \draw (\x,0.12) -- (\x,-0.12); \node[above,align=center] at (\x,0.15) {\l};}
+\draw[decorate,decoration={brace,amplitude=4pt,mirror}] (1,-0.3) -- (5.4,-0.3) node[midway,below=5pt]{rule 1: log before page};
+\draw[decorate,decoration={brace,amplitude=4pt,mirror}] (7.6,-0.3) -- (9.6,-0.3) node[midway,below=5pt]{rule 2: durable, then acknowledged};
+\end{tikzpicture}
+\caption{The two orderings the write-ahead rule imposes.}
+\label{fig:wal}
+\end{figure}
+
+\section{Making commits cheap: group commit}
+
+Rule 2 means every commit waits for an \code{fsync} of the log. If each commit
+issued its own \code{fsync}, throughput would be bounded by the device's
+\code{fsync} rate. \term{Group commit} lets commits that arrive while a flush is
+in progress share the next one:
+
+\begin{lstlisting}[language=pseudo]
+function Commit(txn):
+  lsn = Append(commit record for txn)       // into the in-memory log buffer
+  wait until persistentLSN >= lsn           // a background flusher wakes us
+
+flusher loop:
+  wait until someone asked, or a short interval passes
+  batch = swap out the log buffer
+  write(batch); fsync()                     // one fsync for many commits
+  persistentLSN = last LSN in batch; wake all waiters
+\end{lstlisting}
+
+Under concurrency, the number of \code{fsync} calls grows much more slowly than
+the number of commits. A single client still pays the full latency of one flush.
+
+\section{When a record is damaged}
+
+A crash can interrupt the last write to the log, leaving a \term{torn} record:
+fewer bytes than its header promises. Bit rot or a misbehaving device can damage
+a record whose bytes are all present. Robust logs detect both with two fields in
+every record header: its \textbf{length}, so a short record is recognized, and a
+\textbf{checksum} over its bytes, so a damaged one is. PostgreSQL, RocksDB, and
+InnoDB all put a CRC on every log record. A recovery procedure then has a
+policy choice, discussed in \cref{ch:durability}: stop at the first bad record
+and keep everything before it, or refuse to start.
+
+\begin{ontodb}[: log records and the log manager]
+Every OntoDB log record has this layout (native byte order):
+
+\begin{lstlisting}
+u32 size       whole record, header included
+u32 crc32c     over every byte after this field
+u8  type       begin | commit | abort | update | clr | checkpoint | term
+i64 lsn, i64 txn_id, i64 prev_lsn
+then, by type:
+  update       i32 page_id, u8 is_insert, u64 subject, u64 predicate, u64 object
+  clr          the update fields, then i64 undo_next
+  checkpoint   u32 n, then n active transaction ids
+  term         u64 term_id, u32 n, then n bytes of canonical spelling
+\end{lstlisting}
+
+The checksum is CRC-32C, the same checksum PostgreSQL, RocksDB, and InnoDB use.
+A short buffer raises an ordinary storage error (a torn write), while a record
+whose bytes are present but wrong raises a distinct corruption error, so the two
+cases can be handled differently. LSNs start at 1; reopening a log continues
+after its last valid record.
+
+The log manager appends records to an in-memory buffer and a background thread
+performs group commit; a test runs four threads committing twenty times each and
+requires fewer \code{fsync}s than commits. A failed \code{fsync} is reported,
+never retried, for the reason in \cref{ch:pages}.
+\end{ontodb}
+
+\begin{status}
+Log records (plan 8.1) and the log manager with group commit (plan 8.2) run
+today. Enforcing rule 1 in the buffer pool (plan 8.3) waits for the buffer pool.
+\end{status}
+
+\section*{Further reading}
+Mohan et al.\ \cite{aries}, sections 1--3; Gray and Reuter \cite{grayreuter},
+chapters 9--10; Petrov \cite{petrov}, chapter 5.
