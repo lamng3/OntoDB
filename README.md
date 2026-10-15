@@ -61,4 +61,4 @@ INSERT DATA { <http://example.org/materials#Ceramic> <http://www.w3.org/2000/01/
 
 Start `./build/dev/ontodb mydb` again and the data is there. `\log` prints the last log records, `\checkpoint` writes a snapshot and empties the log, and `\verify` rebuilds the database from the files and compares. If the log ends in a torn or corrupt record, the shell keeps every transaction before it and says what it dropped; `ontodb --strict mydb` refuses to open instead.
 
-Study notes: <https://lamng3.github.io/ontodb-docs/>. One query, followed through the code: `docs/architecture.md`.
+Manual: <https://lamng3.github.io/ontodb-docs/>. One query, followed through the code: `docs/architecture.md`.
