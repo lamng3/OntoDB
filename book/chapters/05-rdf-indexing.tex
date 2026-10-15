@@ -195,9 +195,36 @@ maximum id above.
 which is why that contract is checked in code and tested.
 \end{decision}
 
+\begin{decision}{The catalog points at header pages, not roots}
+\dpart{Choice} The catalog, page 0, maps a name (\code{"spo"}) to the page id
+of that tree's \emph{header} page; the header page holds the tree's current
+root.
+\dpart{Alternatives} Store each tree's root page id in the catalog directly.
+\dpart{Why} A root changes whenever the root splits or collapses. With a header
+page in between, only the tree's own header page changes, and the catalog is
+written only when an index is created or dropped.
+\dpart{Cost} One more page read to find a root, though the header pages are
+small in number and stay in the pool.
+\end{decision}
+
+\begin{decision}{The catalog claims page 0 by writing it}
+\dpart{Choice} On first open, the catalog finds page 0 all zeros, writes a
+magic number, an empty table, and an \code{INVALID\_PAGE\_ID} dictionary root,
+and writes the page to the file immediately. A page 0 with other contents is
+refused, not reinterpreted.
+\dpart{Alternatives} Allocate the catalog like any other page and remember its
+id somewhere, or trust that page 0 is the catalog.
+\dpart{Why} The disk manager's allocation record is the file's length. Writing
+page 0 at once makes the file one page long, so no later allocation can hand
+out id 0 to something else. The magic number distinguishes ``never
+initialized'' from ``a catalog whose dictionary root happens to be 0''.
+\dpart{Cost} An extra page write when a database is created.
+\end{decision}
+
 \begin{status}
 The triple key runs (plan 0.2): encode, decode, compare, and both prefix
-bounds, with the carry and saturation cases tested. The indexed store and the
+bounds, with the carry and saturation cases tested. So does the catalog (plan
+3.3). The indexed store and the
 permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \end{status}
 
@@ -208,6 +235,7 @@ permutation measurement follow the B+ tree (plans 3.4 and 3.5).
 \item Which permutation serves \code{?s ?p <Material>}? Which serves \code{<Alice> ?p <Student>}?
 \item Why must the loader and the binder share one canonical spelling for terms? Give a literal that two careless implementations might spell differently.
 \item What would go wrong if the dictionary assigned $2^{64}-1$ to a real term?
+\item Why does the catalog record each index's header page rather than its root? How often does the catalog page change?
 \end{checkyourself}
 
 \section*{Further reading}

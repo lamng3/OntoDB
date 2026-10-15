@@ -10,6 +10,22 @@ namespace ontodb {
 // and the dictionary's root. A missing name returns INVALID_PAGE_ID.
 // SetIndexRoot replaces the previous root. Flush makes the metadata durable;
 // a later Catalog on the same buffer pool sees the values.
+//
+// An index "root" is the page id of that tree's header page, which in turn
+// holds the tree's current root; the catalog changes only when an index is
+// created. Layout after the pageLSN:
+//
+//   offset  size  field
+//        8     4  magic "OCAT"
+//       12     4  dictionary root page id
+//       16     4  number of named entries
+//   20+12i     8  entry i name, NUL-padded (at most 8 bytes)
+//   28+12i     4  entry i page id
+//
+// The constructor initializes a zero page and writes it out at once, so the
+// file holds the page and no later allocation can hand out its id. A page
+// with other contents throws StorageException rather than being overwritten.
+// Names longer than 8 bytes throw std::invalid_argument.
 class Catalog {
  public:
   explicit Catalog(BufferPoolManager* bpm, page_id_t catalog_page_id = 0);
