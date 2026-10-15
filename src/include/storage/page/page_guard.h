@@ -26,6 +26,7 @@ class ReadPageGuard {
   ~ReadPageGuard();
 
   auto GetData() const -> const char*;
+  auto View() const -> const Page*;
   auto GetPageId() const -> page_id_t;
   auto IsValid() const -> bool;
   void Drop();
@@ -50,6 +51,8 @@ class WritePageGuard {
   ~WritePageGuard();
 
   auto GetData() -> char*;
+  auto GetPage() -> Page*;           // mutable access; marks the page dirty like GetData
+  auto View() const -> const Page*;  // read-only access; does not mark it dirty
   auto GetPageId() const -> page_id_t;
   auto IsValid() const -> bool;
   void Drop();

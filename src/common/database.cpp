@@ -136,7 +136,8 @@ auto Database::PageDebug(page_id_t page_id) const -> std::string {
 }
 
 auto Database::TreeDebug(const std::string&, bool) const -> std::string {
-  throw NotImplementedException("PLAN 2.2: BPlusTree::ToString");
+  return "no index: the memory backend keeps triples in memory; the indexed backend (PLAN 3.4) "
+         "has spo, pos, and osp trees";
 }
 
 void Database::Begin() {

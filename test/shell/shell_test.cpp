@@ -56,7 +56,8 @@ TEST(Shell, ExplainStatsSetAndUnbuiltCommands) {
   EXPECT_EQ(out.find("not built yet (PLAN 1.6)"), std::string::npos);
   EXPECT_NE(out.find("no buffer pool"), std::string::npos);
   EXPECT_NE(out.find("trace on"), std::string::npos);
-  EXPECT_NE(out.find("not built yet (PLAN 2.2)"), std::string::npos);
+  EXPECT_EQ(out.find("not built yet (PLAN 2.2)"), std::string::npos);
+  EXPECT_NE(out.find("no index"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 7.2)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 7.3)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 8.2)"), std::string::npos);

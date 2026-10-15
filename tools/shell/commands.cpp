@@ -213,7 +213,7 @@ auto BuildCommands() -> std::vector<ShellCommand> {
       {"\\bpm", "\\bpm", "buffer pool frames", {}, no_arg([](Database& db) {
          return Text(db.BufferPoolDebug());
        })},
-      {"\\tree", "\\tree spo|pos|osp [dot]", "index shape (PLAN 2.2)", {}, Tree},
+      {"\\tree", "\\tree spo|pos|osp [dot]", "index shape (indexed backend)", {}, Tree},
       {"\\page", "\\page <id>", "one page: pageLSN and the first payload bytes", {}, Page},
       {"\\trace", "\\trace on|off", "print component events to stderr", {}, Trace},
       {"\\begin", "\\begin", "start a transaction (PLAN 7.2)", {}, no_arg([](Database& db) {
