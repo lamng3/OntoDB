@@ -20,7 +20,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
-Without a directory, the shell starts an empty memory database that keeps nothing.
+Without a directory, the shell starts an empty memory database that keeps nothing. `\set backend indexed` moves it onto pages and B+ trees in a temporary file; `\set backend mem` moves it back.
 
 ## Building
 
