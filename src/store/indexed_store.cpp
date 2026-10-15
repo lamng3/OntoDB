@@ -47,8 +47,9 @@ IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary*
     : catalog_(catalog), bpm_(bpm), dictionary_(dictionary) {
   for (const char* name : kAllNames) {
     const page_id_t header = catalog_->GetIndexRoot(name);
-    if (header != INVALID_PAGE_ID) {
-      indexes_.push_back({name, *OrderOf(name), std::make_unique<BPlusTree>(name, header, bpm_)});
+    const auto order = OrderOf(name);
+    if (header != INVALID_PAGE_ID && order.has_value()) {
+      indexes_.push_back({name, *order, std::make_unique<BPlusTree>(name, header, bpm_)});
     }
   }
   if (!indexes_.empty()) {
@@ -152,9 +153,12 @@ auto IndexedStore::Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleI
       best_prefix = prefix;
     }
   }
+  if (best == nullptr) {
+    throw std::logic_error("an indexed store has no index");
+  }
   std::array<term_id_t, 3> start{0, 0, 0};
   for (int i = 0; i < best_prefix; i++) {
-    start[i] = *Bound(pattern, best->order[i]);
+    start[i] = Bound(pattern, best->order[i]).value_or(0);  // bound: it is in the prefix
   }
   return std::make_unique<IndexedTripleIterator>(best->tree.get(),
                                                  TripleKey::Encode(start[0], start[1], start[2]),

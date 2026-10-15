@@ -158,7 +158,11 @@ auto TermHeap::Insert(std::string_view bytes) -> RID {
     WritePageGuard guard = bpm_->NewPageGuarded(&fresh);
     TermHeapPage page(guard.GetPage());
     page.Init();
-    slot = *page.Insert(bytes);
+    const auto inserted = page.Insert(bytes);
+    if (!inserted.has_value()) {  // cannot happen: the size was checked above
+      throw StorageException("term does not fit on an empty page");
+    }
+    slot = *inserted;
   }
   {
     WritePageGuard guard = bpm_->FetchPageWrite(last);
