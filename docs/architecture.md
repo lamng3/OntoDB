@@ -60,7 +60,7 @@ Today `INSERT DATA` is applied in `execution_engine.cpp` straight to `MemStore::
 - `\trace on|off` switches `SwitchableTraceSink`, which prints component events to stderr. `\bpm` and `\page` report that the memory backend has no buffer pool.
 - The devcontainer installs `default-jre-headless` so `scripts/fetch-data lubm` can run the official generator.
 - Targets compile with `-Wno-unused-private-field` because stub objects store the pointers the student will use.
-- `Page` carries a reader-writer latch (`RLatch`/`WLatch`) for the guards, so a `Page` is neither copyable nor movable.
+- `Page` carries a reader-writer latch (`RLatch`/`WLatch`) for the guards, so a `Page` is neither copyable nor movable. `Reset` gives the frame a fresh latch when it is about to hold another page, so a latch belongs to one page.
 - `.clang-tidy` enables `bugprone-*` and `clang-analyzer-*`. The broader `modernize` and `readability` sets are left off so the tidy job can stay green on a scaffold of intentional stubs.
 - `data/pizza.ttl` is a small original subset used by the query tests. `scripts/fetch-data pizza` downloads the real ontology into `data/downloads/`, which is gitignored.
 
