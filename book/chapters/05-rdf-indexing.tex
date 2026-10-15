@@ -148,7 +148,8 @@ bound id is the maximum) it saturates to the all-\code{0xFF} key, three copies o
 \code{INVALID\_TERM\_ID}, which the dictionary never assigns. The catalog names three B+ tree roots, \code{"spo"}, \code{"pos"},
 and \code{"osp"}, and an insert or delete updates every permutation the catalog
 has, or none. The plan builds SPO first and then \emph{measures} whether POS and
-OSP pay for their space on real SPARQL workloads before adding them.
+OSP pay for their space on real SPARQL workloads before adding them; the next
+design decision records that measurement.
 \end{ontodb}
 
 \begin{decision}{Ids start at 1; 0 and the maximum are reserved}
@@ -250,6 +251,39 @@ initialized'' from ``a catalog whose dictionary root happens to be 0''.
 \dpart{Cost} An extra page write when a database is created.
 \end{decision}
 
+\begin{decision}{SPO, POS, and OSP, measured}
+\dpart{Choice} The default store keeps three permutations: SPO, POS, and OSP.
+\dpart{Alternatives} SPO alone, which answers everything with a scan and a
+filter; or all six, as Hexastore keeps.
+\dpart{Why} Measured on LUBM(1), about 100,000 triples, with each pattern shape
+run on a cold pool of 64 frames (\cref{tab:permbench}). With SPO alone, every
+pattern that binds the predicate or the object but not the subject reads the
+whole tree, and \code{?x rdf:type C}, LUBM's most common pattern, is one of
+them. POS and OSP turn those into range scans, 9 to 45 times fewer page reads.
+The other three permutations make no pattern cheaper.
+\dpart{Cost} Twice the space of SPO alone and about a quarter more load time.
+SOP, PSO, and OPS would be worth their space only to an operator that needs a
+second sort order, such as a merge join.
+\end{decision}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Permutations & Load (s) & File (MiB) & \code{-p-} & \code{--o} & \code{-po} \\
+\midrule
+SPO & 1.4 & 8.2 & 1131 & 1131 & 1131 \\
+SPO, POS, OSP & 1.7 & 16.2 & 128 & 25 & 25 \\
+all six & 2.9 & 29.1 & 143 & 25 & 25 \\
+\bottomrule
+\end{tabular}
+\caption{Page reads per pattern on a cold 64-frame pool, LUBM(1), averaged over
+20 sampled patterns. The other five shapes cost the same under all three sets.
+Full results are in \code{benchmarks/indexing/results.md}.}
+\label{tab:permbench}
+\end{table}
+
 \begin{decision}{Permutations are data, and every write is all-or-nothing}
 \dpart{Choice} An index is named by its key order (\code{"spo"},
 \code{"pos"}, \ldots), and the store keeps whichever of the six the catalog
@@ -291,7 +325,8 @@ bounds, with the carry and saturation cases tested. So do the catalog (plan
 3.3), the disk dictionary (plan 3.2), and the indexed store (plan 3.4): every
 query file in the test suite returns the same rows on the memory store and on
 the B+ tree store, and \code{\textbackslash set backend indexed} switches the
-shell to it. The permutation measurement is plan 3.5.
+shell to it. The permutation set was measured (plan 3.5), and a store flushed
+and reopened keeps its triples and terms (plan 3.6).
 \end{status}
 
 \begin{checkyourself}
@@ -301,6 +336,7 @@ shell to it. The permutation measurement is plan 3.5.
 \item Which permutation serves \code{?s ?p <Material>}? Which serves \code{<Alice> ?p <Student>}?
 \item Why must the loader and the binder share one canonical spelling for terms? Give a literal that two careless implementations might spell differently.
 \item What would go wrong if the dictionary assigned $2^{64}-1$ to a real term?
+\item In \cref{tab:permbench}, why does adding SOP, PSO, and OPS not reduce the page reads of any pattern? What kind of operator would make them worth their space?
 \item With only the SPO index, which of the eight bound/unbound patterns are answered by a range scan, and which by a full scan plus a filter?
 \item Two different spellings have the same 64-bit hash. What does the disk dictionary do when you look up the second one?
 \item Why does the catalog record each index's header page rather than its root? How often does the catalog page change?

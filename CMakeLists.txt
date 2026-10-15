@@ -39,6 +39,11 @@ target_compile_options(ontodb_shell PRIVATE -Wall -Wextra -Werror -Wno-unused-pr
 
 add_executable(ontodb_cli tools/shell/main.cpp)
 target_link_libraries(ontodb_cli PRIVATE ontodb_shell)
+
+# Benchmarks (benchmarks/<question>/run.sh). Not part of the test suite.
+add_executable(ontodb_bench_indexing tools/bench/indexing.cpp)
+target_link_libraries(ontodb_bench_indexing PRIVATE ontodb)
+target_compile_options(ontodb_bench_indexing PRIVATE -Wall -Wextra -Werror)
 target_compile_options(ontodb_cli PRIVATE -Wall -Wextra -Werror -Wno-unused-private-field)
 set_target_properties(ontodb_cli PROPERTIES OUTPUT_NAME ontodb)
 
@@ -60,6 +65,7 @@ ontodb_sanitize(ontodb)
 ontodb_sanitize(ontodb_shell)
 ontodb_sanitize(ontodb_cli)
 ontodb_sanitize(ontodb_test)
+ontodb_sanitize(ontodb_bench_indexing)
 
 enable_testing()
 add_test(NAME ontodb_test COMMAND ontodb_test)

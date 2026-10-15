@@ -72,8 +72,11 @@ IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary*
   }
 }
 
+// SPO, POS, and OSP make every bound/unbound pattern a prefix scan. The other
+// three only add sort orders, which no operator uses; on LUBM(1) they cost 80%
+// more space and saved nothing. See benchmarks/indexing/results.md.
 auto IndexedStore::DefaultPermutations() -> std::vector<std::string> {
-  return {"spo"};
+  return {"spo", "pos", "osp"};
 }
 
 auto IndexedStore::IndexNames() const -> std::vector<std::string> {
@@ -177,6 +180,7 @@ auto IndexedTripleIterator::Next(Triple* out) -> bool {
     std::array<term_id_t, 3> key{};
     (*cursor_).Decode(&key[0], &key[1], &key[2]);
     ++cursor_;
+    examined_++;
     Triple triple;
     for (int i = 0; i < 3; i++) {
       (order_[i] == 0   ? triple.subject
