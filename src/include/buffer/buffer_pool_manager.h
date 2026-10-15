@@ -75,6 +75,7 @@ class BufferPoolManager {
   void WriteBack(Page* page);                    // requires mu_
   void RunIo(bool is_write, Page* page);         // requires mu_
   void Trace(const std::string& message) const;
+  auto NullReason(page_id_t page_id) const -> std::string;
 
   size_t pool_size_;
   DiskManager* disk_manager_;

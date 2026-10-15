@@ -363,7 +363,7 @@ TEST(P1_4_BufferPoolManager, FullPoolDestructorAndWalOrder) {
   EXPECT_EQ(back[100], 0);
 }
 
-TEST(P1_5_PageGuard, DISABLED_MoveDropAndShare) {
+TEST(P1_5_PageGuard, MoveDropAndShare) {
   test::DiskEnv env(4, 2);
   page_id_t id = INVALID_PAGE_ID;
   {
@@ -393,6 +393,39 @@ TEST(P1_5_PageGuard, DISABLED_MoveDropAndShare) {
   EXPECT_EQ(reader.GetData()[1], 9);
   reader.Drop();
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+TEST(P1_5_PageGuard, LatchOnlyIsCleanWriterExcludesReaderFullPoolThrows) {
+  test::DiskEnv env(2, 2);
+  page_id_t id = INVALID_PAGE_ID;
+  env.bpm.NewPageGuarded(&id).GetData()[0] = 1;
+  ASSERT_TRUE(env.bpm.FlushPage(id));
+  const auto writes = env.stats.page_writes();
+  {
+    WritePageGuard latch_only = env.bpm.FetchPageWrite(id);  // never calls GetData
+  }
+  ASSERT_TRUE(env.bpm.FlushPage(id));
+  EXPECT_EQ(env.stats.page_writes(), writes);  // still clean: nothing written
+
+  std::atomic<bool> read{false};
+  std::thread reader;
+  {
+    WritePageGuard writer = env.bpm.FetchPageWrite(id);
+    reader = std::thread([&env, id, &read] {
+      ReadPageGuard guard = env.bpm.FetchPageRead(id);
+      read = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_FALSE(read.load());  // blocked on the exclusive latch
+  }
+  reader.join();
+  EXPECT_TRUE(read.load());
+
+  page_id_t other = INVALID_PAGE_ID;
+  ReadPageGuard first = env.bpm.FetchPageRead(id);
+  WritePageGuard second = env.bpm.NewPageGuarded(&other);
+  page_id_t none = INVALID_PAGE_ID;
+  EXPECT_THROW(env.bpm.NewPageGuarded(&none), StorageException);
 }
 
 TEST(P1_6_Inspection, DISABLED_DebugAndTrace) {

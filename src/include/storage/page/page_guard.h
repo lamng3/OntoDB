@@ -11,6 +11,10 @@ class Page;
 // Drop and the destructor unpin exactly once. An empty guard (default
 // constructed, moved-from, or dropped) has IsValid() == false and must not
 // be dereferenced. Copying is not allowed.
+//
+// The guard takes the frame's latch after the pool has pinned the page, and
+// on Drop releases the latch first and the pin second, so a frame is never
+// evicted while its latch is held.
 class ReadPageGuard {
  public:
   ReadPageGuard() = default;
@@ -33,6 +37,8 @@ class ReadPageGuard {
 
 // Same lifetime rules as ReadPageGuard. GetData is mutable. While a write
 // guard is held, no other read or write guard may be held on the same page.
+// The page is unpinned dirty only if GetData was called, so a write guard
+// taken just to hold the exclusive latch does not cause a disk write.
 class WritePageGuard {
  public:
   WritePageGuard() = default;
@@ -51,6 +57,7 @@ class WritePageGuard {
  private:
   BufferPoolManager* bpm_{nullptr};
   Page* page_{nullptr};
+  bool dirty_{false};
 };
 
 }  // namespace ontodb
