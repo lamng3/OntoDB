@@ -26,6 +26,7 @@ line is the point.
 \answers{ch:buffer}{3}
 \item It must be written back to disk (after the log is flushed up to its pageLSN, by the write-ahead rule) before the frame is reused.
 \item At $t = 11$ the backward 2-distances are A: $11 - 8 = 3$, B: $11 - 3 = 8$, C: $11 - 7 = 4$. LRU-K evicts B.
+\item X. Both have fewer than three accesses, so both have infinite distance, and the tie goes to the earliest oldest access: X's is at time 2, Y's at time 5. Recency does not enter until a frame has $K$ accesses.
 \item A scan touches each page once; under LRU every scanned page becomes the most recent, so the scan pushes out the hot pages. With $K = 2$, a page touched once has infinite distance and leaves first. $K = 1$ is LRU.
 \item Both steal cells. Under steal, an uncommitted change can reach the disk, and the log must be able to take it back.
 \item The bytes just written: one thread runs requests in the order scheduled. With several I/O threads the read could run first and return the old page, unless requests for the same page were ordered some other way.
