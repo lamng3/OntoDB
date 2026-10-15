@@ -18,8 +18,8 @@ Database::Database()
 
 Database::~Database() = default;
 
-auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode, OpenReport* report)
-    -> std::unique_ptr<Database> {
+auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
+                    OpenReport* report) -> std::unique_ptr<Database> {
   auto db = std::make_unique<Database>();
   db->durability_ =
       std::make_unique<Durability>(dir, db->dictionary_.get(), db->store_.get(), &db->stats_);
