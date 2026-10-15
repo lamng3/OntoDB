@@ -139,10 +139,36 @@ executor then arrives into a slot that is already wired and printed.
 run, and running one throws ``not built yet''.
 \end{decision}
 
+\begin{decision}{\code{DISTINCT} keeps a hash set}
+\dpart{Choice} The distinct operator passes a row the first time it sees it,
+in its child's order, and remembers every row it has passed in a hash set.
+\dpart{Alternatives} Sort the rows and drop adjacent duplicates.
+\dpart{Why} Hashing streams: the first answer comes out as soon as it is
+found, \code{LIMIT} above it still stops early, and the order the child chose
+is kept.
+\dpart{Cost} Memory grows with the number of distinct rows. A sort-based
+distinct could spill to disk; this one cannot.
+\end{decision}
+
+\begin{decision}{Rows have no order without \code{ORDER BY}}
+\dpart{Choice} The engine promises no order unless the query has
+\code{ORDER BY}. Tests compare answers as multisets.
+\dpart{Alternatives} Always return rows in a fixed order, for example sorted by
+id.
+\dpart{Why} The order a plan produces depends on the store, the indexes, and
+the join operator: the memory store returns triples in insertion order, the
+indexed store in key order. Promising an order would force a sort on every
+query.
+\dpart{Cost} \code{LIMIT} without \code{ORDER BY} may return different rows on
+the two backends, or under different join operators. Both answers are correct,
+which is why the differential test checks such queries only when the limit is
+larger than the answer.
+\end{decision}
+
 \begin{status}
-Parsing, binding, planning, triple scans, nested-loop join, filter, and
-projection run today against the in-memory store. Distinct, limit, offset, and
-sort are parsed and planned; their executors are next (plans 4.4 and 4.5).
+Parsing, binding, planning, triple scans, the three joins, filter,
+projection, distinct, limit, and offset run on both backends (plans 4.1 to
+4.4). Sort is parsed and planned; its executor is plan 4.5.
 \end{status}
 
 \begin{checkyourself}
@@ -151,6 +177,7 @@ sort are parsed and planned; their executors are next (plans 4.4 and 4.5).
 \item Why can't \code{ORDER BY} compare term ids?
 \item A plan is \code{Limit 10} over a join of two large scans. How much work does the Volcano model do, and how much would a model that materializes each operator's output do?
 \item Why does an empty pattern produce one empty row rather than none?
+\item \code{SELECT ?name WHERE \{ ... \} LIMIT 2} returns Alice and Bob on the memory backend and Alice and Cara on the indexed one. Which is wrong?
 \end{checkyourself}
 
 \section*{Further reading}
