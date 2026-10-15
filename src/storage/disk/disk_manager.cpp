@@ -67,7 +67,7 @@ void DiskManager::ShutDown() {
 }
 
 void DiskManager::WritePage(page_id_t page_id, const char* page_data) {
-  CheckAllocated(page_id);
+  CheckUsable(page_id);
   size_t done = 0;
   while (done < PAGE_SIZE) {
     const auto n = ::pwrite(fd_, page_data + done, PAGE_SIZE - done,
@@ -81,6 +81,11 @@ void DiskManager::WritePage(page_id_t page_id, const char* page_data) {
     }
     done += static_cast<size_t>(n);
   }
+  // A write past the end grew the file; later allocations must not hand out
+  // this id.
+  page_id_t known = num_pages_.load();
+  while (known <= page_id && !num_pages_.compare_exchange_weak(known, page_id + 1)) {
+  }
   num_writes_.fetch_add(1, std::memory_order_relaxed);
   if (stats_ != nullptr) {
     stats_->PageWrite();
@@ -89,7 +94,7 @@ void DiskManager::WritePage(page_id_t page_id, const char* page_data) {
 }
 
 void DiskManager::ReadPage(page_id_t page_id, char* page_data) {
-  CheckAllocated(page_id);
+  CheckUsable(page_id);
   size_t done = 0;
   while (done < PAGE_SIZE) {
     const auto n = ::pread(fd_, page_data + done, PAGE_SIZE - done,
@@ -131,7 +136,7 @@ auto DiskManager::AllocatePage() -> page_id_t {
 }
 
 void DiskManager::DeallocatePage(page_id_t page_id) {
-  CheckAllocated(page_id);
+  CheckUsable(page_id);
   Trace("deallocate", page_id);
 }
 
@@ -149,13 +154,12 @@ void DiskManager::Trace(const char* op, page_id_t page_id) {
   }
 }
 
-void DiskManager::CheckAllocated(page_id_t page_id) const {
+void DiskManager::CheckUsable(page_id_t page_id) const {
   if (fd_ < 0) {
     throw StorageException("database file " + db_file_ + " is shut down");
   }
-  if (page_id < 0 || page_id >= num_pages_.load()) {
-    throw StorageException("page " + std::to_string(page_id) + " was never allocated in " +
-                           db_file_);
+  if (page_id < 0) {
+    throw StorageException("invalid page id " + std::to_string(page_id) + " in " + db_file_);
   }
 }
 

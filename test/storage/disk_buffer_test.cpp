@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <future>
 #include <sstream>
@@ -77,18 +78,22 @@ TEST(P1_1_DiskManager, IdsSurviveRestartAndAreNeverReused) {
   EXPECT_EQ(again.AllocatePage(), 3);
 }
 
-TEST(P1_1_DiskManager, RejectsPagesNeverAllocated) {
+TEST(P1_1_DiskManager, WritePastTheEndGrowsTheFile) {
   test::TempDir dir;
   DiskManager disk((dir.path() / "db").string());
   std::array<char, PAGE_SIZE> page{};
-  EXPECT_THROW(disk.ReadPage(0, page.data()), StorageException);
-  EXPECT_THROW(disk.WritePage(INVALID_PAGE_ID, page.data()), StorageException);
-  const auto id = disk.AllocatePage();
+  page.fill(1);
+  disk.ReadPage(7, page.data());  // never written: zeros, even unallocated
+  EXPECT_EQ(page, (std::array<char, PAGE_SIZE>{}));
+  const auto image = Pattern(9);
+  disk.WritePage(4, image.data());
+  EXPECT_EQ(disk.AllocatePage(), 5);  // the write covered ids 0 to 4
+  EXPECT_THROW(disk.WritePage(INVALID_PAGE_ID, image.data()), StorageException);
   disk.ShutDown();
-  EXPECT_THROW(disk.ReadPage(id, page.data()), StorageException);
+  EXPECT_THROW(disk.ReadPage(4, page.data()), StorageException);
 }
 
-TEST(P1_2_DiskScheduler, DISABLED_BackgroundReadWrite) {
+TEST(P1_2_DiskScheduler, BackgroundReadWrite) {
   test::TempDir dir;
   DiskManager disk((dir.path() / "db").string());
   DiskScheduler scheduler(&disk);
@@ -125,6 +130,35 @@ TEST(P1_2_DiskScheduler, DISABLED_BackgroundReadWrite) {
     scheduler.Schedule(std::move(req));
   }
   for (auto& fut : futures) {
+    EXPECT_TRUE(fut.get());
+  }
+}
+
+TEST(P1_2_DiskScheduler, ErrorsReachTheWaiterAndQueuedWorkFinishes) {
+  test::TempDir dir;
+  DiskManager disk((dir.path() / "db").string());
+  std::array<char, PAGE_SIZE> page{};
+  std::future<bool> bad;
+  std::vector<std::future<bool>> queued;
+  {
+    DiskScheduler scheduler(&disk);
+    DiskRequest req;
+    req.page_id = INVALID_PAGE_ID;
+    req.data = page.data();
+    bad = req.callback.get_future();
+    scheduler.Schedule(std::move(req));
+    for (int i = 0; i < 4; i++) {
+      DiskRequest write;
+      write.is_write = true;
+      write.page_id = i;
+      write.data = page.data();
+      queued.push_back(write.callback.get_future());
+      scheduler.Schedule(std::move(write));
+    }
+  }  // the destructor drains the queue before joining
+  EXPECT_THROW(bad.get(), StorageException);
+  for (auto& fut : queued) {
+    ASSERT_EQ(fut.wait_for(std::chrono::seconds(0)), std::future_status::ready);
     EXPECT_TRUE(fut.get());
   }
 }

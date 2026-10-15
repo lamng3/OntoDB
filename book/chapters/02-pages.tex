@@ -163,9 +163,10 @@ a free list, as SQLite's first page and InnoDB's space header do.
 \dpart{Why} Page 0 already belongs to the catalog. The file system updates a
 file's length as one fact, so there is no second record of allocation that a
 crash could leave disagreeing with the file.
-\dpart{Cost} The new length is durable only after an \code{fsync}. After a
-crash, a page that a log record names may lie past the end of the file, so
-recovery must be ready to extend the file and treat the missing page as zeros.
+\dpart{Cost} The new length is durable only after an \code{fsync}, so after a
+crash a page that a log record names may lie past the end of the file. The disk
+manager therefore reads any page past the end as zeros and grows the file when
+one is written there, which lets redo apply such a record with no special case.
 \end{decision}
 
 \begin{decision}{The file only grows}

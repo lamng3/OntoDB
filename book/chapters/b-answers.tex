@@ -20,7 +20,7 @@ line is the point.
 \item No: it was only in the operating system's page cache. \code{fsync} on the file (and, for a new file, on its directory) makes it durable.
 \item The kernel may already have dropped the dirty pages and cleared the error, so the second \code{fsync} ``succeeds'' with the data gone. The only safe response is to stop and recover from the log.
 \item Zero is what unwritten memory and files contain. With $-1$ as the sentinel, a forgotten initialization shows up as an error instead of as a tree rooted at page 0, which is a legal page.
-\item Allocation grew the file, but the new length was never made durable (no \code{fsync} before the crash), while the log record that uses the page was forced. Redo must extend the file, treat the page as zeros, and reapply the record.
+\item Allocation grew the file, but the new length was never made durable (no \code{fsync} before the crash), while the log record that uses the page was forced. Redo reads the page past the end as zeros and reapplies the record; writing the page back grows the file.
 \end{enumerate}
 
 \answers{ch:buffer}{3}
@@ -28,6 +28,7 @@ line is the point.
 \item At $t = 11$ the backward 2-distances are A: $11 - 8 = 3$, B: $11 - 3 = 8$, C: $11 - 7 = 4$. LRU-K evicts B.
 \item A scan touches each page once; under LRU every scanned page becomes the most recent, so the scan pushes out the hot pages. With $K = 2$, a page touched once has infinite distance and leaves first. $K = 1$ is LRU.
 \item Both steal cells. Under steal, an uncommitted change can reach the disk, and the log must be able to take it back.
+\item The bytes just written: one thread runs requests in the order scheduled. With several I/O threads the read could run first and return the old page, unless requests for the same page were ordered some other way.
 \item That frame can never be evicted, so the pool is permanently one frame smaller; enough leaks and every frame is pinned and the next miss fails. Guards unpin exactly once at the end of their scope, and the tests check that nothing stays pinned.
 \end{enumerate}
 
