@@ -16,7 +16,7 @@ Start a directory when the feature it measures exists. The first questions this 
 | --- | --- | --- |
 | `eviction` | How do pool size and LRU-K change the hit ratio on one query mix? | Buffer pool |
 | `indexing` | Which permutations pay for themselves on LUBM? | Done: [results](indexing/results.md) |
-| `joins` | Nested loop, index nested loop, hash, and the optimizer's own choice | Query execution, optimizer |
+| `joins` | Nested loop, index nested loop, hash, and the optimizer's own choice | Done: [results](joins/results.md) |
 | `recovery` | Group commit and checkpoint interval against throughput and restart time | Recovery |
 
 `scripts/fetch-data lubm` builds the LUBM(1) file used by the indexing and join questions. It needs Java. `data/tiny.ttl` is the smoke dataset, not a benchmark.

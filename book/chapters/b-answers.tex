@@ -88,6 +88,7 @@ line is the point.
 \item With rebinding, each of the 1,000 outer rows binds \code{?s}, so the inner scan is a prefix probe returning that student's names: about 1,000 probes reading a few triples each. Without it, every outer row rescans all 1,000,000 \code{ub:name} triples: $10^9$ triples read.
 \item A join's estimate is built from its inputs' estimates, so their errors multiply: two inputs each off by 10 give an output off by up to 100.
 \item \code{\textbackslash explain} prints the optimizer's plan. If the executor swapped algorithms at run time, the printed plan would not be the one that ran.
+\item It joins three type patterns that share no variable: about 1,900 graduate students times 1,000 universities times 15 departments, tens of millions of rows of cross product, before the first pattern that connects them. Any operator must produce those rows; only putting a connected pattern first avoids them.
 \end{enumerate}
 
 \answers{ch:transactions}{9}
