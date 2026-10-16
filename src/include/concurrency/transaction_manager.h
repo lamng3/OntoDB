@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -30,6 +31,7 @@ class TransactionManager {
   LockManager* lock_manager_;
   TripleStore* store_;
   LogManager* log_;
+  mutable std::mutex mu_;  // guards txns_ and next_; transactions run on many threads
   std::unordered_map<txn_id_t, std::unique_ptr<Transaction>> txns_;
   txn_id_t next_{1};
 };

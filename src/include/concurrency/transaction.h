@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <vector>
 
 #include "common/types.h"
@@ -24,14 +25,16 @@ class Transaction {
 
   auto GetId() const -> txn_id_t { return id_; }
   auto GetIsolationLevel() const -> IsolationLevel { return isolation_; }
-  auto GetState() const -> TransactionState { return state_; }
+  // Atomic: the deadlock detector marks a waiting transaction aborted from its
+  // own thread.
+  auto GetState() const -> TransactionState { return state_.load(); }
   void SetState(TransactionState state);
   auto GetWriteSet() -> std::vector<WriteRecord>&;
 
  private:
   txn_id_t id_;
   IsolationLevel isolation_;
-  TransactionState state_{TransactionState::kGrowing};
+  std::atomic<TransactionState> state_{TransactionState::kGrowing};
   std::vector<WriteRecord> write_set_;
 };
 
