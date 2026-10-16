@@ -7,10 +7,9 @@
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
 [![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.github.io/ontodb-docs/)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
-[![Progress](https://img.shields.io/badge/plan-53%2F53-22c55e)](PLAN.md)
 [![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
 
-[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [📊 Status](#-status) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
+[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
 
 </div>
 
@@ -54,30 +53,7 @@ write-ahead log. A restart is ARIES.
 - **Persistent databases.** `ontodb <dir>` makes every update statement and every `\load` a transaction, forced to a checksummed log before the prompt returns. `\checkpoint` writes a snapshot, and `\verify` rebuilds from the files and compares.
 - **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
 - **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
-- **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES.
-
-## 📊 Status
-
-<div align="center">
-
-| Feature | Status |
-|:--|:--:|
-| SPARQL shell | ✅ |
-| Persistent databases (snapshot, WAL, recovery modes, verify) | ✅ |
-| Log records and group commit | ✅ |
-| Triple key | ✅ |
-| Buffer pool | ✅ |
-| B+ tree | ✅ |
-| RDF storage | ✅ |
-| Query execution | ✅ |
-| Optimizer | ✅ |
-| Bulk load | ✅ |
-| Concurrency | ✅ |
-| Page-level recovery | ✅ |
-
-<sub>53 of 53 slices pass · `scripts/status` · the build list is [PLAN.md](PLAN.md)</sub>
-
-</div>
+- **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
 
 Every push runs the test suite under AddressSanitizer and UndefinedBehaviorSanitizer and again under ThreadSanitizer, then checks formatting and clang-tidy.
 
