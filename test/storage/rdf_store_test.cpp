@@ -271,7 +271,7 @@ TEST(P3_6_Restart, CleanShutdownKeepsTriples) {
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P6_1_BulkLoader, DISABLED_LoadTinyThroughIndexes) {
+TEST(P6_1_BulkLoader, LoadTinyThroughIndexes) {
   test::DiskEnv env(16, 2);
   Catalog catalog(&env.bpm);
   DiskDictionary dict(&env.bpm, &catalog);

@@ -17,3 +17,19 @@ LUBM(1), 15 files, 103,104 triples parsed, 100,573 distinct. Release build on an
 **Kept: SPO, POS, OSP**, the default in `IndexedStore::DefaultPermutations`. A store can still be built with any set.
 
 Raw output: `benchmarks/indexing/raw/` (not committed). Rerun with `benchmarks/indexing/run.sh`.
+
+## With the bulk loader (plan 6.1)
+
+The table above loaded the 15 files one triple at a time. `RdfLoader::LoadFiles` hands all of them to an empty store in one batch, and `IndexedStore::InsertBatch` sorts each permutation and bulk-loads its tree with packed leaves:
+
+| Permutations | Load (s) | File (MiB) | --- | s-- | -p- | --o | sp- | s-o | -po | spo |
+|---|---|---|---|---|---|---|---|---|---|---|
+| spo | 1.07 | 6.1 | 100573 / 100573 / 599 | 8 / 8 / 4 | 12228 / 100573 / 599 | 1833 / 100573 / 599 | 2 / 2 / 4 | 1 / 8 / 4 | 1805 / 100573 / 599 | 1 / 1 / 4 |
+| spo pos osp | 1.08 | 10.8 | 100573 / 100573 / 599 | 8 / 8 / 4 | 12228 / 12228 / 76 | 1833 / 1833 / 15 | 2 / 2 / 4 | 1 / 1 / 4 | 1805 / 1805 / 15 | 1 / 1 / 4 |
+| spo sop pso pos osp ops | 1.15 | 17.9 | 100573 / 100573 / 599 | 8 / 8 / 4 | 12228 / 12228 / 76 | 1833 / 1833 / 15 | 2 / 2 / 4 | 1 / 1 / 4 | 1805 / 1805 / 15 | 1 / 1 / 4 |
+
+- **Space drops by a third** (16.2 to 10.8 MiB for SPO, POS, OSP): random inserts left leaves about half full; bulk load fills them.
+- **Scans read about half the pages** (a full scan 1131 to 599; `-p-` 128 to 76; `--o` and `-po` 25 to 15), for the same reason.
+- **Load time is now the dictionary's.** 1.07 s for one permutation and 1.08 s for three: building the trees is cheap next to interning 100,000 triples' terms through two B+ trees each.
+
+The permutation decision does not change: the extra three still make no pattern cheaper.

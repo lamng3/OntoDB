@@ -1,5 +1,6 @@
 #include "store/indexed_store.h"
 
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
 
@@ -138,6 +139,29 @@ auto IndexedStore::Delete(const Triple& triple) -> bool {
     throw;
   }
   return true;
+}
+
+auto IndexedStore::InsertBatch(const std::vector<Triple>& triples) -> size_t {
+  const bool empty = std::all_of(indexes_.begin(), indexes_.end(),
+                                 [](const Index& index) { return index.tree->IsEmpty(); });
+  if (!empty) {
+    return TripleStore::InsertBatch(triples);
+  }
+  auto less = [](const TripleKey& a, const TripleKey& b) { return a.Compare(b) < 0; };
+  auto equal = [](const TripleKey& a, const TripleKey& b) { return a.Compare(b) == 0; };
+  size_t unique = 0;
+  for (const auto& index : indexes_) {
+    std::vector<TripleKey> keys;
+    keys.reserve(triples.size());
+    for (const auto& triple : triples) {
+      keys.push_back(KeyOf(index, triple));
+    }
+    std::sort(keys.begin(), keys.end(), less);
+    keys.erase(std::unique(keys.begin(), keys.end(), equal), keys.end());
+    index.tree->BulkLoad(keys);
+    unique = keys.size();
+  }
+  return unique;
 }
 
 auto IndexedStore::Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleIterator> {

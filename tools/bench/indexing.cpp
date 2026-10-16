@@ -1,6 +1,7 @@
 // Which permutations pay for themselves? Loads a dataset into an indexed
 // store once per permutation set, then runs the eight bound/unbound pattern
 // shapes on a cold pool and reports space, keys examined, and page reads.
+// All files are loaded in one batch, so the store bulk-loads its trees.
 //
 //   ontodb_bench_indexing <work dir> <file.owl|.ttl>...
 //
@@ -89,9 +90,8 @@ auto main(int argc, char** argv) -> int {
       Catalog catalog(&pool);
       DiskDictionary dictionary(&pool, &catalog);
       IndexedStore store(&catalog, &pool, &dictionary, set);
-      for (int i = 2; i < argc; i++) {
-        triples += RdfLoader().Load(argv[i], dictionary, store).triples;
-      }
+      const std::vector<fs::path> files(argv + 2, argv + argc);
+      triples = RdfLoader().LoadFiles(files, dictionary, store).triples;
       if (samples.empty()) {  // the same sampled triples for every set
         std::vector<Triple> all;
         auto scan = store.Scan({});
