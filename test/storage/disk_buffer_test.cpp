@@ -460,7 +460,7 @@ TEST(P1_6_Inspection, DebugAndTrace) {
   EXPECT_EQ(text.find("not built yet"), std::string::npos) << text;
 }
 
-TEST(P8_3_Wal, DISABLED_FlushReachesCrashPointBeforeWrite) {
+TEST(P8_3_Wal, FlushReachesCrashPointBeforeWrite) {
   test::TempDir dir;
   const auto path = (dir.path() / "db").string();
   page_id_t id = INVALID_PAGE_ID;

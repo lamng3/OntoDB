@@ -28,19 +28,19 @@ SELECT ?name WHERE {
 
 ## One committed insert
 
-`INSERT DATA` runs as `ModifyExecutor` (plan 4.6) on whichever store is active. On the indexed backend it follows the path below; the log steps (8.x) are still to come. Each name is the file that owns that step.
+`INSERT DATA` runs as `ModifyExecutor` (plan 4.6) on whichever store is active. On the indexed backend it follows the path below. Steps 8 and 9 run when the transaction manager has a log, as in the crash harness; the shell's indexed backend has none. Each name is the file that owns that step.
 
 1. The shell and `Database::Execute` parse and bind as above. `src/planner/planner.cpp` emits an `InsertPlan` (`src/include/execution/plans/stub_plans.h`).
-2. `src/execution/executors/modify_executor.cpp` (plan 4.6) writes each triple to the store, which writes every index the catalog knows or none; if a later triple fails, the statement's earlier ones are taken back. The binder has already written the dictionary.
+2. `src/execution/executors/modify_executor.cpp` (plan 4.6) logs each triple that will change the store (`TransactionManager::LogUpdate`, plan 8.4), then writes it to the store, which writes every index the catalog knows or none; if a later triple fails, the statement's earlier ones are taken back. The binder has already written the dictionary.
 3. `src/dictionary/disk_dictionary.cpp` (plan 3.2, done; a term heap plus two B+ trees keyed by id and by hash) turns the three spellings into ids. Bytes live in `src/storage/term/term_heap.cpp` on `src/include/storage/page/term_heap_page.h` (plan 3.1, done; the page layout is in that header).
 4. `src/storage/index/triple_key.cpp` (plan 0.2, done) packs the three ids into 24 big-endian bytes. `memcmp` is the order.
 5. `src/store/indexed_store.cpp` (plan 3.4, done) inserts that key into each permutation `src/catalog/catalog.cpp` (plan 3.3, done; page 0, naming each tree's header page) has a root for. The tree is `src/storage/index/b_plus_tree.cpp` (plans 2.2 to 2.7, done; latch crabbing makes it safe for concurrent use, plan 7.1). Leaves and internal pages are `src/storage/page/b_plus_tree_leaf_page.h` and `b_plus_tree_internal_page.h` (plan 2.1, done; the byte layout is in those headers). The iterator is `src/storage/index/index_iterator.cpp`; it copies a leaf's remaining keys, holds no latch or pin between rows, and stops at `PrefixUpper`.
 6. The tree pins pages with `src/storage/page/page_guard.cpp` (plan 1.5, done). Frames live in `src/buffer/buffer_pool_manager.cpp` (plan 1.4, done; one latch, I/O through the scheduler, no flush in the destructor). Eviction is `src/buffer/lru_k_replacer.cpp` (plan 1.3, done).
 7. A dirty frame is written by `src/storage/disk/disk_scheduler.cpp` (plan 1.2, done; one thread, requests in order, errors through the promise) onto `src/storage/disk/disk_manager.cpp` (plan 1.1, done; the file length records allocation, and freed ids are not reused). Every page image starts with the pageLSN in `src/storage/page/page.cpp`.
-8. Before the page is written, the buffer pool flushes the log up to that pageLSN (plan 8.3). The record is a `src/include/recovery/log_record.h` (plan 8.1) appended by `src/include/recovery/log_manager.h` (plan 8.2). Commit forces the log. The commit record is the acknowledgement the crash harness trusts.
-9. On the next open, `src/include/recovery/log_recovery.h` (plan 8.6) runs analysis, redo, and undo. Undo of a triple is logical and writes a CLR (plan 8.4). A split or merge is redone, not logically undone.
+8. When a dirty write guard is dropped, still latched, the pool appends a page record holding the page's image and sets pageLSN to it (`BufferPoolManager::LogPageWrite`, plan 8.3). Before the page is written, the buffer pool flushes the log up to that pageLSN. The record is a `src/include/recovery/log_record.h` (plan 8.1) appended by `src/include/recovery/log_manager.h` (plan 8.2). Commit forces the log. The commit record is the acknowledgement the crash harness trusts.
+9. On the next open, `src/include/recovery/log_recovery.h` (plan 8.6) runs analysis, redo, and undo. Redo copies a page image when the page's pageLSN is older. Undo of a triple is logical and writes a CLR (plan 8.4). A split or merge is redone, not logically undone. `CheckpointManager` (plan 8.5) is sharp: it flushes every page, then writes the record.
 
-`\crash` exits without flushing. `\checkpoint` is plan 8.5. Until those exist, opening a path prints `recovery not built yet (PLAN 8.6)` and starts an empty memory database.
+`\crash` exits without flushing. `ontodb <dir>` opens the durable memory database (snapshot plus logical WAL, below), not the page store.
 
 ## Deviations
 
@@ -48,14 +48,14 @@ SELECT ?name WHERE {
 - `src/include/common/database.h` is the facade the shell and the harnesses call.
 - `src/include/common/crash_point.h` is the named hook multi-page operations call. Tests arm those names.
 - `src/include/common/term_codec.h` is the shared spelling of IRIs, literals, and blanks.
+- `LogRecordType::kPage` is not in the original record list. Redo is physical: a page record carries the page's bytes after the pageLSN, so redo needs no knowledge of B+ tree layout.
 - `src/include/common/session_state.h` carries the lock-wait reason so the lock manager does not depend on the shell.
 - `src/include/execution/plans/abstract_plan.h`, `abstract_executor.h`, and `stub_plans.h` are the volcano bases. Stub plans exist so `\explain` can print `Sort`, `Distinct`, `Limit`, `Insert`, and `Delete` before those executors exist.
 - `Schema` lives in `src/include/common/types.h`. `lsn_t` is `int64_t` so a long benchmark does not wrap the page header.
 - `MemStore` and `MemDictionary` take a mutex so two shell sessions can share them. That mutex is not isolation.
 - `DiskManager`, `DiskScheduler`, and `BufferPoolManager` take optional `IoStats*` and `TraceSink*`.
 - B+ tree page classes wrap a `Page*`. The byte layout (plan 2.1) is documented in their headers.
-- `Transaction` accessors and `LogRecord` factories hold data. The manager and the serialization are stubs.
-- `TransactionManager` takes an optional `LogManager*`. Null means write-set undo (plan 7.2). Non-null means log undo (plan 8.4). The pointer is in the signature now so plan 8.4 does not have to change it.
+- `TransactionManager` takes an optional `LogManager*`. Null means write-set undo (plan 7.2). Non-null means log undo (plan 8.4).
 - `\trace on|off` switches `SwitchableTraceSink`, which prints component events to stderr. `\bpm` and `\page` report that the memory backend has no buffer pool.
 - The devcontainer installs `default-jre-headless` so `scripts/fetch-data lubm` can run the official generator.
 - Targets compile with `-Wno-unused-private-field` because stub objects store the pointers the student will use.

@@ -44,6 +44,10 @@ class LogManager {
   // The next Append gets at least `lsn`. Used after a snapshot so LSNs never repeat.
   void AdvanceNextLsn(lsn_t lsn);
   auto NextLsn() const -> lsn_t;
+  auto GetPath() const -> const std::string& { return log_path_; }
+  // Flushes everything appended so far and returns every valid record in the
+  // file, oldest first. Undo uses it to find a transaction's records.
+  auto ReadAll() -> std::vector<LogRecord>;
 
  private:
   void FlushThreadLoop();

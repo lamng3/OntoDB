@@ -30,12 +30,17 @@ class Transaction {
   auto GetState() const -> TransactionState { return state_.load(); }
   void SetState(TransactionState state);
   auto GetWriteSet() -> std::vector<WriteRecord>&;
+  // The LSN of this transaction's newest log record (PLAN 8.4), the prev_lsn
+  // of the next one it writes.
+  auto GetLastLsn() const -> lsn_t { return last_lsn_; }
+  void SetLastLsn(lsn_t lsn) { last_lsn_ = lsn; }
 
  private:
   txn_id_t id_;
   IsolationLevel isolation_;
   std::atomic<TransactionState> state_{TransactionState::kGrowing};
   std::vector<WriteRecord> write_set_;
+  lsn_t last_lsn_{INVALID_LSN};
 };
 
 }  // namespace ontodb

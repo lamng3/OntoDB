@@ -20,6 +20,14 @@ class TripleStore {
   virtual auto Delete(const Triple& triple) -> bool = 0;
   virtual auto Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleIterator> = 0;
 
+  // Whether the triple is stored. The default asks Scan with every position bound.
+  virtual auto Contains(const Triple& triple) -> bool {
+    auto scan = Scan(TriplePattern{triple.subject, triple.predicate, triple.object});
+    scan->Init();
+    Triple found;
+    return scan->Next(&found);
+  }
+
   // Inserts many triples and returns how many were new. The default inserts
   // them one at a time; a store may do better (the indexed store bulk-loads
   // its trees when they are empty).

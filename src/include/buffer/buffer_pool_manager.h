@@ -65,6 +65,12 @@ class BufferPoolManager {
   auto DeletePage(page_id_t page_id) -> bool;
   auto GetPinnedFrameCount() const -> size_t;
   auto GetPoolSize() const -> size_t { return pool_size_; }
+  // With a log manager installed: appends a page record holding the page's
+  // bytes after its pageLSN and sets the pageLSN to that record's LSN
+  // (PLAN 8.3). A write guard calls it, latch still held, when it releases a
+  // page it changed, so every change through a guard is logged before the
+  // page can be written. Without a log manager it does nothing.
+  void LogPageWrite(Page* page);
   auto DebugString() const -> std::string;
 
   auto FetchPageRead(page_id_t page_id) -> ReadPageGuard;
