@@ -54,6 +54,7 @@ write-ahead log. A restart is ARIES.
 - **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
 - **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
 - **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
+- **Agent memory.** OntoDB can hold an agent memory log ([Mneme](https://github.com/lamng3/mneme)) beside the ontology, as RDF, so provenance is a SPARQL query. See *Store agent memory* below.
 
 Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
 
@@ -117,6 +118,22 @@ INSERT DATA { <http://example.org/materials#Ceramic> <http://www.w3.org/2000/01/
 ```
 
 `\log` prints the last log records, `\checkpoint` writes a snapshot and empties the log, and `\verify` rebuilds the database from the files and compares. If the log ends in a torn or corrupt record, the shell keeps every transaction before it and says what it dropped; `ontodb --strict mydb` refuses to open instead.
+
+</details>
+
+<details>
+<summary><b>Store agent memory</b></summary>
+
+Mneme's log can be kept in an OntoDB database. Each record is a node with its `lsn`, `op`, and `agent`, and each memory has its `kind`, `key`, `source`, and one `derivedFrom` edge per premise, all under `urn:mneme:`. Mneme rebuilds its state by reading the records back; everything else is ordinary RDF. Which memories were built on a poisoned ontology version?
+
+```text
+SELECT ?m ?kind WHERE {
+  ?m <urn:mneme:derivedFrom> <urn:mneme:m:216423abbfb4d675> ;
+     <urn:mneme:kind> ?kind .
+}
+```
+
+The engine is `OntoDBEngine` in MOIRA (`moira.integrations.mneme`), and `examples/shared_memory_workflow.py` there runs it end to end: the ontology and the memory in OntoDB, both passing `\verify`.
 
 </details>
 
