@@ -210,6 +210,47 @@ which greedy is close to optimal, and a greedy order is easy to explain in
 step wins, can be ordered badly.
 \end{decision}
 
+\begin{decision}{\code{auto} picks the operator per join, and is the default}
+\dpart{Choice} With \code{\textbackslash set join auto}, the default, each join
+of the reordered chain chooses its own operator: a cross product stays a nested
+loop; otherwise an index nested-loop join when the estimated outer side is no
+larger than the inner pattern, and a hash join, built on the smaller inner
+pattern, when it is larger.
+\dpart{Alternatives} Cost every operator with a formula for each and take the
+cheapest; or keep nested loop as the default and let users force the rest.
+\dpart{Why} With rebinding and indexes, a probe per outer row is cheap while
+the outer side is small, and a hash table pays off once the outer side
+outgrows the pattern it would probe. On LUBM (\cref{tab:joinbench}) the
+optimizer's order matters far more than the operator, and \code{auto} is never
+worse than the best forced setting.
+\dpart{Cost} The rule compares row counts, not costs: it ignores that an index
+probe is a tree descent and a hash build is memory. It can be wrong near the
+crossover, where both choices cost about the same.
+\end{decision}
+
+\begin{table}[ht]
+\centering
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Query & Rows & written & nlj & inlj & hash & auto \\
+\midrule
+Q1 & 4 & 2.4 & 0.0 & 0.0 & 0.3 & 0.0 \\
+Q2 & 0 & $>$ 20 s & 0.2 & 0.1 & 2.6 & 0.1 \\
+Q3 & 6 & 8.1 & 0.1 & 0.0 & 0.9 & 0.0 \\
+Q4 & 0 & 0.0 & 0.0 & 0.0 & 6.7 & 0.0 \\
+Q14 & 5916 & 8.3 & 7.6 & 7.8 & 7.9 & 7.7 \\
+\bottomrule
+\end{tabular}
+\caption{Milliseconds per LUBM query on LUBM(1), with the whole store in the
+pool. ``written'' is the query's own order without the optimizer; the other
+columns use the optimizer's order with the named operator. Many queries return
+nothing because they need inference. Query 2, written with three unconnected
+type patterns first, does not finish in 20 seconds without reordering. Full
+table: \code{benchmarks/joins/results.md}.}
+\label{tab:joinbench}
+\end{table}
+
 \begin{status}
 Today the planner always joins in textual order with nested loop, and the
 nested loop rebinds its inner scan for every outer row (plan 4.1). The index
@@ -218,8 +259,9 @@ nested-loop join (plan 4.2) and hash join (plan 4.3) run, chosen with
 file under all three against the memory store. Statistics (plan 5.1), cardinality estimation (plan 5.2), and greedy join
 ordering (plan 5.3) run: a query written with \code{?s ?p ?o} first is
 reordered to start from its selective pattern, and \code{\textbackslash
-explain} shows the reordered plan. The automatic choice of join and
-\code{\textbackslash explain analyze} are plans 5.4 and 5.5.
+explain} shows the reordered plan. The automatic choice of join (plan 5.4)
+runs and is the default. A query can carry a deadline, which every scan checks;
+the joins benchmark uses it. \code{\textbackslash explain analyze} is plan 5.5.
 \end{status}
 
 \begin{checkyourself}
@@ -231,6 +273,7 @@ explain} shows the reordered plan. The automatic choice of join and
 \item A hash join builds on \code{?c a ub:Course} (2,000 rows) and probes with \code{?s ub:takesCourse ?c} (50,000 rows). What does it keep in memory, and how many hash lookups does it make? What changes if the sides are swapped?
 \item \code{?s a ub:Student . ?s ub:name ?n}: the first pattern matches 1,000 students and the second 1,000,000 triples. How many triples does the nested loop read with rebinding on an indexed store, and how many without it?
 \item Why does forcing a join method in the optimizer, and not in the executor, matter for \code{\textbackslash explain}?
+\item In \cref{tab:joinbench}, query 2 takes over 20 seconds in its written order and 0.1 ms after reordering. What does its written order do first, and why can no join operator rescue it?
 \end{checkyourself}
 
 \section*{Further reading}
