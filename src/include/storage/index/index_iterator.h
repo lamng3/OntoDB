@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <vector>
 
 #include "storage/index/triple_key.h"
 #include "storage/page/page_guard.h"
@@ -9,14 +10,16 @@ namespace ontodb {
 
 class BufferPoolManager;
 
-// Forward iterator over a leaf chain. It holds at most one leaf guard at a
-// time. Copying is not allowed; moving transfers the guard. Destroying the
-// iterator drops that guard, so the pinned-frame count returns to what it
-// was before the iterator was created. operator* on an end iterator is
-// undefined. ++ past the last key yields the end iterator. With an upper
-// bound, the iterator ends at the first key >= upper. Moving to the sibling
-// drops the current leaf before pinning the next, so at most one leaf is
-// pinned.
+// Forward iterator over a leaf chain. It holds no latch and no pin between
+// calls: on reaching a leaf it copies that leaf's remaining keys (stopping at
+// the upper bound), notes the right sibling's id, and releases the leaf; it
+// latches the sibling only when the copied keys run out. A scan that holds
+// nothing between rows cannot be part of a latch deadlock, however its caller
+// interleaves it with other scans, writes, or lock waits. Keys present when
+// their leaf was read are returned; a key inserted concurrently may or may
+// not be. Copying is not allowed; moving transfers the position. operator* on
+// an end iterator is undefined. ++ past the last key yields the end iterator.
+// With an upper bound, the iterator ends at the first key >= upper.
 class IndexIterator {
  public:
   IndexIterator() = default;
@@ -39,13 +42,16 @@ class IndexIterator {
   auto operator!=(const IndexIterator& other) const -> bool;
 
  private:
-  void Settle();  // skip exhausted leaves, then stop at the upper bound
+  void Take(ReadPageGuard leaf, int index);  // copy from `index` on, then release
+  void Settle();                             // read further leaves until a key or the end
   void Finish();
 
   BufferPoolManager* bpm_{nullptr};
-  ReadPageGuard guard_;
-  page_id_t leaf_{INVALID_PAGE_ID};
-  int index_{0};
+  std::vector<TripleKey> keys_;  // the current leaf's keys still to return
+  size_t pos_{0};
+  page_id_t leaf_{INVALID_PAGE_ID};  // the leaf keys_ came from
+  int first_index_{0};               // keys_[0]'s slot in that leaf
+  page_id_t next_leaf_{INVALID_PAGE_ID};
   bool end_{true};
   bool bounded_{false};
   TripleKey upper_{};

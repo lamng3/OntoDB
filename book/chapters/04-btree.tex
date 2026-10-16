@@ -152,7 +152,8 @@ OntoDB's index is a B+ tree. Its key is a 24-byte \code{TripleKey}
 (\cref{ch:rdf-indexing}), and the leaf stores the key itself: the triple
 \emph{is} the record, so there is no separate tuple id. Leaves link to their
 right sibling, the header page stores the root (or \code{INVALID\_PAGE\_ID} for
-an empty tree), and a scan holds at most one pinned leaf at a time.
+an empty tree), and a scan holds no pin and no latch between rows: it copies
+the rest of a leaf's keys and lets the leaf go (design decision below).
 
 An invariant checker (\code{CheckInvariants}) verifies sizes, key order, sibling
 links, and the separator rule, and the shell can draw the tree
@@ -254,6 +255,24 @@ PostgreSQL does for its B-tree indexes (90\% by default).
 pages for every scan, and loading is one sequential pass per level.
 \dpart{Cost} The first insert into a full leaf splits it at once, so a tree that
 is loaded and then edited heavily ends up looking like one built by inserts.
+\end{decision}
+
+\begin{decision}{A scan holds nothing between rows}
+\dpart{Choice} When the iterator reaches a leaf, it copies the leaf's remaining
+keys (up to the scan's upper bound), notes the right sibling's id, and releases
+the leaf. It latches the sibling only when those keys run out.
+\dpart{Alternatives} Keep the current leaf pinned and read-latched for as long
+as the iterator sits on it, as the first version did.
+\dpart{Why} A join keeps one scan open while it opens others on other trees,
+so held leaf latches were taken in both orders across trees, and Linux's
+ThreadSanitizer flagged the cycle. With a writer waiting between two such
+readers, that is a real deadlock, and a transaction waiting for a lock while
+its scan held a latch would be one the lock manager cannot see. A scan that
+holds nothing cannot take part in either.
+\dpart{Cost} Up to a page of keys copied per leaf. A key inserted into a leaf
+after the scan copied it is not returned, and the copied keys may include one
+deleted since; the scan sees each leaf as of the moment it read it, which is
+what an unlocked scan promises, and transactions add locks on top.
 \end{decision}
 
 \begin{decision}{A load arrives as one batch}

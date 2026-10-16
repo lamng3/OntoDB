@@ -82,7 +82,7 @@ The index is a B+ tree. Keys live in the leaves. Internal pages hold separators 
 
 **2.4 Insert.** Done. A duplicate returns false. After a leaf split, reach `BPlusTree::Insert::after_leaf_split`. After an internal split, including a new root, reach `BPlusTree::Insert::after_internal_split`. A random insert matches a sorted vector.
 
-**2.5 Scan.** Done. `Begin()` holds one leaf guard and follows sibling pointers. `Begin(key, prefix_len)` stops at `PrefixUpper`. On a 3-frame pool the pinned count stays at most 1 during the scan and is 0 after the iterator dies. Drop the current leaf before pinning the sibling.
+**2.5 Scan.** Done. `Begin()` holds one leaf guard and follows sibling pointers. `Begin(key, prefix_len)` stops at `PrefixUpper`. On a 3-frame pool the pinned count stays at most 1 during the scan and is 0 after the iterator dies. Drop the current leaf before pinning the sibling. OntoDB's iterator copies a leaf's remaining keys and holds nothing between rows.
 
 **2.6 Bulk load.** Done. Build a packed tree from sorted unique keys. This is not a loop of `Insert`.
 
