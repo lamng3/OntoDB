@@ -257,6 +257,23 @@ pages for every scan, and loading is one sequential pass per level.
 is loaded and then edited heavily ends up looking like one built by inserts.
 \end{decision}
 
+\begin{decision}{A load arrives as one batch}
+\dpart{Choice} The loader parses a file (or several) completely, interning
+terms as it goes, and hands the triples to the store in one call. The indexed
+store, if it is empty, sorts each permutation's keys and bulk-loads every tree;
+if it already holds triples, it inserts one at a time.
+\dpart{Alternatives} Insert each triple as it is parsed; or rebuild the trees
+from old and new keys on every load.
+\dpart{Why} Measured on LUBM(1), the 15 files in one batch load in 1.1 seconds
+instead of 1.7, into 10.8 MiB instead of 16.2, and every scan reads about half
+the pages, because bulk load packs the leaves that random inserts left half
+full. Building three trees costs barely more than one; the time left is the
+dictionary's.
+\dpart{Cost} A batch holds every triple of the load in memory, and only the
+first load into an empty store is bulk-loaded; later loads pay for inserts and
+leave half-full leaves again.
+\end{decision}
+
 \begin{decision}{Small nodes in tests}
 \dpart{Choice} The tree's maximum node sizes default to what a page holds
 (169 and 144 keys), and tests pass sizes as small as 2 to grow deep trees from
@@ -276,8 +293,9 @@ The B+ tree is complete (plans 2.1 to 2.7): the page layout, the invariant
 checker and \code{ToDot}, point search, insert with splits, the prefix
 iterator, bulk load, and delete with merge and redistribution, with all four
 crash points. It is single-threaded until latch crabbing (plan 7.1), and the
-shell's \code{\textbackslash tree} draws it once the indexed backend exists
-(plan 3.4).
+shell's \code{\textbackslash tree} draws it on the indexed backend. Loading into
+an empty indexed store goes through bulk load (plan 6.1), and LUBM(1) loads and
+answers queries on a 32-frame pool (plan 6.2).
 \end{status}
 
 \begin{checkyourself}

@@ -27,8 +27,11 @@ TEST(RdfLoader, RejectsUnknownExtension) {
                std::runtime_error);
 }
 
-// The store's exception must cross raptor's C parser intact: caught in the
-// callback, the parse aborted, raptor freed, then rethrown with its type.
+// A store failure reaches the caller with its type. The loader parses the
+// whole file first (terms go to the dictionary as they are read) and then
+// hands the triples to the store in one batch; an exception thrown inside
+// raptor's callback (a dictionary failure) is caught there, the parse is
+// aborted, and it is rethrown after raptor is freed.
 TEST(RdfLoader, StoreFailureAbortsTheParseAndKeepsItsType) {
   class FailingStore : public TripleStore {
    public:

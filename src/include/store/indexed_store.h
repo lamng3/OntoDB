@@ -35,6 +35,10 @@ class IndexedStore : public TripleStore {
   auto Insert(const Triple& triple) -> bool override;
   auto Delete(const Triple& triple) -> bool override;
   auto Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleIterator> override;
+  // Into an empty store: drop duplicates, sort each permutation's keys, and
+  // BPlusTree::BulkLoad every tree, so leaves are packed and written once in
+  // order. Into a store that has triples: one Insert at a time.
+  auto InsertBatch(const std::vector<Triple>& triples) -> size_t override;
 
   static auto DefaultPermutations() -> std::vector<std::string>;
   auto IndexNames() const -> std::vector<std::string>;

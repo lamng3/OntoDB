@@ -6,6 +6,7 @@
 #include <cstring>
 #include <exception>
 #include <stdexcept>
+#include <vector>
 
 #include "common/term_codec.h"
 
@@ -14,11 +15,11 @@ namespace {
 
 struct LoadContext {
   Dictionary* dictionary{nullptr};
-  TripleStore* store{nullptr};
   raptor_parser* parser{nullptr};
   uint64_t triples{0};
+  std::vector<Triple>* batch{nullptr};  // handed to the store in one InsertBatch
   std::string error;
-  std::exception_ptr failure;  // thrown by the dictionary or the store
+  std::exception_ptr failure;  // thrown by the dictionary
 };
 
 auto SyntaxFor(const std::filesystem::path& path) -> const char* {
@@ -84,7 +85,7 @@ void OnStatement(void* user, raptor_statement* statement) {
     triple.subject = ctx->dictionary->Insert(TermString(statement->subject));
     triple.predicate = ctx->dictionary->Insert(TermString(statement->predicate));
     triple.object = ctx->dictionary->Insert(TermString(statement->object));
-    ctx->store->Insert(triple);
+    ctx->batch->push_back(triple);
     ctx->triples++;
   } catch (...) {
     ctx->failure = std::current_exception();
@@ -108,6 +109,25 @@ void OnLog(void* user, raptor_log_message* message) {
 
 auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
                      TripleStore& store) const -> LoadStats {
+  return LoadFiles({path}, dictionary, store);
+}
+
+auto RdfLoader::LoadFiles(const std::vector<std::filesystem::path>& paths, Dictionary& dictionary,
+                          TripleStore& store) const -> LoadStats {
+  const auto started = std::chrono::steady_clock::now();
+  std::vector<Triple> batch;
+  LoadStats stats;
+  for (const auto& path : paths) {
+    stats.triples += Parse(path, dictionary, &batch);
+  }
+  store.InsertBatch(batch);
+  stats.milliseconds =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+  return stats;
+}
+
+auto RdfLoader::Parse(const std::filesystem::path& path, Dictionary& dictionary,
+                      std::vector<Triple>* batch) const -> uint64_t {
   const char* syntax = SyntaxFor(path);
   if (syntax == nullptr) {
     throw std::runtime_error("unsupported RDF extension for " + path.string() +
@@ -119,7 +139,7 @@ auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
 
   LoadContext ctx;
   ctx.dictionary = &dictionary;
-  ctx.store = &store;
+  ctx.batch = batch;
 
   raptor_world* world = raptor_new_world();
   if (world == nullptr || raptor_world_open(world) != 0) {
@@ -143,9 +163,7 @@ auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
   raptor_uri* uri = raptor_new_uri(world, uri_string);
   raptor_uri* base = raptor_uri_copy(uri);
 
-  const auto started = std::chrono::steady_clock::now();
   const int rc = raptor_parser_parse_file(parser, uri, base);
-  const auto finished = std::chrono::steady_clock::now();
 
   raptor_free_uri(base);
   raptor_free_uri(uri);
@@ -159,11 +177,7 @@ auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
   if (rc != 0 || !ctx.error.empty()) {
     throw std::runtime_error(ctx.error.empty() ? "RDF parse failed" : ctx.error);
   }
-
-  LoadStats stats;
-  stats.triples = ctx.triples;
-  stats.milliseconds = std::chrono::duration<double, std::milli>(finished - started).count();
-  return stats;
+  return ctx.triples;
 }
 
 }  // namespace ontodb

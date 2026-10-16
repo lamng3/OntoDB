@@ -35,13 +35,15 @@ TEST(LubmQueries, ParseAll) {
   }
 }
 
-TEST(P6_2_Lubm, DISABLED_IndexedUnderSmallPool) {
+TEST(P6_2_Lubm, IndexedUnderSmallPool) {
   const auto owl = test::SourceDir() / "data" / "downloads" / "lubm" / "University0_0.owl";
   test::DiskEnv env(32, 2);
   Catalog catalog(&env.bpm);
   DiskDictionary dictionary(&env.bpm, &catalog);
   IndexedStore store(&catalog, &env.bpm, &dictionary);
-  ASSERT_TRUE(std::filesystem::exists(owl)) << "run scripts/fetch-data lubm";
+  if (!std::filesystem::exists(owl)) {
+    GTEST_SKIP() << "run scripts/fetch-data lubm";
+  }
   RdfLoader().Load(owl, dictionary, store);
   const auto dir = test::SourceDir() / "data" / "lubm" / "queries";
   for (const char* name : {"q01.sparql", "q06.sparql", "q14.sparql"}) {
@@ -53,7 +55,14 @@ TEST(P6_2_Lubm, DISABLED_IndexedUnderSmallPool) {
                         &trace, nullptr);
     ExecutionEngine engine(&ctx);
     const auto result = engine.Execute(Binder(dictionary).Bind(Parser(text).Parse()));
-    EXPECT_GT(result.rows.size(), 0u) << name;
+    // q06 asks for ub:Student, which the data never states: only its
+    // subclasses are. OntoDB has no reasoner, so that answer is empty, as
+    // PLAN 6.2 expects for queries that need inference.
+    if (std::string(name) == "q06.sparql") {
+      EXPECT_EQ(result.rows.size(), 0u) << name;
+    } else {
+      EXPECT_GT(result.rows.size(), 0u) << name;
+    }
   }
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }

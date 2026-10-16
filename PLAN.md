@@ -32,8 +32,8 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | RDF storage | `scripts/check storage` | Term heap, disk dictionary, catalog, SPO/POS/OSP. Done. |
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. Done. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. Done. |
-| Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). This is the next feature. |
-| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. |
+| Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). Done. |
+| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. This is the next feature. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
 | Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
 
@@ -134,9 +134,9 @@ The memory nested-loop join already returns the right rows. These slices change 
 
 ## Bulk load
 
-**6.1 Loader.** On the indexed backend, intern terms, encode, sort each permutation, and `BulkLoad`. Pins are zero at the end.
+**6.1 Loader.** Done. On the indexed backend, intern terms, encode, sort each permutation, and `BulkLoad`. Pins are zero at the end. `RdfLoader::LoadFiles` batches several files; an empty store bulk-loads, a non-empty one inserts.
 
-**6.2 LUBM(1).** `scripts/fetch-data lubm` writes about 100k triples. Load them through the indexed path with a small pool. Queries that need inference return a subset. That is expected. Record load time, page I/O, and per-query latency in `benchmarks/indexing/results.md` when that comparison starts. Query 7 in `data/lubm/queries/q07.sparql` is the repaired form.
+**6.2 LUBM(1).** Done. `scripts/fetch-data lubm` writes about 100k triples. Load them through the indexed path with a small pool. Queries that need inference return a subset. That is expected. The test expects `q06` (`?X rdf:type ub:Student`, stated only through subclasses) to be empty, and skips when the data has not been fetched. Record load time, page I/O, and per-query latency in `benchmarks/indexing/results.md` when that comparison starts. Query 7 in `data/lubm/queries/q07.sparql` is the repaired form.
 
 ## Concurrency
 
