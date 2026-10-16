@@ -156,9 +156,9 @@ prints the decoded log, \code{\textbackslash verify} checks the files, and
 Seventeen scenario tests cover the cases above, and they pass under
 AddressSanitizer, UndefinedBehaviorSanitizer, and ThreadSanitizer.
 
-When the indexed store arrives, the same log records, log manager, and group
-commit carry over; what changes is that pages can be stolen, so recovery gains
-undo, pageLSNs, and the three passes of \cref{ch:aries}.
+The page store uses the same log records, log manager, and group commit. What
+changes there is that pages can be stolen, so recovery gains undo, pageLSNs,
+page images, and the three passes of \cref{ch:aries}.
 \end{ontodb}
 
 \begin{decision}{Terms replay whatever their transaction did}

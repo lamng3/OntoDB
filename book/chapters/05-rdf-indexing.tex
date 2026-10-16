@@ -311,8 +311,9 @@ statements run one at a time.
 \dpart{Alternatives} Make the page store the database behind
 \code{ontodb <dir>}.
 \dpart{Why} A persistent page store needs page-level recovery (plans 8.3 to
-8.7) to survive a crash; until then, persistent databases use the memory store
-and its logical log. A temporary file lets every query run on both backends
+8.7) to survive a crash. That recovery now runs in the tests and the crash
+harness, but the shell has not been moved onto it, so persistent databases
+still use the memory store and its logical log. A temporary file lets every query run on both backends
 today, which is what the differential test does, and the tree is
 single-threaded until latch crabbing (plan 7.1).
 \dpart{Cost} Indexed data disappears when the shell exits, ids differ between
