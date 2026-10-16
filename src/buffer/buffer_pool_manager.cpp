@@ -167,6 +167,16 @@ void BufferPoolManager::LogPageWrite(Page* page) {
   page->SetLSN(log_manager_->Append(&record));
 }
 
+auto BufferPoolManager::BeginGroup() -> lsn_t {
+  return log_manager_ == nullptr ? INVALID_LSN : log_manager_->BeginGroup();
+}
+
+void BufferPoolManager::EndGroup(lsn_t token) {
+  if (log_manager_ != nullptr) {
+    log_manager_->EndGroup(token);
+  }
+}
+
 auto BufferPoolManager::DebugString() const -> std::string {
   std::lock_guard<std::mutex> guard(mu_);
   size_t pinned = 0;
@@ -224,7 +234,7 @@ auto BufferPoolManager::NullReason(page_id_t page_id) const -> std::string {
   if (page_id < 0 || deleted_.count(page_id) != 0) {
     return "the page was deleted or never existed";
   }
-  return "every frame is pinned";
+  return "every frame is pinned or held by an open page group";
 }
 
 // A free frame first; otherwise evict, writing the victim back if dirty.
@@ -234,8 +244,25 @@ auto BufferPoolManager::TakeFrame(frame_id_t* frame_id) -> bool {
     free_list_.pop_front();
     return true;
   }
+  // A dirty page whose record an open page group holds back cannot be
+  // written yet; set it aside and ask the replacer again.
+  const lsn_t flushable = log_manager_ == nullptr ? 0 : log_manager_->FlushableLsn();
+  std::vector<frame_id_t> held;
   frame_id_t victim = INVALID_FRAME_ID;
-  if (!replacer_.Evict(&victim)) {
+  bool found = false;
+  while (replacer_.Evict(&victim)) {
+    const Page& candidate = frames_[victim];
+    if (log_manager_ == nullptr || !candidate.IsDirty() || candidate.GetLSN() <= flushable) {
+      found = true;
+      break;
+    }
+    held.push_back(victim);
+  }
+  for (const frame_id_t frame : held) {
+    replacer_.RecordAccess(frame);
+    replacer_.SetEvictable(frame, true);
+  }
+  if (!found) {
     return false;
   }
   Page& page = frames_[victim];

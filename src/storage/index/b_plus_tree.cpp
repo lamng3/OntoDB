@@ -21,6 +21,29 @@ constexpr char kAfterInternalSplit[] = "BPlusTree::Insert::after_internal_split"
 constexpr char kAfterRedistribute[] = "BPlusTree::Remove::after_redistribute";
 constexpr char kAfterMerge[] = "BPlusTree::Remove::after_merge";
 
+// No real tree is this deep: every node but the root has at least two
+// children. A descent that goes further is following a cycle of stale or
+// zeroed pages, and stops with an error instead of spinning.
+constexpr int kMaxDepth = 64;
+
+void CheckDepth(const std::string& name, int depth) {
+  if (depth > kMaxDepth) {
+    throw StorageException("B+ tree " + name + " is corrupt: a descent passed " +
+                           std::to_string(kMaxDepth) + " levels");
+  }
+}
+
+// A child or sibling id naming a page this operation already holds would
+// wait on its own latch forever; only a corrupt tree points back that way.
+void CheckNotHeld(const std::string& name, const std::vector<WritePageGuard>& path, page_id_t id) {
+  for (const auto& guard : path) {
+    if (guard.GetPageId() == id) {
+      throw StorageException("B+ tree " + name + " is corrupt: page " + std::to_string(id) +
+                             " points back to itself or an ancestor");
+    }
+  }
+}
+
 auto Less(const TripleKey& a, const TripleKey& b) -> bool {
   return a.Compare(b) < 0;
 }
@@ -157,6 +180,7 @@ auto BPlusTree::GetValue(const TripleKey& key) const -> bool {
 // soon as the page just latched is safe, meaning it cannot split. What is
 // still latched when the leaf is reached is exactly what a split can touch.
 auto BPlusTree::Insert(const TripleKey& key) -> bool {
+  const PageGroup group(bpm_);  // declared first, so it ends after every guard
   WritePageGuard header = bpm_->FetchPageWrite(header_page_id_);
   const page_id_t root = BPlusTreeHeaderPage(const_cast<Page*>(header.View())).GetRootPageId();
   if (root == INVALID_PAGE_ID) {
@@ -172,7 +196,9 @@ auto BPlusTree::Insert(const TripleKey& key) -> bool {
     return true;
   }
   std::vector<WritePageGuard> path;  // latched pages, top first
-  for (page_id_t id = root;;) {
+  for (page_id_t id = root, depth = 0;; depth++) {
+    CheckDepth(name_, depth);
+    CheckNotHeld(name_, path, id);
     WritePageGuard guard = bpm_->FetchPageWrite(id);
     const BPlusTreePage node = PeekNode(guard);
     if (node.GetSize() < (node.IsLeaf() ? leaf_max_ : internal_max_)) {
@@ -287,13 +313,16 @@ auto BPlusTree::Insert(const TripleKey& key) -> bool {
 // empty page whose sibling link still points on, rather than freed: an
 // iterator may already hold its id, and must find a page it can step through.
 auto BPlusTree::Remove(const TripleKey& key) -> bool {
+  const PageGroup group(bpm_);
   WritePageGuard header = bpm_->FetchPageWrite(header_page_id_);
   const page_id_t root = BPlusTreeHeaderPage(const_cast<Page*>(header.View())).GetRootPageId();
   if (root == INVALID_PAGE_ID) {
     return false;
   }
   std::vector<WritePageGuard> path;
-  for (page_id_t id = root;;) {
+  for (page_id_t id = root, depth = 0;; depth++) {
+    CheckDepth(name_, depth);
+    CheckNotHeld(name_, path, id);
     WritePageGuard guard = bpm_->FetchPageWrite(id);
     const BPlusTreePage node = PeekNode(guard);
     const int minimum = id == root ? 1 : (node.IsLeaf() ? leaf_max_ : internal_max_) / 2;
@@ -348,6 +377,7 @@ auto BPlusTree::Remove(const TripleKey& key) -> bool {
     // Siblings are always latched left to right. The parent is latched, so no
     // writer can reach either page while the node is briefly released; only
     // readers can, and they change nothing.
+    CheckNotHeld(name_, path, pe.children[sibling_is_left ? idx - 1 : idx + 1]);
     WritePageGuard sibling_guard;
     if (sibling_is_left) {
       node_guard.Drop();
@@ -464,7 +494,8 @@ auto BPlusTree::LeafFor(const TripleKey* key) const -> ReadPageGuard {
   }
   ReadPageGuard guard = bpm_->FetchPageRead(root);
   header.Drop();
-  while (!ReadNode(guard).IsLeaf()) {
+  for (int depth = 1; !ReadNode(guard).IsLeaf(); depth++) {
+    CheckDepth(name_, depth);
     const auto node = ReadInternal(guard);
     const page_id_t child = key == nullptr ? node.ValueAt(0) : ChildFor(node, *key);
     ReadPageGuard next = bpm_->FetchPageRead(child);
@@ -679,6 +710,9 @@ auto BPlusTree::CheckNode(
     int depth, bool is_root, int* leaf_depth,
     std::vector<std::pair<page_id_t, page_id_t>>* leaves) const -> std::optional<std::string> {
   const std::string where = "page " + std::to_string(page_id) + ": ";
+  if (depth > kMaxDepth) {
+    return where + "deeper than " + std::to_string(kMaxDepth) + " levels (a cycle?)";
+  }
   auto in_range = [&](const TripleKey& key) {
     return (!lower || lower->Compare(key) <= 0) && (!upper || key.Compare(*upper) < 0);
   };

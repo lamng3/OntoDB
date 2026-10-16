@@ -8,6 +8,7 @@
 #include "recovery/log_manager.h"
 #include "recovery/log_record.h"
 #include "storage/disk/disk_manager.h"
+#include "store/triple_store.h"
 
 namespace ontodb {
 
@@ -29,7 +30,8 @@ namespace ontodb {
 // TransactionManager::UndoChain for each loser against the indexed store the
 // catalog names (nothing to undo if it has none), so its page changes and
 // CLRs are logged and a crash during undo is safe, then writes an abort
-// record per loser.
+// record per loser. Undo(store) undoes into a store the caller built, for one
+// opened with options the catalog does not record (a test's node size).
 class LogRecovery {
  public:
   LogRecovery(LogManager* log, BufferPoolManager* bpm, DiskManager* disk, Catalog* catalog);
@@ -39,6 +41,7 @@ class LogRecovery {
   void Analyze();
   void Redo();
   void Undo();
+  void Undo(TripleStore* store);
   auto Summary() const -> std::string;
   auto WinnerTxns() const -> std::vector<txn_id_t>;
   auto LoserTxns() const -> std::vector<txn_id_t>;

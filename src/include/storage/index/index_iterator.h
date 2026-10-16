@@ -55,6 +55,8 @@ class IndexIterator {
   bool end_{true};
   bool bounded_{false};
   TripleKey upper_{};
+  TripleKey last_{};  // the last key of the previous non-empty leaf
+  bool has_last_{false};
 };
 
 }  // namespace ontodb

@@ -144,6 +144,10 @@ void LogRecovery::Undo() {
   } else {
     store = std::make_unique<NoStore>();
   }
+  Undo(store.get());
+}
+
+void LogRecovery::Undo(TripleStore* store) {
   size_t undone = 0;
   for (const txn_id_t txn : losers_) {
     std::vector<LogRecord> chain;
@@ -157,7 +161,7 @@ void LogRecovery::Undo() {
         chain.push_back(r);
       }
     }
-    undone += TransactionManager::UndoChain(txn, chain, store.get(), log_, last);
+    undone += TransactionManager::UndoChain(txn, chain, store, log_, last);
     auto end = LogRecord::Abort(txn);
     log_->Append(&end);
   }

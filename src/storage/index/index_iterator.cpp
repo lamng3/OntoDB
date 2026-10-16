@@ -1,8 +1,10 @@
 #include "storage/index/index_iterator.h"
 
+#include <unordered_set>
 #include <utility>
 
 #include "buffer/buffer_pool_manager.h"
+#include "common/exception.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
 
 namespace ontodb {
@@ -96,13 +98,29 @@ void IndexIterator::Take(ReadPageGuard leaf, int index) {
   }
 }  // the latch and the pin are released here
 
+// Keys only grow along a sound leaf chain, and a run of empty leaves never
+// comes back to itself; a chain that breaks either rule is corrupt, and
+// following it could loop forever, so it stops with an error.
 void IndexIterator::Settle() {
+  std::unordered_set<page_id_t> empty_run;
   while (!end_ && pos_ >= keys_.size()) {
     if (next_leaf_ == INVALID_PAGE_ID) {
       Finish();
       return;
     }
+    if (!keys_.empty()) {
+      last_ = keys_.back();
+      has_last_ = true;
+    }
+    if (!empty_run.insert(next_leaf_).second) {
+      throw StorageException("index leaf chain is corrupt: it cycles through page " +
+                             std::to_string(next_leaf_));
+    }
     Take(bpm_->FetchPageRead(next_leaf_), 0);
+    if (!keys_.empty() && has_last_ && keys_.front().Compare(last_) <= 0) {
+      throw StorageException("index leaf chain is corrupt: keys go backward at page " +
+                             std::to_string(leaf_));
+    }
   }
 }
 

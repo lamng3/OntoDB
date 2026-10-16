@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,14 +25,20 @@ namespace ontodb {
 // "ops". On a catalog with none of them, the store creates `permutations`
 // (DefaultPermutations() unless given) and records each tree's header page in
 // the catalog; on a catalog that has some, it uses exactly those. Scan uses
-// the index with the longest bound prefix, the first listed on a tie. If an
-// index throws part way through Insert or Delete, the indexes already changed
-// are put back before the exception propagates. Single-threaded until latch
-// crabbing (PLAN 7.1).
+// the index with the longest bound prefix, the first listed on a tie. Insert
+// and Delete change every index that disagrees and return whether any did, so
+// repeating one after a crash part way through it repairs the indexes. If an
+// index throws part way through, the indexes already changed are put back
+// before the exception propagates. Single-threaded until latch
+// crabbing (PLAN 7.1). node_max, when positive, caps every tree node at that
+// many keys, so tests grow deep trees, and split and merge often, from few
+// triples. CheckInvariants checks every tree and names the first broken one.
 class IndexedStore : public TripleStore {
  public:
   IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary* dictionary,
-               const std::vector<std::string>& permutations = DefaultPermutations());
+               const std::vector<std::string>& permutations = DefaultPermutations(),
+               int node_max = 0);
+  auto CheckInvariants() const -> std::optional<std::string>;
   auto Insert(const Triple& triple) -> bool override;
   auto Delete(const Triple& triple) -> bool override;
   auto Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleIterator> override;
@@ -53,6 +60,7 @@ class IndexedStore : public TripleStore {
   };
 
   auto KeyOf(const Index& index, const Triple& triple) const -> TripleKey;
+  auto Apply(const Triple& triple, bool insert) -> bool;
 
   Catalog* catalog_;
   BufferPoolManager* bpm_;

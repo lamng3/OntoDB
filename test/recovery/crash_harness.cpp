@@ -8,9 +8,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -19,6 +21,7 @@
 
 #include "buffer/buffer_pool_manager.h"
 #include "catalog/catalog.h"
+#include "common/crash_point.h"
 #include "common/types.h"
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
@@ -63,19 +66,32 @@ auto MakeWorkload(uint32_t seed) -> std::vector<Op> {
   std::uniform_int_distribution<int> term(1, 12);
   std::uniform_int_distribution<int> coin(0, 99);
   std::vector<Op> ops;
-  for (int txn = 1; txn <= 6; txn++) {
+  std::vector<Triple> inserted;
+  for (int txn = 1; txn <= 10; txn++) {
     ops.push_back(Op{Op::Type::kBegin, txn, {}});
-    const int n = 1 + static_cast<int>(rng() % 3);
+    const int n = 1 + static_cast<int>(rng() % 6);
     for (int i = 0; i < n; i++) {
+      const bool insert = inserted.empty() || coin(rng) < 70;
       Triple triple{static_cast<term_id_t>(term(rng)), static_cast<term_id_t>(term(rng)),
                     static_cast<term_id_t>(term(rng))};
-      const bool insert = coin(rng) < 80;
+      if (insert) {
+        inserted.push_back(triple);
+      } else {  // mostly delete something that was inserted, so pages merge
+        triple = inserted[rng() % inserted.size()];
+      }
       ops.push_back(Op{insert ? Op::Type::kInsert : Op::Type::kDelete, txn, triple});
     }
     const bool commit = txn == 1 || coin(rng) < 70;
     ops.push_back(Op{commit ? Op::Type::kCommit : Op::Type::kAbort, txn, {}});
   }
   return ops;
+}
+
+// Which crash point reach kills the child: 0 for none (the parent kills it
+// between operations), otherwise the n-th, counting every named crash point.
+auto CrashReach(uint32_t seed) -> int {
+  std::mt19937 rng(seed ^ 0x9e3779b9U);
+  return seed % 3 == 0 ? 0 : 1 + static_cast<int>(rng() % 120);
 }
 
 auto Oracle(const std::vector<Op>& ops, size_t crash_after) -> std::set<Triple> {
@@ -205,25 +221,30 @@ class WalFakeStore {
   std::map<int, std::vector<std::pair<bool, Triple>>> active_;
 };
 
-// The real store (PLAN 8.7): B+ tree indexes on a 4-frame pool, so pages are
-// stolen, with every page change logged as an image and every triple change
-// as an update record. Opening a directory that already has a log runs ARIES
-// first: a torn final record is cut off, then analysis, redo, the catalog,
-// and undo.
+// The real store (PLAN 8.7): three B+ tree indexes with at most four keys a
+// node, so a few dozen triples split and merge pages, on a 16-frame pool, so
+// pages are stolen. Every page change is logged as an image, every triple
+// change as an update record. Opening a directory that already has a log runs
+// ARIES first: a torn final record is cut off, then analysis, redo, the
+// catalog, and undo.
 class RealStore {
  public:
+  static constexpr int kNodeMax = 4;
+
   explicit RealStore(const std::filesystem::path& dir)
-      : disk_(PrepareLog(dir) / "db"), log_((dir / "wal").string()), pool_(4, &disk_, 2, &log_) {
+      : disk_(PrepareLog(dir) / "db"), log_((dir / "wal").string()), pool_(16, &disk_, 2, &log_) {
     log_.StartFlushThread();
     LogRecovery recovery(&log_, &pool_, &disk_, nullptr);
     recovery.Analyze();
     recovery.Redo();
     catalog_ = std::make_unique<Catalog>(&pool_);
-    recovery.SetCatalog(catalog_.get());
-    recovery.Undo();
-    store_ = std::make_unique<IndexedStore>(catalog_.get(), &pool_, nullptr);
+    store_ = std::make_unique<IndexedStore>(catalog_.get(), &pool_, nullptr,
+                                            IndexedStore::DefaultPermutations(), kNodeMax);
+    recovery.Undo(store_.get());
     txns_ = std::make_unique<TransactionManager>(&locks_, store_.get(), &log_);
   }
+
+  auto Log() -> LogManager* { return &log_; }
 
   void Begin(int txn) { open_[txn] = txns_->Begin(IsolationLevel::kReadCommitted); }
 
@@ -235,15 +256,42 @@ class RealStore {
 
   void Abort(int txn) { txns_->Abort(open_.at(txn)); }
 
-  auto Contents() -> std::vector<Triple> {
-    std::vector<Triple> triples;
-    auto scan = store_->Scan({});
-    scan->Init();
-    Triple triple;
-    while (scan->Next(&triple)) {
-      triples.push_back(triple);
+  auto Contents() -> std::vector<Triple> { return Collect({}); }
+
+  // What a lost or half-applied page change would break even when the SPO
+  // scan looks right: a tree's shape, a point lookup, and the other two
+  // indexes holding the same triples.
+  auto Problems() -> std::vector<std::string> {
+    std::vector<std::string> problems;
+    if (const auto broken = store_->CheckInvariants(); broken.has_value()) {
+      problems.push_back("broken tree: " + *broken);
     }
-    return triples;
+    const auto all = Contents();
+    const std::set<Triple> spo(all.begin(), all.end());
+    for (const auto& triple : spo) {
+      if (!store_->Contains(triple)) {
+        problems.push_back("lookup misses " + FormatTriple(triple));
+      }
+    }
+    std::set<Triple> pos;
+    std::set<Triple> osp;
+    for (term_id_t id = 1; id <= 12; id++) {
+      for (const auto& t : Collect({std::nullopt, id, std::nullopt})) {
+        pos.insert(t);
+      }
+      for (const auto& t : Collect({std::nullopt, std::nullopt, id})) {
+        osp.insert(t);
+      }
+    }
+    if (pos != spo) {
+      problems.push_back("POS holds " + std::to_string(pos.size()) + " triples, SPO " +
+                         std::to_string(spo.size()));
+    }
+    if (osp != spo) {
+      problems.push_back("OSP holds " + std::to_string(osp.size()) + " triples, SPO " +
+                         std::to_string(spo.size()));
+    }
+    return problems;
   }
 
  private:
@@ -259,6 +307,17 @@ class RealStore {
       }
     }
     return dir;
+  }
+
+  auto Collect(const TriplePattern& pattern) -> std::vector<Triple> {
+    std::vector<Triple> triples;
+    auto scan = store_->Scan(pattern);
+    scan->Init();
+    Triple triple;
+    while (scan->Next(&triple)) {
+      triples.push_back(triple);
+    }
+    return triples;
   }
 
   void Write(int txn, bool insert, const Triple& triple) {
@@ -300,9 +359,9 @@ void Apply(Store* store, const Op& op) {
   }
 }
 
-auto Diff(const std::set<Triple>& expect, const std::vector<Triple>& got) -> CrashReport {
+auto Diff(const std::set<Triple>& expect, const std::vector<Triple>& got,
+          std::vector<std::string> problems = {}) -> CrashReport {
   std::set<Triple> actual(got.begin(), got.end());
-  std::vector<std::string> problems;
   for (const auto& triple : expect) {
     if (!actual.contains(triple)) {
       problems.push_back("missing " + FormatTriple(triple));
@@ -369,7 +428,21 @@ auto CrashChildMain(int argc, char** argv) -> int {
     return 2;
   }
   RealStore store(argv[2]);
-  const auto ops = MakeWorkload(static_cast<uint32_t>(std::stoul(argv[3])));
+  const auto seed = static_cast<uint32_t>(std::stoul(argv[3]));
+  const auto ops = MakeWorkload(seed);
+  // Die in the middle of an operation: inside a split or a merge, or between
+  // a log flush and a page write. Half the time flush first whatever the log
+  // may flush, so a half-finished change would reach the file if it could.
+  const int reach = CrashReach(seed);
+  int reached = 0;
+  CrashPoint::SetProbe([&](std::string_view) {
+    if (++reached == reach) {
+      if (seed % 2 == 0) {
+        store.Log()->FlushAvailable();
+      }
+      std::_Exit(9);
+    }
+  });
   std::string line;
   size_t index = 0;
   while (std::getline(std::cin, line)) {
@@ -384,6 +457,7 @@ auto CrashChildMain(int argc, char** argv) -> int {
 }
 
 auto RunForked(uint32_t seed) -> CrashReport {
+  signal(SIGPIPE, SIG_IGN);  // the child may die mid-operation, closing its pipe
   TempDir dir;
   const auto ops = MakeWorkload(seed);
   const size_t crash_after = std::max<size_t>(3, ops.size() * 2 / 3);
@@ -445,8 +519,12 @@ auto RunForked(uint32_t seed) -> CrashReport {
   int status = 0;
   waitpid(pid, &status, 0);
   close(out_pipe[0]);
-  RealStore store(dir.path());
-  return Diff(Oracle(ops, finished), store.Contents());
+  try {
+    RealStore store(dir.path());
+    return Diff(Oracle(ops, finished), store.Contents(), store.Problems());
+  } catch (const std::exception& ex) {
+    return {false, std::string("recovery or the check threw: ") + ex.what()};
+  }
 }
 
 }  // namespace ontodb::test
