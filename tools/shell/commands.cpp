@@ -196,7 +196,7 @@ auto BuildCommands() -> std::vector<ShellCommand> {
       {"\\explain",
        "\\explain <q>",
        "print the plan",
-       {"\\explain analyze <q>      estimated vs actual rows (PLAN 5.5)"},
+       {"\\explain analyze <q>      estimated vs actual rows per node"},
        Explain},
       {"\\stats",
        "\\stats",

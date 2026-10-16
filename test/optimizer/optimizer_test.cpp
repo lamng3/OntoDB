@@ -264,7 +264,7 @@ TEST(P5_4_JoinAlgorithm, AutoProbesSmallOuterHashesLargeOuter) {
   EXPECT_EQ(CollectRows(plan.get(), &ctx).size(), 50u);
 }
 
-TEST(P5_5_ExplainAnalyze, DISABLED_PrintsEstimateAndActual) {
+TEST(P5_5_ExplainAnalyze, PrintsEstimateAndActual) {
   Database db;
   db.Load(test::DataFile("tiny.ttl").string());
   const auto text = db.ExplainAnalyze(
