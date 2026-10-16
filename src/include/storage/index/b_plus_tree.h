@@ -29,14 +29,22 @@ namespace ontodb {
 // CheckInvariants returns nullopt when the tree is well formed, otherwise a
 // description of the first broken invariant. ToString is a human dump.
 // ToDot is a Graphviz digraph. BulkLoad builds a packed tree from keys that
-// are already sorted and unique. The tree is single-threaded until PLAN 7.1.
+// are already sorted and unique.
 //
 // Node sizes default to what a page holds (169 keys per leaf, 144 per
 // internal page); tests may pass smaller ones to grow deep trees from few
 // keys. Every node but the root keeps at least half its maximum: a leaf at
 // least leaf_max / 2 keys, an internal page at least internal_max / 2 keys.
-// Operations remember the path from the root as page ids and hold at most
-// three pages pinned at once, so the tree runs on a pool of three frames.
+//
+// Thread-safe by latch crabbing (PLAN 7.1). Readers latch each child before
+// releasing its parent. Insert and Remove latch the header and then the path
+// in write mode, releasing every latched ancestor once the newest page is
+// safe (cannot split, or cannot underflow), so they hold only what a
+// structure change can reach. A split releases its two leaves before taking
+// the parent's new page. A leaf emptied by a merge is left in place with its
+// sibling link, not freed, because an iterator may hold its id; freed
+// internal pages are unreachable once their parent is updated. The
+// diagnostics (ToString, ToDot, CheckInvariants) assume no concurrent writer.
 class BPlusTree {
  public:
   BPlusTree(std::string name, page_id_t header_page_id, BufferPoolManager* bpm,
@@ -56,11 +64,7 @@ class BPlusTree {
 
  private:
   auto GetRoot() const -> page_id_t;
-  void SetRoot(page_id_t root);
-  auto FindLeaf(const TripleKey& key, std::vector<page_id_t>* path) const -> page_id_t;
-  void InsertIntoParent(std::vector<page_id_t> path, page_id_t left, const TripleKey& key,
-                        page_id_t right);
-  void FixUnderflow(std::vector<page_id_t> path, page_id_t node_id);
+  auto LeafFor(const TripleKey* key) const -> ReadPageGuard;
   auto CheckNode(page_id_t page_id, const std::optional<TripleKey>& lower,
                  const std::optional<TripleKey>& upper, int depth, bool is_root, int* leaf_depth,
                  std::vector<std::pair<page_id_t, page_id_t>>* leaves) const

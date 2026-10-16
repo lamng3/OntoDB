@@ -23,7 +23,7 @@ auto KeyResource(const TripleKey& key) -> LockResource {
   return resource;
 }
 
-TEST(P7_1_Crabbing, DISABLED_ConcurrentInsertDeleteScan) {
+TEST(P7_1_Crabbing, ConcurrentInsertDeleteScan) {
   test::DiskEnv env(32, 2);
   page_id_t header_id = INVALID_PAGE_ID;
   Page* page = env.bpm.NewPage(&header_id);
@@ -56,6 +56,63 @@ TEST(P7_1_Crabbing, DISABLED_ConcurrentInsertDeleteScan) {
     thread.join();
   }
   EXPECT_FALSE(tree.CheckInvariants().has_value());
+  EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
+}
+
+// Tiny nodes make every thread split and merge all the time, on pages its
+// neighbours are using; a reader scans the whole tree throughout. Each writer
+// owns its own subjects, so the final contents are known exactly.
+TEST(P7_1_Crabbing, TinyNodesUnderContentionKeepEveryKey) {
+  test::DiskEnv env(64, 2);
+  page_id_t header_id = INVALID_PAGE_ID;
+  Page* page = env.bpm.NewPage(&header_id);
+  ASSERT_NE(page, nullptr);
+  BPlusTreeHeaderPage(page).Init();
+  ASSERT_TRUE(env.bpm.UnpinPage(header_id, true));
+  BPlusTree tree("spo", header_id, &env.bpm, nullptr, 3, 3);
+  constexpr int kWriters = 4;
+  constexpr term_id_t kKeys = 300;
+  std::atomic<bool> done{false};
+  std::thread reader([&] {
+    while (!done.load()) {
+      TripleKey previous{};
+      bool first = true;
+      for (auto it = tree.Begin(); !it.IsEnd(); ++it) {
+        const TripleKey key = *it;
+        EXPECT_TRUE(first || previous.Compare(key) < 0);  // a scan never goes backwards
+        previous = key;
+        first = false;
+      }
+    }
+  });
+  std::vector<std::thread> writers;
+  for (int w = 0; w < kWriters; w++) {
+    writers.emplace_back([&tree, w] {
+      const auto subject = static_cast<term_id_t>(w + 1);
+      for (term_id_t i = 1; i <= kKeys; i++) {
+        EXPECT_TRUE(tree.Insert(TripleKey::Encode(subject, 1, i)));
+      }
+      for (term_id_t i = 1; i <= kKeys; i += 2) {  // remove the odd ones
+        EXPECT_TRUE(tree.Remove(TripleKey::Encode(subject, 1, i)));
+      }
+    });
+  }
+  for (auto& thread : writers) {
+    thread.join();
+  }
+  done = true;
+  reader.join();
+  ASSERT_FALSE(tree.CheckInvariants().has_value()) << *tree.CheckInvariants();
+  size_t count = 0;
+  for (auto it = tree.Begin(); !it.IsEnd(); ++it) {
+    term_id_t s = 0;
+    term_id_t p = 0;
+    term_id_t o = 0;
+    (*it).Decode(&s, &p, &o);
+    EXPECT_EQ(o % 2, 0u);
+    count++;
+  }
+  EXPECT_EQ(count, static_cast<size_t>(kWriters) * kKeys / 2);
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 

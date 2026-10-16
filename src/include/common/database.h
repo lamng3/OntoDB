@@ -32,8 +32,10 @@ class BufferPoolManager;
 // triple across by spelling, so ids are those of the new dictionary.
 // SetBackend(kMem) moves them back and deletes the file. A persistent
 // database stays on the memory backend until page-level recovery (PLAN 8).
-// The B+ tree is single-threaded until PLAN 7.1, so statements on the
-// indexed backend run one at a time.
+// Statements on the indexed backend run one at a time: the tree is safe for
+// concurrent use (PLAN 7.1), but a scan holds a leaf latch between rows, and
+// a transaction waiting for a lock while holding a latch could deadlock with
+// a writer in a way the lock manager cannot see.
 class Database {
  public:
   Database();

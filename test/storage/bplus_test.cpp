@@ -287,7 +287,9 @@ TEST(P2_7_Delete, DeepTreeStressMatchesSet) {
 
 TEST(P2_6_BulkLoad, EverySizeKeepsInvariantsWithTinyNodes) {
   for (int n = 0; n <= 60; n++) {
-    test::DiskEnv env(3, 2);
+    // 16 frames: after a packed load every node is full, so an insert's
+    // crabbing keeps the whole path latched (header, every level, a new page).
+    test::DiskEnv env(16, 2);
     BPlusTree tree("spo", Header(&env.bpm), &env.bpm, nullptr, 3, 2);
     std::vector<TripleKey> keys;
     for (int i = 1; i <= n; i++) {
