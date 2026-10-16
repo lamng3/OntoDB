@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -124,16 +125,50 @@ auto LogManager::Append(LogRecord* record) -> lsn_t {
   const size_t at = buffer_.size();
   buffer_.resize(at + record->Size());
   record->SerializeTo(buffer_.data() + at);
+  ends_.emplace_back(lsn, buffer_.size());
   buffered_lsn_ = lsn;
   return lsn;
+}
+
+auto LogManager::BeginGroup() -> lsn_t {
+  std::lock_guard<std::mutex> guard(mu_);
+  const lsn_t token = next_lsn_;
+  open_groups_.insert(token);
+  return token;
+}
+
+void LogManager::EndGroup(lsn_t token) {
+  {
+    std::lock_guard<std::mutex> guard(mu_);
+    if (const auto it = open_groups_.find(token); it != open_groups_.end()) {
+      open_groups_.erase(it);
+    }
+    if (held_back_) {
+      flush_requested_ = true;
+    }
+  }
+  work_cv_.notify_one();
+  durable_cv_.notify_all();
+}
+
+auto LogManager::FlushableLsn() const -> lsn_t {
+  std::lock_guard<std::mutex> guard(mu_);
+  return Limit();
+}
+
+auto LogManager::Limit() const -> lsn_t {
+  if (open_groups_.empty()) {
+    return buffered_lsn_;
+  }
+  return std::min(buffered_lsn_, *open_groups_.begin() - 1);
 }
 
 void LogManager::Flush(lsn_t lsn, bool force) {
   std::unique_lock<std::mutex> lock(mu_);
   if (!running_) {
     while (persistent_lsn_ < lsn && persistent_lsn_ < buffered_lsn_) {
-      if (writing_) {
-        durable_cv_.wait(lock);
+      if (writing_ || Limit() <= persistent_lsn_) {
+        durable_cv_.wait(lock);  // another writer, or an open group holds the rest back
       } else {
         WriteBuffered(lock);
       }
@@ -150,6 +185,13 @@ void LogManager::Flush(lsn_t lsn, bool force) {
   });
   if (persistent_lsn_ < lsn && !failure_.empty()) {
     throw StorageException("log flush failed: " + failure_);
+  }
+}
+
+void LogManager::FlushAvailable() {
+  const lsn_t lsn = FlushableLsn();
+  if (lsn > 0) {
+    Flush(lsn, true);
   }
 }
 
@@ -175,10 +217,24 @@ void LogManager::WriteBuffered(std::unique_lock<std::mutex>& lock) {
   if (writing_ || buffer_.empty()) {
     return;
   }
+  // Write the records up to the limit; a record of an open group, and every
+  // record after it, waits.
+  const lsn_t limit = Limit();
+  const auto stop = std::upper_bound(ends_.begin(), ends_.end(), limit,
+                                     [](lsn_t l, const auto& end) { return l < end.first; });
+  held_back_ = stop != ends_.end();
+  if (stop == ends_.begin()) {
+    return;
+  }
   writing_ = true;
-  std::vector<char> batch;
-  batch.swap(buffer_);
-  const lsn_t upto = buffered_lsn_;
+  const size_t bytes = std::prev(stop)->second;
+  const lsn_t upto = std::prev(stop)->first;
+  std::vector<char> batch(buffer_.begin(), buffer_.begin() + static_cast<long>(bytes));
+  buffer_.erase(buffer_.begin(), buffer_.begin() + static_cast<long>(bytes));
+  ends_.erase(ends_.begin(), stop);
+  for (auto& end : ends_) {
+    end.second -= bytes;
+  }
   lock.unlock();
   try {
     WriteAll(fd_, batch.data(), batch.size());

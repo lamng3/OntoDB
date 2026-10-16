@@ -162,7 +162,7 @@ Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree 
 
 **8.2 Log manager.** Done. `Append` assigns an LSN. `Flush(lsn)` blocks until that LSN is durable. Commit forces. Commits that overlap one flush share it. `\log` prints the tail, oldest first. The log file path is the `LogManager` constructor argument.
 
-**8.3 WAL.** Done. Every update sets pageLSN. The pool flushes the log before the page write, with the crash point between them. `\crash` exits without flushing.
+**8.3 WAL.** Done. Every update sets pageLSN. A B+ tree insert or remove is one page group: its page records reach the log file together or not at all, and none of its pages is written before they do. The pool flushes the log before the page write, with the crash point between them. `\crash` exits without flushing.
 
 **8.4 Abort.** Done. When a log manager was passed in, abort undoes newest-first and writes a CLR per triple. The write-set path remains for a null log. A CLR is redone and is not undone.
 
@@ -170,7 +170,7 @@ Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree 
 
 **8.6 ARIES.** Done. On open, analysis finds winners, losers, and the redo LSN. Redo repeats every page update whose LSN is greater than the pageLSN, including CLRs. Undo walks losers newest-first. `Summary` is one line per pass: `analysis`, `redo`, `undo`.
 
-**8.7 Crash test.** Done. `scripts/crashtest --seeds 200` is green. A committed insert is visible after restart. An uncommitted insert is not. The forked runs use the real store: a file of pages, a four-frame pool, the log, and recovery on reopen. The fake stores remain to show the harness catches a lost commit and a surviving uncommitted write.
+**8.7 Crash test.** Done. `scripts/crashtest --seeds 200` is green. A committed insert is visible after restart. An uncommitted insert is not. The forked runs use the real store: a file of pages, three trees of at most four keys a node so a few dozen triples split and merge, a 16-frame pool, the log, and recovery on reopen. A third of the seeds kill the child between operations; the rest kill it at a named crash point inside a split, a merge, or a page write. After recovery the harness also checks every tree's invariants, point lookups, and that SPO, POS, and OSP hold the same triples. The fake stores remain to show the harness catches a lost commit and a surviving uncommitted write.
 
 ## Durable memory database
 

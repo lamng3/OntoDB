@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <fstream>
+#include <set>
 #include <thread>
 #include <vector>
 
 #include "catalog/catalog.h"
+#include "common/crash_point.h"
 #include "common/exception.h"
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
@@ -14,6 +16,8 @@
 #include "recovery/log_manager.h"
 #include "recovery/log_recovery.h"
 #include "storage/env.h"
+#include "storage/index/b_plus_tree.h"
+#include "storage/page/b_plus_tree_header_page.h"
 #include "store/mem_store.h"
 
 namespace ontodb {
@@ -242,6 +246,120 @@ TEST(P8_7_CrashTest, RestartDropsUncommitted) {
   EXPECT_NE(std::find(recovery.LoserTxns().begin(), recovery.LoserTxns().end(), 2),
             recovery.LoserTxns().end());
 }
+
+// A crash in the middle of a split or merge, with the log flushed as far as
+// it may be and the files copied at that instant. After redo, the tree must
+// be whole and hold either every key from before the operation or every key
+// from after it: a structure change reaches the log all at once or not at all.
+struct MidOperationCrash {
+  std::string point;
+  int occurrence;
+};
+
+class P8_3_StructureChange : public ::testing::TestWithParam<MidOperationCrash> {};
+
+TEST_P(P8_3_StructureChange, IsAllOrNothingAfterRedo) {
+  test::TempDir dir;
+  const auto live = dir.path() / "live";
+  const auto copy = dir.path() / "crash";
+  std::filesystem::create_directories(live);
+  std::filesystem::create_directories(copy);
+  std::vector<int> order(80);
+  for (int i = 0; i < 80; i++) {
+    order[static_cast<size_t>(i)] = (i * 37) % 80;
+  }
+  std::set<int> before;
+  std::set<int> after;
+  bool captured = false;
+  page_id_t header_id = INVALID_PAGE_ID;
+  {
+    DiskManager disk((live / "db").string());
+    LogManager log((live / "wal").string());
+    log.StartFlushThread();
+    BufferPoolManager bpm(16, &disk, 2, &log);
+    {
+      WritePageGuard header = bpm.NewPageGuarded(&header_id);
+      BPlusTreeHeaderPage page(header.GetPage());
+      page.Init();
+      page.SetRootPageId(INVALID_PAGE_ID);
+    }
+    BPlusTree tree("spo", header_id, &bpm, nullptr, 4, 4);
+    std::set<int> current;
+    int seen = 0;
+    int in_flight = -1;
+    bool inserting = true;
+    CrashPoint::SetProbe([&](std::string_view name) {
+      if (captured || name != GetParam().point || ++seen != GetParam().occurrence) {
+        return;
+      }
+      log.FlushAvailable();
+      std::filesystem::copy_file(live / "db", copy / "db");
+      std::filesystem::copy_file(live / "wal", copy / "wal");
+      before = current;
+      after = current;
+      if (inserting) {
+        after.insert(in_flight);
+      } else {
+        after.erase(in_flight);
+      }
+      captured = true;
+    });
+    for (const int k : order) {
+      in_flight = k;
+      tree.Insert(TripleKey::Encode(1, 1, static_cast<term_id_t>(k)));
+      current.insert(k);
+    }
+    inserting = false;
+    for (const int k : order) {
+      in_flight = (k * 7) % 80;
+      tree.Remove(TripleKey::Encode(1, 1, static_cast<term_id_t>(in_flight)));
+      current.erase(in_flight);
+    }
+    CrashPoint::Disarm();
+    log.StopFlushThread();
+  }
+  ASSERT_TRUE(captured) << "the crash point was never reached";
+
+  DiskManager disk((copy / "db").string());
+  LogManager log((copy / "wal").string());
+  BufferPoolManager bpm(16, &disk, 2, &log);
+  LogRecovery recovery(&log, &bpm, &disk, nullptr);
+  recovery.Analyze();
+  recovery.Redo();
+  BPlusTree tree("spo", header_id, &bpm, nullptr, 4, 4);
+  const auto broken = tree.CheckInvariants();
+  ASSERT_FALSE(broken.has_value()) << *broken;
+  std::set<int> scanned;
+  for (auto it = tree.Begin(); !it.IsEnd(); ++it) {
+    term_id_t s = 0;
+    term_id_t p = 0;
+    term_id_t o = 0;
+    (*it).Decode(&s, &p, &o);
+    scanned.insert(static_cast<int>(o));
+  }
+  EXPECT_TRUE(scanned == before || scanned == after)
+      << "scan found " << scanned.size() << " keys; expected " << before.size() << " or "
+      << after.size();
+  for (int k = 0; k < 80; k++) {
+    EXPECT_EQ(tree.GetValue(TripleKey::Encode(1, 1, static_cast<term_id_t>(k))),
+              scanned.contains(k))
+        << "lookup and scan disagree on " << k;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    CrashPoints, P8_3_StructureChange,
+    ::testing::Values(MidOperationCrash{"BPlusTree::Insert::after_leaf_split", 1},
+                      MidOperationCrash{"BPlusTree::Insert::after_leaf_split", 9},
+                      MidOperationCrash{"BPlusTree::Insert::after_internal_split", 1},
+                      MidOperationCrash{"BPlusTree::Insert::after_internal_split", 3},
+                      MidOperationCrash{"BPlusTree::Remove::after_redistribute", 2},
+                      MidOperationCrash{"BPlusTree::Remove::after_merge", 1},
+                      MidOperationCrash{"BPlusTree::Remove::after_merge", 6}),
+    [](const ::testing::TestParamInfo<MidOperationCrash>& info) {
+      std::string name = info.param.point.substr(info.param.point.rfind(':') + 1);
+      return name + "_" + std::to_string(info.param.occurrence);
+    });
 
 }  // namespace
 }  // namespace ontodb

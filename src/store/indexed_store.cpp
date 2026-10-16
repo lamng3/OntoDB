@@ -44,13 +44,16 @@ auto Bound(const TriplePattern& p, int position) -> std::optional<term_id_t> {
 }  // namespace
 
 IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary* dictionary,
-                           const std::vector<std::string>& permutations)
+                           const std::vector<std::string>& permutations, int node_max)
     : catalog_(catalog), bpm_(bpm), dictionary_(dictionary) {
+  auto tree = [&](const std::string& name, page_id_t header) {
+    return std::make_unique<BPlusTree>(name, header, bpm_, nullptr, node_max, node_max);
+  };
   for (const char* name : kAllNames) {
     const page_id_t header = catalog_->GetIndexRoot(name);
     const auto order = OrderOf(name);
     if (header != INVALID_PAGE_ID && order.has_value()) {
-      indexes_.push_back({name, *order, std::make_unique<BPlusTree>(name, header, bpm_)});
+      indexes_.push_back({name, *order, tree(name, header)});
     }
   }
   if (!indexes_.empty()) {
@@ -70,8 +73,17 @@ IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary*
       BPlusTreeHeaderPage(guard.GetPage()).Init();
     }
     catalog_->SetIndexRoot(name, header);
-    indexes_.push_back({name, *order, std::make_unique<BPlusTree>(name, header, bpm_)});
+    indexes_.push_back({name, *order, tree(name, header)});
   }
+}
+
+auto IndexedStore::CheckInvariants() const -> std::optional<std::string> {
+  for (const auto& index : indexes_) {
+    if (auto broken = index.tree->CheckInvariants(); broken.has_value()) {
+      return index.name + ": " + *broken;
+    }
+  }
+  return std::nullopt;
 }
 
 // SPO, POS, and OSP make every bound/unbound pattern a prefix scan. The other
@@ -103,42 +115,35 @@ auto IndexedStore::KeyOf(const Index& index, const Triple& triple) const -> Trip
                            Component(triple, index.order[2]));
 }
 
+// Insert and Delete visit every index, not only the first: after a crash in
+// the middle of one, recovery's undo repeats it on indexes that disagree, and
+// each tree must be brought to the same answer. Page groups make one tree's
+// change atomic; nothing makes the three trees' changes atomic together.
 auto IndexedStore::Insert(const Triple& triple) -> bool {
-  const Index& first = indexes_.front();
-  if (first.tree->GetValue(KeyOf(first, triple))) {
-    return false;
-  }
-  size_t done = 0;
-  try {
-    for (; done < indexes_.size(); done++) {
-      indexes_[done].tree->Insert(KeyOf(indexes_[done], triple));
-    }
-  } catch (...) {
-    while (done-- > 0) {  // put the indexes already written back
-      indexes_[done].tree->Remove(KeyOf(indexes_[done], triple));
-    }
-    throw;
-  }
-  return true;
+  return Apply(triple, true);
 }
 
 auto IndexedStore::Delete(const Triple& triple) -> bool {
-  const Index& first = indexes_.front();
-  if (!first.tree->GetValue(KeyOf(first, triple))) {
-    return false;
-  }
-  size_t done = 0;
+  return Apply(triple, false);
+}
+
+auto IndexedStore::Apply(const Triple& triple, bool insert) -> bool {
+  std::vector<size_t> changed;
   try {
-    for (; done < indexes_.size(); done++) {
-      indexes_[done].tree->Remove(KeyOf(indexes_[done], triple));
+    for (size_t i = 0; i < indexes_.size(); i++) {
+      const TripleKey key = KeyOf(indexes_[i], triple);
+      if (insert ? indexes_[i].tree->Insert(key) : indexes_[i].tree->Remove(key)) {
+        changed.push_back(i);
+      }
     }
   } catch (...) {
-    while (done-- > 0) {
-      indexes_[done].tree->Insert(KeyOf(indexes_[done], triple));
+    for (const size_t i : changed) {  // put back the indexes this call changed
+      const TripleKey key = KeyOf(indexes_[i], triple);
+      insert ? indexes_[i].tree->Remove(key) : indexes_[i].tree->Insert(key);
     }
     throw;
   }
-  return true;
+  return !changed.empty();
 }
 
 auto IndexedStore::Contains(const Triple& triple) -> bool {

@@ -45,8 +45,9 @@ class LogManager;
 // One latch (mu_) covers the page table, the free list, pins, and dirty bits,
 // and is held across the disk I/O of a miss or a write-back. All I/O goes
 // through a DiskScheduler. NewPage and FetchPage return nullptr when every
-// frame is pinned. The destructor does not flush: durability is the log's job,
-// and a clean shutdown calls FlushAllPages first.
+// frame is pinned, or every unpinned frame is dirty with a pageLSN an open
+// page group still holds back in the log (see PageGroup below). The destructor does not flush:
+// durability is the log's job, and a clean shutdown calls FlushAllPages first.
 class BufferPoolManager {
  public:
   BufferPoolManager(size_t pool_size, DiskManager* disk_manager, size_t replacer_k,
@@ -71,6 +72,9 @@ class BufferPoolManager {
   // page it changed, so every change through a guard is logged before the
   // page can be written. Without a log manager it does nothing.
   void LogPageWrite(Page* page);
+  // Forward to the log manager's BeginGroup / EndGroup; no-ops without one.
+  auto BeginGroup() -> lsn_t;
+  void EndGroup(lsn_t token);
   auto DebugString() const -> std::string;
 
   auto FetchPageRead(page_id_t page_id) -> ReadPageGuard;
@@ -98,6 +102,23 @@ class BufferPoolManager {
   std::unordered_set<page_id_t> deleted_;
   LRUKReplacer replacer_;
   std::unique_ptr<DiskScheduler> scheduler_;
+};
+
+// One multi-page change, logged atomically (a mini-transaction). Every page
+// record appended while it lives reaches the log file together with the
+// others, or none does; until then none of those pages is written. A B+ tree
+// Insert or Remove opens one before its first latch and closes it after its
+// last, so a crash never leaves half a split or half a merge for redo.
+class PageGroup {
+ public:
+  explicit PageGroup(BufferPoolManager* bpm) : bpm_(bpm), token_(bpm->BeginGroup()) {}
+  ~PageGroup() { bpm_->EndGroup(token_); }
+  PageGroup(const PageGroup&) = delete;
+  auto operator=(const PageGroup&) -> PageGroup& = delete;
+
+ private:
+  BufferPoolManager* bpm_;
+  lsn_t token_;
 };
 
 }  // namespace ontodb
