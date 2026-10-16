@@ -40,11 +40,12 @@ namespace ontodb {
 // releasing its parent. Insert and Remove latch the header and then the path
 // in write mode, releasing every latched ancestor once the newest page is
 // safe (cannot split, or cannot underflow), so they hold only what a
-// structure change can reach. A split releases its two leaves before taking
-// the parent's new page. A leaf emptied by a merge is left in place with its
-// sibling link, not freed, because an iterator may hold its id; freed
-// internal pages are unreachable once their parent is updated. The
-// diagnostics (ToString, ToDot, CheckInvariants) assume no concurrent writer.
+// structure change can reach. Latches are taken in one order everywhere: the
+// header, then down the tree, and siblings left to right. A split releases its two leaves before
+// taking the parent's new page. A leaf emptied by a merge is left in place with its sibling link,
+// not freed, because an iterator may hold its id; freed internal pages are unreachable once their
+// parent is updated. The diagnostics (ToString, ToDot, CheckInvariants) assume no concurrent
+// writer.
 class BPlusTree {
  public:
   BPlusTree(std::string name, page_id_t header_page_id, BufferPoolManager* bpm,
