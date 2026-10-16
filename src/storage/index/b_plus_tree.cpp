@@ -345,8 +345,17 @@ auto BPlusTree::Remove(const TripleKey& key) -> bool {
     const int idx = IndexOf(pe.children, node_id);
     const bool sibling_is_left = idx > 0;
     const int right_idx = sibling_is_left ? idx : idx + 1;
-    WritePageGuard sibling_guard =
-        bpm_->FetchPageWrite(pe.children[sibling_is_left ? idx - 1 : idx + 1]);
+    // Siblings are always latched left to right. The parent is latched, so no
+    // writer can reach either page while the node is briefly released; only
+    // readers can, and they change nothing.
+    WritePageGuard sibling_guard;
+    if (sibling_is_left) {
+      node_guard.Drop();
+      sibling_guard = bpm_->FetchPageWrite(pe.children[idx - 1]);
+      node_guard = bpm_->FetchPageWrite(node_id);
+    } else {
+      sibling_guard = bpm_->FetchPageWrite(pe.children[idx + 1]);
+    }
     WritePageGuard& left_guard = sibling_is_left ? sibling_guard : node_guard;
     WritePageGuard& right_guard = sibling_is_left ? node_guard : sibling_guard;
     const page_id_t left_id = left_guard.GetPageId();
