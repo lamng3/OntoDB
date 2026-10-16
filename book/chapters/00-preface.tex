@@ -66,8 +66,11 @@ manager; every query operator and the optimizer (statistics, join order, the
 choice of join, and \code{\textbackslash explain analyze}); and durable
 databases (snapshots, a checksummed write-ahead log, recovery, and
 verification); bulk loading; and concurrency control (latch crabbing,
-transactions, locks, isolation, deadlocks, and phantoms). Page-level ARIES is
-designed and being built.
+transactions, locks, isolation, deadlocks, and phantoms); and page-level
+ARIES (page images in the log, page groups for splits and merges, abort by the
+log, a sharp checkpoint, the three passes, and a crash harness that kills a
+real store). The shell's \code{ontodb <dir>} still opens the memory database
+of \cref{ch:durability}; the page store recovers in the tests.
 \end{status}
 
 \section*{Acknowledgments}

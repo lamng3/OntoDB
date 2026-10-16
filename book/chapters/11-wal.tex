@@ -101,13 +101,14 @@ Every OntoDB log record has this layout (native byte order):
 \begin{lstlisting}
 u32 size       whole record, header included
 u32 crc32c     over every byte after this field
-u8  type       begin | commit | abort | update | clr | checkpoint | term
+u8  type       begin | commit | abort | update | clr | checkpoint | term | page
 i64 lsn, i64 txn_id, i64 prev_lsn
 then, by type:
   update       i32 page_id, u8 is_insert, u64 subject, u64 predicate, u64 object
   clr          the update fields, then i64 undo_next
   checkpoint   u32 n, then n active transaction ids
   term         u64 term_id, u32 n, then n bytes of canonical spelling
+  page         i32 page_id, then the page's bytes after its pageLSN
 \end{lstlisting}
 
 The checksum is CRC-32C, the same checksum PostgreSQL, RocksDB, and InnoDB use.
@@ -157,11 +158,106 @@ data (\cref{ch:pages}).
 ridden out.
 \end{decision}
 
+\section{What a page record holds}
+
+Rule 1 needs every change to a page to be logged before the page can be
+written, and redo needs enough in each record to put the change back. There
+are three common answers to ``what does the record hold''. \term{Physical}
+logging records the bytes: a whole page image, or a byte range and its new
+contents. \term{Logical} logging records the operation (``insert key $k$
+into the SPO index''), and redo performs it again. \term{Physiological}
+logging, which ARIES and most disk engines use, is a mix: the record names one
+page (physical) and describes an operation on that page (logical), such as
+``insert this key at slot 7 of page 12''.
+
+Each choice moves work around. Page images are the simplest to redo (copy the
+bytes) and need no knowledge of what is on the page, but they are large.
+Logical records are small, but redo must run the operation against a structure
+that may itself be damaged, which is why engines that log logically above the
+page level still log pages physically below it.
+
+\section{Changes that span pages}
+
+A B+ tree split changes three pages: the old leaf loses its upper half, a new
+leaf receives it, and the parent gains a separator. Each page gets its own
+record. Suppose the log reaches the disk with the records for the two leaves
+but not the parent's, and then the machine stops. Redo faithfully rebuilds
+both leaves, and the parent still has no pointer to the new one. A full scan,
+which walks the leaf chain, finds every key; a point lookup for a key in the
+new leaf descends to the old leaf and misses. Nothing in the log is wrong, yet
+the tree is.
+
+The write-ahead rule is about single pages, so it cannot prevent this. A
+multi-page change needs its own rule: its records must reach the log all
+together or not at all. Systems get there in different ways:
+
+\begin{description}[leftmargin=1.2em]
+\item[Nested top actions (ARIES).] Log the split's page changes with undo information, then a dummy CLR that marks the split complete. If the crash comes before the dummy CLR, undo reverses the half-done split page by page.
+\item[Mini-transactions (InnoDB).] Hold every latch the change took until it is finished, then append all its records to the log buffer in one step.
+\item[Tolerate the half state (PostgreSQL).] B-link trees give every page a right link and a high key, so a search that lands on the old leaf can follow the right link. A split missing its parent pointer is legal, and the next writer that notices finishes it.
+\end{description}
+
+\begin{ontodb}[: page images and page groups]
+OntoDB logs physically, by whole page. When a write guard on a page it changed
+is released, still latched, the buffer pool appends a page record holding the
+page's bytes after the pageLSN and sets the pageLSN to that record's LSN
+(\code{BufferPoolManager::LogPageWrite}). Every page written through a guard
+is covered by this one path: B+ tree nodes, tree headers, and the catalog.
+Triple changes get a logical update record too, appended before the
+statement changes any page; undo uses those (\cref{ch:aries}).
+
+A tree \code{Insert} or \code{Remove} opens a \code{PageGroup} before its
+first latch and closes it after its last. While a group is open, the log
+manager writes nothing from the group's first LSN onward, so the flusher can
+cut the log only between groups. The buffer pool, choosing a victim, passes
+over any dirty page whose pageLSN is still held back, since writing it would
+break rule 1. A test stops a tree at each named crash point inside a split or
+a merge, flushes everything the log allows, copies the files, and checks that
+redo yields a sound tree that holds either every key from before the
+operation or every key from after it. Without page groups, all seven cases
+fail.
+\end{ontodb}
+
+\begin{decision}{Whole page images, not physiological records}
+\dpart{Choice} A page record carries the whole page after its pageLSN. Redo
+copies it when the record is newer than the page.
+\dpart{Alternatives} Physiological records, ``insert key $k$ at slot $i$ of
+page $p$'', as ARIES and InnoDB use; byte-range diffs.
+\dpart{Why} Redo needs to know nothing about the layout of a leaf, an internal
+node, a header, or the catalog, so one short loop redoes them all, and a bug
+in a page's code cannot also be a bug in its redo. The guard already knows
+when a page changed; it does not know how.
+\dpart{Cost} About 4 KB per page per operation. One triple touches at least
+three trees, so it logs at least three pages, where its logical update
+record is a few dozen bytes. A real engine would log diffs, or log a full
+image only the first time a page changes after a checkpoint, as PostgreSQL's
+full-page writes do.
+\end{decision}
+
+\begin{decision}{Page groups hold back the log, not the latches}
+\dpart{Choice} A group marks its first LSN. The log does not flush past it, and
+the pool does not evict a dirty page the group holds back, until the group
+ends.
+\dpart{Alternatives} Nested top actions with before-images and undo of an
+unfinished split; InnoDB's mini-transaction, which keeps every page latched
+until the end; B-link trees that accept a half split.
+\dpart{Why} No before-images, no recovery pass for unfinished splits, and no
+change to latching. Holding latches longer would have broken the tree's rule
+that siblings are latched left to right, since a merge releases a page to
+latch its left sibling.
+\dpart{Cost} While any group is open, every later record waits too, so a
+commit that arrives during a split waits for it. A group's pages cannot be
+evicted, so the pool must hold more frames than the largest split touches. A
+pool so small that every unpinned frame is held back cannot find a victim.
+\end{decision}
+
 \begin{status}
-Log records (plan 8.1) and the log manager with group commit (plan 8.2) run
-today. The buffer pool already applies rule 1 when it writes a page back: it
-flushes the log up to the page's pageLSN first, with a crash point between the
-two. Plan 8.3 completes the rule by making every update set the pageLSN.
+Log records (plan 8.1), the log manager with group commit (plan 8.2), and the
+write-ahead rule with pageLSNs set on every change (plan 8.3) run. The rule
+applies wherever a buffer pool is given a log manager: the recovery tests and
+the crash harness. The shell's indexed backend is a temporary file and runs
+without a log, and \code{ontodb <dir>} opens the memory database of
+\cref{ch:durability}.
 \end{status}
 
 \begin{checkyourself}
@@ -170,6 +266,9 @@ two. Plan 8.3 completes the rule by making every update set the pageLSN.
 \item Ten sessions commit within one millisecond. Without group commit, how many \code{fsync}s? With it, at least how many?
 \item A log's last record has a valid header claiming 60 bytes, and only 41 are in the file. Torn or corrupt? What if all 60 are there but the checksum fails?
 \item Why does OntoDB number LSNs with a counter rather than a byte offset?
+\item A split logs the old leaf, the new leaf, and the parent, in that order. Only the first two records reach the disk before a crash. After redo, which reads still work, and which fail?
+\item Why may the buffer pool not evict a dirty page whose pageLSN is newer than the log's flushable LSN, even though it may wait for an ordinary log flush?
+\item OntoDB logs whole page images. Name one thing this makes simpler and one thing it makes more expensive.
 \end{checkyourself}
 
 \section*{Further reading}

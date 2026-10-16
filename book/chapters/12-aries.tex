@@ -134,47 +134,112 @@ CLR, skips over it. The logical ``insert key $k$'' is logged separately, and its
 undo is the logical ``delete key $k$'', performed wherever that key now lives,
 which is why undo in ARIES is logical while redo is physical.
 
+\section{Undo must survive being repeated}
+
+Undo is logical: ``take back insert $t$'' becomes ``delete $t$''. A crash can
+strike in the middle of that delete, and the next recovery will run it again,
+because the CLR is written after the change. So every logical undo must give
+the right answer when it runs against a state where it already half happened.
+
+In a triple store, one triple lives in several indexes. Deleting it is three
+tree operations. A page group (\cref{ch:wal}) makes each of the three atomic,
+but nothing makes the three atomic together. If the crash comes after SPO has
+lost the triple but before OSP has, the repeated undo meets a triple that is
+absent from SPO and present in OSP.
+
 \begin{ontodb}[: ARIES]
-OntoDB's page-based recovery follows this chapter: steal and no force,
-page-oriented redo, logical undo of triples, CLRs that are redone and never
-undone, and B+ tree splits logged as redo-only nested top actions with the
-triple insert logged separately. On open, recovery prints one line per pass
-(\code{analysis}, \code{redo}, \code{undo}). The bar for the feature is a crash
-harness that kills the process at random points (including named crash points
-inside splits and between a log flush and a page write) and compares the
-reopened store with an oracle that replayed only acknowledged commits:
-\code{scripts/crashtest --seeds 200} must pass.
+On open, \code{LogRecovery} (\code{src/recovery/recovery.cpp}) reads the
+whole log and runs the three passes:
+
+\begin{description}[leftmargin=1.2em]
+\item[Analysis.] A transaction with a commit record is a winner. One with a begin, an update, or a CLR but neither a commit nor an abort record is a loser; an abort record is written when an abort or a recovery undo finishes, so it doubles as ARIES's end record. Checkpoints are sharp, so the dirty page table starts at the last checkpoint: each page's first page record after it is the page's recLSN, and the smallest is the redo LSN.
+\item[Redo.] For each page record from the redo LSN on, fetch the page through the pool's raw interface, so redo is not logged again, and copy the image if the record is newer than the pageLSN. Redo is physical and the same for every page.
+\item[Undo.] The catalog is opened only after redo, since redo may be what rebuilds page 0. Each loser's update records are undone newest first through the same \code{UndoChain} a normal abort uses: delete what it inserted, insert what it deleted, a CLR after each, then an abort record.
+\end{description}
+
+\code{\textbackslash checkpoint} on a page store is \code{CheckpointManager::Checkpoint}:
+write every dirty page (the pool forces the log first), then append the
+checkpoint record listing the active transactions, and force it.
+
+\code{IndexedStore::Insert} and \code{Delete} change every index that
+disagrees, rather than asking the first index and stopping. Repeating an
+interrupted undo therefore repairs the indexes it did not reach.
 \end{ontodb}
 
-\begin{decision}{A blocking checkpoint first (planned)}
-\dpart{Choice} The page store's \code{\textbackslash checkpoint} may pause
-updates while it writes the checkpoint record; the comment above
-\code{Checkpoint} names which kind it is.
-\dpart{Alternatives} ARIES's fuzzy checkpoint, which never stops the system.
-\dpart{Why} A blocking checkpoint is easy to reason about and enough to bound
-recovery. Fuzzy checkpointing is an optimization to add once the three passes
-are correct.
-\dpart{Cost} Updates stall for the length of the checkpoint.
+\section{The crash harness}
+
+The bar for this part is \code{scripts/crashtest --seeds 200}. For each seed,
+a child process opens a real store: a database file, three trees with at most
+four keys a node so that a few dozen triples split and merge pages, a 16-frame
+pool so pages are stolen, and the log. The parent feeds it a random schedule
+of transactions, then kills it. A third of the seeds die between operations.
+The rest die at a randomly chosen reach of a named crash point (inside a
+split, inside a merge, or between a log flush and a page write), half of them
+after flushing everything the log allows, so that any half-finished change that
+\emph{could} reach the disk does. The parent then reopens the store (a torn
+last record is cut off, then the three passes) and compares it with an oracle
+that applied only acknowledged commits. It also checks every tree's
+invariants, a point lookup for every triple, and that SPO, POS, and OSP hold
+the same triples.
+
+The harness is tested by breaking the store on purpose. Removing redo fails
+30 of 30 seeds. Removing page groups fails 25 of 200, as broken trees and
+indexes that disagree. Going back to the first-index-only \code{Insert} and
+\code{Delete} fails 4 of 200, as POS or OSP holding a triple SPO lacks.
+
+\begin{decision}{Physical redo, logical undo}
+\dpart{Choice} Redo copies page images. Undo replays the inverse of each
+logical triple change through the store, writing a CLR for each.
+\dpart{Alternatives} Physical undo from before-images; logical redo of triple
+changes.
+\dpart{Why} This is ARIES's own split. Redo must work on pages that may be
+inconsistent with each other, so it cannot depend on the tree's structure.
+Undo runs after redo has repeated history and the tree is sound, and it must
+take back one transaction's triple even if other transactions have since moved
+it to a different page.
+\dpart{Cost} Two kinds of record for one statement, and the store's operations
+must be idempotent, since undo can be repeated after a crash part way through.
+\end{decision}
+
+\begin{decision}{A sharp checkpoint}
+\dpart{Choice} \code{Checkpoint} flushes every dirty page, then writes the
+checkpoint record with the active transactions. Updates must not run while it
+does.
+\dpart{Alternatives} ARIES's fuzzy checkpoint, which writes the transaction and
+dirty page tables without flushing anything or stopping the system.
+\dpart{Why} After a sharp checkpoint nothing older than its record needs redo,
+so analysis builds the dirty page table from the page records after it, and
+the checkpoint needs no table of its own. Fuzzy checkpoints are an
+optimization to add once the three passes are known to be correct.
+\dpart{Cost} Updates stall while every dirty page is written. The log is not
+yet truncated after a checkpoint, so analysis still reads the whole file to
+find losers that began before it.
 \end{decision}
 
 \begin{decision}{Recovery is tested against an oracle}
-\dpart{Choice} A crash harness kills the process at random points and at named
-crash points, reopens the store, and compares it with an oracle that applied
-only acknowledged commits. The harness is itself tested on deliberately broken
-stores.
+\dpart{Choice} A crash harness kills a real store at random points and at named
+crash points, reopens it, and compares it with an oracle that applied only
+acknowledged commits, plus structural checks. The harness is itself tested on
+deliberately broken stores.
 \dpart{Alternatives} Hand-written recovery scenarios only.
 \dpart{Why} The bugs in recovery live in interleavings nobody thinks to write.
-Many random crash points find them; a harness that catches a planted lost
-commit proves it can.
-\dpart{Cost} Slow tests, and failures that need a seed to reproduce.
+The first version of this harness only killed between operations on a
+workload too small to split a page. It passed while a crash inside a split
+could leave a broken tree. Making it grow deep trees and die inside
+operations found that bug and the non-idempotent undo within minutes.
+\dpart{Cost} Slow tests (about two minutes for 200 seeds), and failures that
+need a seed to reproduce. Tree descents and the leaf iterator now fail with an
+error on a cycle, so a corrupt store fails a seed rather than hanging the
+harness.
 \end{decision}
 
 \begin{status}
-The log record types used here, including CLRs and checkpoints, exist and
-serialize (plan 8.1). Abort by the log, checkpoints, the three passes, and the
-crash test are plans 8.4 to 8.7, after the buffer pool and B+ tree. The crash
-harness already detects a lost commit and a surviving uncommitted write on
-deliberately faulty test stores.
+Abort by the log (plan 8.4), the sharp checkpoint (plan 8.5), the three passes
+(plan 8.6), and the crash test (plan 8.7) run, and 200 seeds pass. What is
+not built yet: the shell does not open a page store from a directory
+(\code{ontodb <dir>} is the memory database of \cref{ch:durability}), the
+log is never truncated, checkpoints are not fuzzy, and a page record is a
+full image.
 \end{status}
 
 \begin{checkyourself}
@@ -183,6 +248,9 @@ deliberately faulty test stores.
 \item The system crashes after CLR 60 but before $T_2$'s end record. What does the next recovery do?
 \item Why is a B+ tree split never undone, even when the transaction that caused it aborts?
 \item What do the dirty page table's recLSNs let redo skip?
+\item A loser inserted triple $t$. Recovery's undo deletes $t$ from SPO and POS, then the machine stops again. Why must the next recovery's undo still delete $t$ from OSP, and what would go wrong if \code{Delete} looked only at SPO?
+\item Why does OntoDB open the catalog after redo instead of before analysis?
+\item A crash harness passes 200 seeds. What else must be true before that means anything?
 \end{checkyourself}
 
 \section*{Further reading}

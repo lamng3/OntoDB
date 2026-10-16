@@ -113,6 +113,9 @@ line is the point.
 \item Without group commit, ten. With it, as few as one, or two if a flush was already running when they arrived.
 \item Short: a torn write. Full length with a bad checksum: corruption. In point-in-time mode, either one ends the valid prefix there.
 \item A checkpoint of the memory database empties the log file. Byte offsets would restart at zero; a counter keeps increasing, so comparisons with the snapshot's LSN stay correct.
+\item Redo rebuilds both leaves, and the old leaf's sibling link points to the new one, but the parent has no separator or pointer for it. A scan along the leaf chain still finds every key. A point lookup for a key that moved to the new leaf descends to the old one and misses it, and an insert of that key would add a duplicate.
+\item Writing it requires the log to be durable up to its pageLSN, and that LSN belongs to an open page group, so the flush would wait for the group to end. If the thread choosing a victim is the one running that group, it would wait for itself. An ordinary flush always finishes.
+\item Simpler: redo is one copy, the same for every kind of page, and needs no code that understands the page. More expensive: every change logs about 4 KB per page, so the log grows by hundreds of times more than with records that describe the change.
 \end{enumerate}
 
 \answers{ch:aries}{12}
@@ -121,6 +124,9 @@ line is the point.
 \item Analysis finds $T_2$ a loser with lastLSN 60. Redo reapplies CLRs 50 and 60 if the pages lack them. Undo reads CLR 60, which has no undoNextLSN, and writes the end record. Nothing is undone twice.
 \item The split is a structural change, valid whoever caused it, and other transactions may since have inserted into the new leaf. Only the logical insert belongs to the transaction, and its undo is a logical delete.
 \item Records for pages that were not dirty at the crash, and records older than a page's recLSN, without reading the page.
+\item The CLR for that undo is written only after the delete finishes, so the next recovery undoes the same insert again. OSP still holds $t$, so the delete must remove it there. A \code{Delete} that asked SPO first would find $t$ gone, report nothing to do, and leave OSP holding a triple the other indexes lack, so a query that scans OSP returns it and one that scans SPO does not.
+\item Redo may be what rebuilds page 0, the catalog: if the crash came after its record was durable but before the page was written, the page on disk is stale or zeros. Reading the index roots before redo could use the wrong roots.
+\item That the harness fails when the store is broken: break redo, the page groups, and the idempotent undo in turn, and watch seeds fail. The workload must also reach the cases that matter, here splits, merges, and crashes inside them.
 \end{enumerate}
 
 \answers{ch:durability}{13}
