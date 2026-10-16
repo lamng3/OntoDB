@@ -10,13 +10,14 @@ The shell is the interface. A later query window, if we build one, sends the sam
 
 - Load Turtle, N-Triples, and RDF/XML. OWL is stored as triples. There is no reasoner.
 - `PREFIX`, `SELECT` of variables or `*`, a basic graph pattern (`a`, `;`, `,`), and `FILTER` with `= != < > <= >=` and `&&`.
-- `DISTINCT`, `LIMIT`, `OFFSET`, and `ORDER BY` parse and appear in the plan. Running them throws until query execution has those operators.
-- `INSERT DATA` and `DELETE DATA` on the memory store.
-- `\explain`. `\explain analyze` is part of the optimizer.
+- `DISTINCT`, `LIMIT`, `OFFSET`, and `ORDER BY`, with an external merge sort on the indexed backend.
+- `INSERT DATA` and `DELETE DATA` on both backends.
+- `\explain` and `\explain analyze`. The optimizer picks the join order and the join method.
+- Transactions: `\begin`, `\commit`, `\abort`, strict two-phase locking, three isolation levels, deadlock detection.
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
 - Log records with checksums (8.1) and the log manager with group commit (8.2). Page-level recovery (8.3 to 8.7): each latched page write logs the page's image, abort undoes by the log with CLRs, a blocking checkpoint, ARIES analysis, redo, and undo, and a crash harness that kills a real store. The shell's directory databases still use the durable memory database below.
-- The B+ tree (2.1 to 2.7): page layout, invariants, search, insert with splits, the prefix iterator, bulk load, and delete. Single-threaded until 7.1; nodes remember their path instead of storing parent pointers.
+- The B+ tree (2.1 to 2.7): page layout, invariants, search, insert with splits, the prefix iterator, bulk load, and delete. Safe for concurrent use by latch crabbing (7.1); nodes remember their path instead of storing parent pointers.
 - The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
 
@@ -36,6 +37,12 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. Done. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. Done. |
 | Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
+| Page store in the shell | `scripts/check pagestore` | Planned, next. `ontodb <dir>` on pages, the log, and ARIES. |
+| Log housekeeping | `scripts/check logkeep` | Planned. Log truncation, smaller page records, fuzzy checkpoints. |
+| SPARQL breadth | `scripts/check sparql` | Planned. `OPTIONAL`, `UNION`, aggregates, `DELETE/INSERT WHERE`. |
+| RDFS inference | `scripts/check rdfs` | Planned. Materialized RDFS entailment, kept up to date on insert and delete. |
+
+The planned features have no tests or stubs yet. Starting one means adding its tests disabled, its `scripts/check` name, and its `not built yet (PLAN x.y)` messages, in that order, as the earlier features did. They are listed in the order to build them: each later one is more useful once the shell keeps its data on pages.
 
 ## Later, on purpose
 
@@ -45,7 +52,6 @@ These have no stubs. Add one by writing the design next to the code that impleme
 - A different permutation set. Measured in `benchmarks/indexing/`.
 - MVCC beside strict two-phase locking. Say what a reader does not wait for.
 - Leaf compression, delta-encoded keys. Say what happens to prefix bounds.
-- RDFS `subClassOf` materialization, and which LUBM queries it completes.
 - A query window around the shell. Same engine, a place to type and read rows.
 - Page checksums on the disk store, as PostgreSQL's `data_checksums` and InnoDB do, once pages exist. Checked on read, and by `\verify`.
 - Restore to a chosen LSN: replay the snapshot and the log up to an LSN and stop, to see the database as it was at that point.
@@ -156,7 +162,7 @@ Checked under the `tsan` preset. Latches protect pages for one tree operation. L
 
 ## Recovery
 
-Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree split or merge is redone, not undone as a triple operation. Log the split as a redo-only nested top action and log the triple insert separately.
+Steal / no-force. Redo copies page images. Undo of a triple is logical. A B+ tree split or merge is redone, never undone; its page records form one page group, which reaches the log whole or not at all. The triple change is logged separately, as an update record.
 
 **8.1 Records.** Done. Types: begin, commit, abort, update, CLR, checkpoint. `SerializeTo` writes `Size()` bytes. A short buffer throws. An update carries the triple and whether it inserted. A CLR carries `undo_next`. A checkpoint lists the active transactions. Put the length in the record.
 
@@ -193,3 +199,60 @@ The directory holds two files. `snapshot` is a full image at one LSN. `wal` hold
 **9.7 Shell flow.** One shell session loads an OWL file, updates it, checkpoints, verifies, and a second session on the same directory sees the result.
 
 Scenarios covered: Turtle and RDF/XML loads survive a reopen; inserts and deletes replay in order; a no-op statement logs nothing; a crash before commit leaves no trace; term ids are stable; snapshot plus log replays to the same state; a crash after the snapshot does not replay twice; a corrupt snapshot refuses to open; a torn tail keeps earlier commits; a corrupt record drops everything after it; a tampered log fails `\verify`.
+
+## Page store in the shell
+
+Today `ontodb <dir>` opens the durable memory database, and the page store recovers only in tests. This feature makes a directory hold the page store: the database file, its log, and ARIES on open. The memory database stays, because the book compares the two designs and existing directories use it. Tests in `test/pagestore/`.
+
+**10.1 Directory format.** A new directory gets `db`, `wal`, and a one-line `format` file naming the store (`pages 1`). A directory with a `snapshot` and no `format` file is a memory database and opens as today. `ontodb --memory <dir>` creates a memory database. Opening a directory whose `format` names an unknown store or version refuses, and says which. `\set backend` is refused on a persistent database, either kind.
+
+**10.2 Open runs recovery.** Opening a page directory cuts a torn final log record (the code in the crash harness moves into `src/recovery/`), then runs analysis and redo, opens the catalog, the disk dictionary, and the indexed store, and runs undo. The recovery modes of 9.5 apply: point in time truncates at the first bad record and reports it; `--strict` refuses. The shell prints `LogRecovery::Summary` when there was anything to recover.
+
+**10.3 Statements log.** On a page directory the transaction manager gets the log manager, so every statement and every explicit transaction logs its triple changes, commit forces the log, and abort undoes by the log with CLRs. Dictionary terms are pages too, so they are covered by page records; a term an aborted transaction added stays, as on the memory path. A test kills the process after a commit and before any page write, and the reopened database has the triple.
+
+**10.4 Loads.** `\load` into a page database is one transaction. Decide and record between two designs: log an update record per triple (simple, the log grows with the data), or bulk load into empty trees, write every page, and log one record naming the load (SQL Server's minimal logging; undo is "drop the trees"). Measure both on LUBM(1): log bytes and load time. A crash during a load leaves the database as it was before it.
+
+**10.5 Clean close and checkpoint.** `\quit` and end of input write every dirty page, force the log, and shut the file, so the next open redoes nothing (its summary says so). `\checkpoint` runs `CheckpointManager::Checkpoint` with every statement held out (the backend lock taken alone), because the checkpoint is sharp.
+
+**10.6 Verify.** `\verify` on a page database checks every tree's invariants, that SPO, POS, and OSP hold the same triples, that every id in them is in the dictionary, and that the log scans clean. It changes nothing.
+
+**10.7 Crash test through the shell.** A second harness mode drives `Database` itself with SPARQL text on a page directory and kills it, between statements and at named crash points. Test-only options give the trees small nodes and the pool few frames, so splits, merges, and steals happen. `scripts/crashtest --seeds 200 --shell` is green.
+
+## Log housekeeping
+
+What a page store that lives for months needs from its log. Measured in `benchmarks/logging/`: log bytes per inserted triple, checkpoint pause, and recovery time.
+
+**11.1 Truncate after a checkpoint.** After a checkpoint, the log keeps only what recovery can still need: records from the checkpoint on, and every record of a transaction active at the checkpoint. The rest is cut by writing the kept tail to a new file, fsyncing it, and renaming it over the old one; LSNs are counters, so they keep counting. A crash at any step leaves a log that recovers to the same state. A test checks the file shrinks and recovery after truncation matches recovery without it.
+
+**11.2 Smaller page records.** A page's first change after a checkpoint logs its full image, as PostgreSQL's full-page writes do, so a torn page write can still be repaired. Later changes log only the byte ranges that differ from the page as it was when latched. Redo applies a diff only to a page whose pageLSN is the record's predecessor for that page. Record the log bytes per triple before and after.
+
+**11.3 Fuzzy checkpoint.** The checkpoint writes the active transactions and the dirty page table (each page's recLSN) without writing pages or holding statements out. Analysis starts from the checkpoint's tables, and redo from the smallest recLSN. A test runs a writer during the checkpoint and checks it never waits for more than one page write. The sharp checkpoint stays as an option for the book's comparison.
+
+## SPARQL breadth
+
+The query forms an ontology user reaches for first. Every new form runs on both backends and is in the differential test; parser errors keep their line and column.
+
+**12.1 OPTIONAL.** A left outer join: every row of the left side, extended by matching rows of the right, or kept with the right's variables unbound. Rows gain an unbound value, printed empty. Nested-loop and hash versions; a `FILTER` inside the `OPTIONAL` belongs to the join condition, and a comparison with an unbound value is an error, which `FILTER` treats as false.
+
+**12.2 UNION.** Both sides run and their rows are concatenated; a variable bound on only one side is unbound in the other's rows. `DISTINCT` over a union removes duplicates across both sides.
+
+**12.3 Aggregates.** `GROUP BY` and `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`, `MAX`, `AVG`, with `HAVING`. Hash aggregation; decide and record what happens when the groups outgrow memory (spill by partition, or refuse with a clear error).
+
+**12.4 Planning around them.** The optimizer may not move a pattern across an `OPTIONAL` boundary, estimates a left join as at least its left side, and `\explain analyze` shows the new operators with estimated and actual rows.
+
+**12.5 DELETE/INSERT WHERE.** An update whose triples come from a pattern. The `WHERE` part is evaluated first, in full, then the deletes, then the inserts, as one transaction under the same locks as other updates.
+
+## RDFS inference
+
+Store what RDFS entails, so a query for `?x a ub:Student` finds graduate students without the user writing the subclass chain. Materialized at write time rather than rewritten into queries at read time: reads stay as fast as they are, at the price of more triples and more work per update.
+
+**13.1 Rules.** The RDFS rules that matter for ontologies: `subClassOf` and `subPropertyOf` are transitive, a type propagates up `subClassOf`, a triple propagates up `subPropertyOf`, and `domain` and `range` give types. `\set inference rdfs|off`, off by default.
+
+**13.2 Materialize.** Compute the closure of the loaded data with semi-naive evaluation: each round joins only the triples new in the last round against the rest, using the existing scans and joins, until a round adds nothing. Decide and record where inferred triples live: in the same indexes with a mark, or in their own permutations that scans also read.
+
+**13.3 Insert.** An inserted triple runs the same rounds starting from itself, in the inserting transaction, so the closure is current at commit.
+
+**13.4 Delete.** Delete and rederive (DRed): remove everything the deleted triple could have supported, then rederive whatever still follows from what remains. A test checks that after random inserts and deletes the store equals a closure computed from scratch.
+
+**13.5 LUBM.** With inference on, the LUBM(1) queries that need RDFS (q06 among them) return the official answer counts. Record load time and size with and without inference in `benchmarks/inference/`.
+
