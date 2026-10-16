@@ -17,7 +17,15 @@
 #include <string>
 #include <vector>
 
+#include "buffer/buffer_pool_manager.h"
+#include "catalog/catalog.h"
 #include "common/types.h"
+#include "concurrency/lock_manager.h"
+#include "concurrency/transaction_manager.h"
+#include "recovery/log_manager.h"
+#include "recovery/log_recovery.h"
+#include "storage/disk/disk_manager.h"
+#include "store/indexed_store.h"
 #include "test_util.h"
 
 extern char** environ;
@@ -197,7 +205,82 @@ class WalFakeStore {
   std::map<int, std::vector<std::pair<bool, Triple>>> active_;
 };
 
-void Apply(WalFakeStore* store, const Op& op) {
+// The real store (PLAN 8.7): B+ tree indexes on a 4-frame pool, so pages are
+// stolen, with every page change logged as an image and every triple change
+// as an update record. Opening a directory that already has a log runs ARIES
+// first: a torn final record is cut off, then analysis, redo, the catalog,
+// and undo.
+class RealStore {
+ public:
+  explicit RealStore(const std::filesystem::path& dir)
+      : disk_(PrepareLog(dir) / "db"), log_((dir / "wal").string()), pool_(4, &disk_, 2, &log_) {
+    log_.StartFlushThread();
+    LogRecovery recovery(&log_, &pool_, &disk_, nullptr);
+    recovery.Analyze();
+    recovery.Redo();
+    catalog_ = std::make_unique<Catalog>(&pool_);
+    recovery.SetCatalog(catalog_.get());
+    recovery.Undo();
+    store_ = std::make_unique<IndexedStore>(catalog_.get(), &pool_, nullptr);
+    txns_ = std::make_unique<TransactionManager>(&locks_, store_.get(), &log_);
+  }
+
+  void Begin(int txn) { open_[txn] = txns_->Begin(IsolationLevel::kReadCommitted); }
+
+  void Insert(int txn, const Triple& triple) { Write(txn, true, triple); }
+
+  void Delete(int txn, const Triple& triple) { Write(txn, false, triple); }
+
+  void Commit(int txn) { txns_->Commit(open_.at(txn)); }
+
+  void Abort(int txn) { txns_->Abort(open_.at(txn)); }
+
+  auto Contents() -> std::vector<Triple> {
+    std::vector<Triple> triples;
+    auto scan = store_->Scan({});
+    scan->Init();
+    Triple triple;
+    while (scan->Next(&triple)) {
+      triples.push_back(triple);
+    }
+    return triples;
+  }
+
+ private:
+  // A kill can tear the log's last record; appending after it would hide every
+  // later record behind it, so the file is cut back to its valid prefix.
+  static auto PrepareLog(const std::filesystem::path& dir) -> std::filesystem::path {
+    std::filesystem::create_directories(dir);
+    const auto wal = dir / "wal";
+    if (std::filesystem::exists(wal)) {
+      const auto scan = ScanLog(wal);
+      if (scan.valid_bytes < scan.file_bytes) {
+        std::filesystem::resize_file(wal, scan.valid_bytes);
+      }
+    }
+    return dir;
+  }
+
+  void Write(int txn, bool insert, const Triple& triple) {
+    Transaction* t = open_.at(txn);
+    if (store_->Contains(triple) != insert) {  // log only a change that will happen
+      txns_->LogUpdate(t, insert, triple);
+      insert ? store_->Insert(triple) : store_->Delete(triple);
+    }
+  }
+
+  DiskManager disk_;
+  LogManager log_;
+  BufferPoolManager pool_;
+  std::unique_ptr<Catalog> catalog_;
+  std::unique_ptr<IndexedStore> store_;
+  LockManager locks_;
+  std::unique_ptr<TransactionManager> txns_;
+  std::map<int, Transaction*> open_;
+};
+
+template<typename Store>
+void Apply(Store* store, const Op& op) {
   switch (op.type) {
     case Op::Type::kBegin:
       store->Begin(op.txn);
@@ -285,7 +368,7 @@ auto CrashChildMain(int argc, char** argv) -> int {
   if (argc < 4) {
     return 2;
   }
-  WalFakeStore store(argv[2], Mode::kCorrect);
+  RealStore store(argv[2]);
   const auto ops = MakeWorkload(static_cast<uint32_t>(std::stoul(argv[3])));
   std::string line;
   size_t index = 0;
@@ -362,7 +445,7 @@ auto RunForked(uint32_t seed) -> CrashReport {
   int status = 0;
   waitpid(pid, &status, 0);
   close(out_pipe[0]);
-  WalFakeStore store(dir.path(), Mode::kCorrect);
+  RealStore store(dir.path());
   return Diff(Oracle(ops, finished), store.Contents());
 }
 

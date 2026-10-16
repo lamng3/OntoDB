@@ -248,4 +248,12 @@ auto LogManager::DebugTail(size_t n) const -> std::string {
   return out.str();
 }
 
+auto LogManager::ReadAll() -> std::vector<LogRecord> {
+  const lsn_t last = NextLsn() - 1;
+  if (last > 0) {
+    Flush(last, true);
+  }
+  return ScanLog(log_path_).records;
+}
+
 }  // namespace ontodb

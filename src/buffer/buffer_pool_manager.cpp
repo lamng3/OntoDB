@@ -159,6 +159,14 @@ auto BufferPoolManager::GetPinnedFrameCount() const -> size_t {
   return pinned;
 }
 
+void BufferPoolManager::LogPageWrite(Page* page) {
+  if (log_manager_ == nullptr) {
+    return;
+  }
+  auto record = LogRecord::Page(page->GetPageId(), page->GetData() + kPageLsnSize);
+  page->SetLSN(log_manager_->Append(&record));
+}
+
 auto BufferPoolManager::DebugString() const -> std::string {
   std::lock_guard<std::mutex> guard(mu_);
   size_t pinned = 0;

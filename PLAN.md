@@ -15,7 +15,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - `\explain`. `\explain analyze` is part of the optimizer.
 - `OPTIONAL`, `UNION`, property paths, aggregates, and `DELETE/INSERT WHERE` fail with a line and a column.
 - A durable memory database. `ontodb <dir>` keeps a snapshot and a write-ahead log in `<dir>`. Each update statement and each `\load` is one transaction, and reopening the directory replays the committed ones. `\checkpoint`, `\verify`, `\log`, and `\crash` work on it. See [Durable memory database](#durable-memory-database).
-- Log records with checksums (8.1) and the log manager with group commit (8.2).
+- Log records with checksums (8.1) and the log manager with group commit (8.2). Page-level recovery (8.3 to 8.7): each latched page write logs the page's image, abort undoes by the log with CLRs, a blocking checkpoint, ARIES analysis, redo, and undo, and a crash harness that kills a real store. The shell's directory databases still use the durable memory database below.
 - The B+ tree (2.1 to 2.7): page layout, invariants, search, insert with splits, the prefix iterator, bulk load, and delete. Single-threaded until 7.1; nodes remember their path instead of storing parent pointers.
 - The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
@@ -34,7 +34,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. Done. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). Done. |
 | Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. Done. |
-| Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. This is the next feature. |
+| Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. Done. |
 | Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
 
 ## Later, on purpose
@@ -162,15 +162,15 @@ Steal / no-force. Redo is page-oriented. Undo of a triple is logical. A B+ tree 
 
 **8.2 Log manager.** Done. `Append` assigns an LSN. `Flush(lsn)` blocks until that LSN is durable. Commit forces. Commits that overlap one flush share it. `\log` prints the tail, oldest first. The log file path is the `LogManager` constructor argument.
 
-**8.3 WAL.** Every update sets pageLSN. The pool flushes the log before the page write, with the crash point between them. `\crash` exits without flushing.
+**8.3 WAL.** Done. Every update sets pageLSN. The pool flushes the log before the page write, with the crash point between them. `\crash` exits without flushing.
 
-**8.4 Abort.** When a log manager was passed in, abort undoes newest-first and writes a CLR per triple. The write-set path remains for a null log. A CLR is redone and is not undone.
+**8.4 Abort.** Done. When a log manager was passed in, abort undoes newest-first and writes a CLR per triple. The write-set path remains for a null log. A CLR is redone and is not undone.
 
-**8.5 Checkpoint.** `\checkpoint` writes a checkpoint record and remembers its LSN. Blocking is enough. Say which kind in the comment above `Checkpoint`. This is a recovery bookmark, not a query snapshot.
+**8.5 Checkpoint.** Done. `\checkpoint` writes a checkpoint record and remembers its LSN. Blocking is enough. Say which kind in the comment above `Checkpoint`. This is a recovery bookmark, not a query snapshot.
 
-**8.6 ARIES.** On open, analysis finds winners, losers, and the redo LSN. Redo repeats every page update whose LSN is greater than the pageLSN, including CLRs. Undo walks losers newest-first. `Summary` is one line per pass: `analysis`, `redo`, `undo`.
+**8.6 ARIES.** Done. On open, analysis finds winners, losers, and the redo LSN. Redo repeats every page update whose LSN is greater than the pageLSN, including CLRs. Undo walks losers newest-first. `Summary` is one line per pass: `analysis`, `redo`, `undo`.
 
-**8.7 Crash test.** `scripts/crashtest --seeds 200` is green. A committed insert is visible after restart. An uncommitted insert is not. The harness already detects a lost commit and a surviving uncommitted write on fake stores.
+**8.7 Crash test.** Done. `scripts/crashtest --seeds 200` is green. A committed insert is visible after restart. An uncommitted insert is not. The forked runs use the real store: a file of pages, a four-frame pool, the log, and recovery on reopen. The fake stores remain to show the harness catches a lost commit and a surviving uncommitted write.
 
 ## Durable memory database
 

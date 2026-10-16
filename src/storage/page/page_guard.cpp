@@ -112,6 +112,9 @@ void WritePageGuard::Drop() {
     return;
   }
   const page_id_t id = page_->GetPageId();
+  if (dirty_) {
+    bpm_->LogPageWrite(page_);  // before the latch goes: the image is what was written
+  }
   page_->WUnlatch();
   bpm_->UnpinPage(id, dirty_);
   bpm_ = nullptr;

@@ -28,8 +28,23 @@ namespace ontodb {
 //     clr         update fields, then i64 undo_next
 //     checkpoint  u32 n, then n x i64 txn_id
 //     term        u64 term_id, u32 n, then n bytes of canonical spelling
+//     page        i32 page_id, then the page's PAGE_SIZE - 8 bytes after its pageLSN
 //     begin, commit, abort: nothing
-enum class LogRecordType { kInvalid, kBegin, kCommit, kAbort, kUpdate, kClr, kCheckpoint, kTerm };
+//
+// A page record (PLAN 8.3) is a physical after-image: redo copies it back
+// when its LSN is newer than the page's pageLSN. Its txn_id is
+// INVALID_TXN_ID; page records are redo-only and belong to no undo chain.
+enum class LogRecordType {
+  kInvalid,
+  kBegin,
+  kCommit,
+  kAbort,
+  kUpdate,
+  kClr,
+  kCheckpoint,
+  kTerm,
+  kPage
+};
 
 // A record whose bytes are all present but wrong: bad checksum, bad type, or
 // an impossible size. A short buffer is a plain StorageException instead,
@@ -57,6 +72,7 @@ class LogRecord {
   auto GetActiveTxns() const -> const std::vector<txn_id_t>& { return active_; }
   auto GetTermId() const -> term_id_t { return term_id_; }
   auto GetTermText() const -> const std::string& { return term_text_; }
+  auto GetImage() const -> const std::string& { return image_; }  // a page record's bytes
 
   void SetLsn(lsn_t lsn) { lsn_ = lsn; }
   void SetPrevLsn(lsn_t lsn) { prev_lsn_ = lsn; }
@@ -75,6 +91,8 @@ class LogRecord {
                   lsn_t undo_next) -> LogRecord;
   static auto Checkpoint(const std::vector<txn_id_t>& active) -> LogRecord;
   static auto Term(txn_id_t txn, term_id_t id, const std::string& text) -> LogRecord;
+  // `bytes` is the page after its pageLSN: PAGE_SIZE - 8 bytes.
+  static auto Page(page_id_t page, const char* bytes) -> LogRecord;
 
  private:
   LogRecordType type_{LogRecordType::kInvalid};
@@ -88,6 +106,7 @@ class LogRecord {
   std::vector<txn_id_t> active_;
   term_id_t term_id_{INVALID_TERM_ID};
   std::string term_text_;
+  std::string image_;
 };
 
 }  // namespace ontodb

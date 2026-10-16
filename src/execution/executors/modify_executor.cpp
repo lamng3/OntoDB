@@ -2,6 +2,7 @@
 
 #include "concurrency/lock_resources.h"
 #include "concurrency/transaction.h"
+#include "concurrency/transaction_manager.h"
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -34,6 +35,13 @@ auto ModifyExecutor::Next(Row* row) -> bool {
     for (const auto& triple : *triples_) {
       if (txn != nullptr) {
         locks->Lock(txn, TripleResource(triple), LockMode::kX, ctx_->GetSession());
+        // With a log, the change is logged before any page it touches; only a
+        // change that will happen is logged, or undo would take back a triple
+        // this statement never added.
+        TransactionManager* txns = ctx_->GetTransactionManager();
+        if (txns != nullptr && txns->HasLog() && store->Contains(triple) != insert_) {
+          txns->LogUpdate(txn, insert_, triple);
+        }
       }
       if (insert_ ? store->Insert(triple) : store->Delete(triple)) {
         changed.push_back(triple);

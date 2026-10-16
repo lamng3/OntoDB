@@ -114,7 +114,7 @@ TEST(P8_2_LogManager, GroupCommit) {
   EXPECT_FALSE(Records(ReadFile(path)).empty());
 }
 
-TEST(P8_4_Undo, DISABLED_AbortWritesClrAndDropsTriple) {
+TEST(P8_4_Undo, AbortWritesClrAndDropsTriple) {
   test::TempDir dir;
   LogManager log((dir.path() / "wal").string());
   log.StartFlushThread();
@@ -143,7 +143,7 @@ TEST(P8_4_Undo, DISABLED_AbortWritesClrAndDropsTriple) {
   EXPECT_TRUE(saw_clr);
 }
 
-TEST(P8_5_Checkpoint, DISABLED_RecordsDurableLsn) {
+TEST(P8_5_Checkpoint, RecordsDurableLsn) {
   test::TempDir dir;
   LogManager log((dir.path() / "wal").string());
   log.StartFlushThread();
@@ -166,7 +166,7 @@ TEST(P8_5_Checkpoint, DISABLED_RecordsDurableLsn) {
   EXPECT_TRUE(saw);
 }
 
-TEST(P8_6_Recovery, DISABLED_AnalysisSplitsWinnersAndLosers) {
+TEST(P8_6_Recovery, AnalysisSplitsWinnersAndLosers) {
   test::TempDir dir;
   const auto db_path = (dir.path() / "db").string();
   const auto log_path = (dir.path() / "wal").string();
@@ -205,7 +205,7 @@ TEST(P8_6_Recovery, DISABLED_AnalysisSplitsWinnersAndLosers) {
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P8_7_CrashTest, DISABLED_RestartDropsUncommitted) {
+TEST(P8_7_CrashTest, RestartDropsUncommitted) {
   test::TempDir dir;
   const auto db_path = (dir.path() / "db").string();
   const auto log_path = (dir.path() / "wal").string();

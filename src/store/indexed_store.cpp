@@ -141,6 +141,11 @@ auto IndexedStore::Delete(const Triple& triple) -> bool {
   return true;
 }
 
+auto IndexedStore::Contains(const Triple& triple) -> bool {
+  const Index& first = indexes_.front();
+  return first.tree->GetValue(KeyOf(first, triple));
+}
+
 auto IndexedStore::InsertBatch(const std::vector<Triple>& triples) -> size_t {
   const bool empty = std::all_of(indexes_.begin(), indexes_.end(),
                                  [](const Index& index) { return index.tree->IsEmpty(); });
