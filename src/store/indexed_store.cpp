@@ -46,14 +46,13 @@ auto Bound(const TriplePattern& p, int position) -> std::optional<term_id_t> {
 IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary* dictionary,
                            const std::vector<std::string>& permutations, int node_max)
     : catalog_(catalog), bpm_(bpm), dictionary_(dictionary) {
-  auto tree = [&](const std::string& name, page_id_t header) {
-    return std::make_unique<BPlusTree>(name, header, bpm_, nullptr, node_max, node_max);
-  };
   for (const char* name : kAllNames) {
     const page_id_t header = catalog_->GetIndexRoot(name);
     const auto order = OrderOf(name);
     if (header != INVALID_PAGE_ID && order.has_value()) {
-      indexes_.push_back({name, *order, tree(name, header)});
+      indexes_.push_back(
+          {name, *order,
+           std::make_unique<BPlusTree>(name, header, bpm_, nullptr, node_max, node_max)});
     }
   }
   if (!indexes_.empty()) {
@@ -73,7 +72,9 @@ IndexedStore::IndexedStore(Catalog* catalog, BufferPoolManager* bpm, Dictionary*
       BPlusTreeHeaderPage(guard.GetPage()).Init();
     }
     catalog_->SetIndexRoot(name, header);
-    indexes_.push_back({name, *order, tree(name, header)});
+    indexes_.push_back(
+        {name, *order,
+         std::make_unique<BPlusTree>(name, header, bpm_, nullptr, node_max, node_max)});
   }
 }
 
