@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 
+#include "common/exception.h"
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
 #include "storage/env.h"
@@ -116,7 +117,7 @@ TEST(P7_1_Crabbing, TinyNodesUnderContentionKeepEveryKey) {
   EXPECT_EQ(env.bpm.GetPinnedFrameCount(), 0u);
 }
 
-TEST(P7_2_Transaction, DISABLED_AbortUndoesWriteSet) {
+TEST(P7_2_Transaction, AbortUndoesWriteSet) {
   MemStore store;
   LockManager locks;
   TransactionManager txns(&locks, &store);
@@ -142,7 +143,7 @@ TEST(P7_2_Transaction, DISABLED_AbortUndoesWriteSet) {
   EXPECT_NE(debug.find(std::to_string(committed->GetId())), std::string::npos);
 }
 
-TEST(P7_3_LockManager, DISABLED_ExclusiveBlocksAndSharedCompatible) {
+TEST(P7_3_LockManager, ExclusiveBlocksAndSharedCompatible) {
   LockManager locks;
   Transaction first(1, IsolationLevel::kReadCommitted);
   const auto key = KeyResource(TripleKey{});
@@ -174,6 +175,51 @@ TEST(P7_3_LockManager, DISABLED_ExclusiveBlocksAndSharedCompatible) {
   ASSERT_TRUE(locks.Lock(&reader, shared, LockMode::kX, nullptr));
   const auto held = locks.GetLocks(reader.GetId());
   EXPECT_FALSE(held.empty());
+}
+
+// Two keys locked in opposite orders: the detector aborts the younger
+// transaction (the larger id), and the older one's wait then succeeds.
+TEST(P7_3_LockManager, DetectorAbortsTheYoungerInACycle) {
+  LockManager locks;
+  locks.StartDeadlockDetection();
+  Transaction older(1, IsolationLevel::kReadCommitted);
+  Transaction younger(2, IsolationLevel::kReadCommitted);
+  const auto a = KeyResource(TripleKey::Encode(1, 1, 1));
+  const auto b = KeyResource(TripleKey::Encode(2, 2, 2));
+  ASSERT_TRUE(locks.Lock(&older, a, LockMode::kX, nullptr));
+  ASSERT_TRUE(locks.Lock(&younger, b, LockMode::kX, nullptr));
+  std::atomic<bool> older_got{false};
+  std::thread first([&] {
+    locks.Lock(&older, b, LockMode::kX, nullptr);
+    older_got = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  EXPECT_THROW(locks.Lock(&younger, a, LockMode::kX, nullptr), TransactionAbortException);
+  EXPECT_EQ(younger.GetState(), TransactionState::kAborted);
+  locks.UnlockAll(&younger);  // what TransactionManager::Abort does
+  first.join();
+  EXPECT_TRUE(older_got.load());
+  EXPECT_EQ(older.GetState(), TransactionState::kGrowing);
+}
+
+// Both hold S; the older asks for X and queues; the younger asks for X too and
+// waits behind it. Neither can go: the younger is aborted, the older upgrades.
+TEST(P7_3_LockManager, UpgradeQueuesAndTheYoungerYields) {
+  LockManager locks;
+  locks.StartDeadlockDetection();
+  Transaction older(1, IsolationLevel::kReadCommitted);
+  Transaction younger(2, IsolationLevel::kReadCommitted);
+  const auto key = KeyResource(TripleKey::Encode(5, 5, 5));
+  ASSERT_TRUE(locks.Lock(&older, key, LockMode::kS, nullptr));
+  ASSERT_TRUE(locks.Lock(&younger, key, LockMode::kS, nullptr));
+  std::thread upgrade([&] { EXPECT_TRUE(locks.Lock(&older, key, LockMode::kX, nullptr)); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  EXPECT_THROW(locks.Lock(&younger, key, LockMode::kX, nullptr), TransactionAbortException);
+  locks.UnlockAll(&younger);
+  upgrade.join();
+  const auto held = locks.GetLocks(older.GetId());
+  ASSERT_EQ(held.size(), 1u);
+  EXPECT_EQ(held[0].second, LockMode::kX);
 }
 
 }  // namespace

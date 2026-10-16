@@ -148,15 +148,33 @@ measured comparison: what a reader no longer waits for, and what keeping old
 versions costs.
 \end{decision}
 
-\begin{decision}{Detect deadlocks and abort the youngest (planned)}
-\dpart{Choice} A background thread builds the waits-for graph and aborts the
-transaction with the largest id in each cycle.
+\begin{decision}{Detect deadlocks and abort the youngest}
+\dpart{Choice} A background thread wakes every 20 ms, builds the waits-for
+graph (an edge from each waiting request to every transaction holding an
+incompatible lock, or waiting ahead of it in the same queue), and aborts the
+transaction with the largest id in each cycle. The victim's \code{Lock} call
+throws; its owner then undoes it and releases its locks.
 \dpart{Alternatives} Prevention by wait--die or wound--wait, or lock-wait
 timeouts.
 \dpart{Why} Detection aborts only when a cycle really exists. Choosing the
 youngest is deterministic, so a deadlock spec can name the victim, and it
 usually discards the least work.
 \dpart{Cost} A detector thread, and transactions sit blocked until it runs.
+\end{decision}
+
+\begin{decision}{Upgrades wait their turn}
+\dpart{Choice} Each resource has a FIFO queue. A transaction holding S that
+asks for X keeps its S lock and queues behind any request already waiting; it
+never jumps ahead.
+\dpart{Alternatives} Let upgrades go to the front of the queue, as many lock
+managers do.
+\dpart{Why} FIFO grants are easy to predict and test, and no request can be
+starved by a stream of upgrades.
+\dpart{Cost} Two transactions that both read a key and then both try to change
+it deadlock: each waits for the other's S lock. The detector breaks the cycle
+by aborting the younger, which is exactly what the \code{upgrade-deadlock}
+spec expects. Jumping the queue would not avoid that deadlock either; the usual
+cure is to take the stronger lock when reading (``select for update'').
 \end{decision}
 
 \begin{decision}{The phantom mechanism is a written choice (planned)}
@@ -195,8 +213,9 @@ ThreadSanitizer.
 
 \begin{status}
 Latch crabbing runs (plan 7.1): the B+ tree is safe for concurrent readers
-and writers. Transactions, the lock manager, isolation, deadlock detection,
-and phantoms are plans 7.2 to 7.6. The isolation harness
+and writers. The transaction manager (plan 7.2) and the lock manager, with its
+deadlock detector (plan 7.3), run; isolation through the shell, deadlocks
+between sessions, and phantoms are plans 7.4 to 7.6. The isolation harness
 already exists and checks itself.
 \end{status}
 

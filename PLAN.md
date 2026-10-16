@@ -33,7 +33,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. Done. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. Done. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). Done. |
-| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. 7.1 is done. |
+| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. 7.1 to 7.3 are done. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
 | Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
 
@@ -144,9 +144,9 @@ Checked under the `tsan` preset. Latches protect pages for one tree operation. L
 
 **7.1 Crabbing.** Done. Pessimistic crabbing holds a parent only while the child might split or merge. Optimistic crabbing latches the leaf and restarts the whole operation if the leaf splits. OntoDB uses pessimistic crabbing; a leaf emptied by a merge is kept, with its link, for iterators.
 
-**7.2 Transactions.** `Begin` ids start at 1. The younger transaction has the larger id. With a null log, `Abort` undoes the write set newest-first. A finished transaction accepts no more work.
+**7.2 Transactions.** Done. `Begin` ids start at 1. The younger transaction has the larger id. With a null log, `Abort` undoes the write set newest-first. A finished transaction accepts no more work.
 
-**7.3 Locks.** Modes `IS`, `IX`, `S`, `X`, `SIX` on the database, an index, and a key. Grant order on one resource is FIFO. `Lock` blocks until granted or the transaction aborts. Before blocking, set the session wait reason, for example `X lock held by txn 5`. Take `IS` or `IX` on the database and the index before `S` or `X` on a key. An upgrade does not jump ahead of a waiter.
+**7.3 Locks.** Done. Modes `IS`, `IX`, `S`, `X`, `SIX` on the database, an index, and a key. Grant order on one resource is FIFO. `Lock` blocks until granted or the transaction aborts. Before blocking, set the session wait reason, for example `X lock held by txn 5`. Take `IS` or `IX` on the database and the index before `S` or `X` on a key. An upgrade does not jump ahead of a waiter.
 
 **7.4 Isolation.** Strict two-phase locking: exclusive locks are held until commit or abort at every level. Read uncommitted takes no shared locks. Read committed releases shared locks at the end of the statement. Repeatable read and serializable hold them until commit. The specs in `test/isolation/specs/` are the contract. `\begin` runs on the session worker so two sessions can block.
 
