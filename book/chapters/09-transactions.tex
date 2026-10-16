@@ -87,9 +87,11 @@ load}) is one atomic, durable transaction (\cref{ch:durability}).
 \end{ontodb}
 
 \begin{decision}{Every statement is a transaction}
-\dpart{Choice} Each update statement, and each \code{\textbackslash load}, is
-one atomic and durable transaction unless \code{\textbackslash begin} opens an
-explicit one.
+\dpart{Choice} A statement outside \code{\textbackslash begin} runs in its own
+implicit transaction, which takes locks like any other and commits when the
+statement ends; in a persistent database it is also one durable log
+transaction. \code{\textbackslash load} takes an exclusive lock on the whole
+database for its length rather than one lock per triple.
 \dpart{Alternatives} Require an explicit \code{BEGIN}; or apply statements
 immediately with no atomicity.
 \dpart{Why} An ontology edit is usually one statement, and a load should be all
@@ -113,7 +115,7 @@ middle of a statement, only the log can take it back (\cref{ch:aries}), and the
 memory backend without a directory keeps nothing anyway.
 \end{decision}
 
-\begin{decision}{Read committed by default (planned)}
+\begin{decision}{Read committed by default}
 \dpart{Choice} \code{\textbackslash set isolation} defaults to \code{rc}.
 \dpart{Alternatives} Serializable, or repeatable read (MySQL's InnoDB default).
 \dpart{Why} It matches PostgreSQL's default, forbids dirty reads, and releases
@@ -121,6 +123,36 @@ shared locks at the end of each statement, so readers block writers only
 briefly.
 \dpart{Cost} Non-repeatable reads and phantoms are possible unless a session
 raises its level.
+\end{decision}
+
+\begin{decision}{Shared locks are kept to commit, even at read committed}
+\dpart{Choice} Every level that takes shared locks (all but read uncommitted)
+keeps them until the transaction ends. The levels differ in what else is
+locked:
+
+\smallskip
+\begin{tabular}{@{}ll@{}}
+\toprule
+Level & Locks a scan takes (exclusive locks: always, to commit) \\
+\midrule
+ru & none \\
+rc & S on each triple read \\
+rr & S on each triple read, and S on the set of triples \\
+ser & S on the whole database for each query \\
+\bottomrule
+\end{tabular}
+\smallskip
+
+\dpart{Alternatives} The textbook rule, which releases read committed's shared
+locks at the end of each statement.
+\dpart{Why} The specs are the contract, and two of them, \code{lock-upgrade}
+and \code{upgrade-deadlock}, run at read committed and expect a key read by an
+earlier statement to block a later delete. Isolation levels are minimums, so
+keeping locks longer is allowed; read committed still forbids dirty reads and
+still lets new triples appear (\code{nonrepeatable-rc}).
+\dpart{Cost} Read committed holds more locks for longer than most engines'
+read committed, so read-then-write transactions conflict, and deadlock, more
+often.
 \end{decision}
 
 \begin{decision}{Isolation is specified as executable schedules}
@@ -134,10 +166,11 @@ happens or does not. A stress test can pass by luck; a schedule cannot.
 \end{decision}
 
 \begin{status}
-Statement-level atomicity and durability run today: on every backend a failed
-statement undoes itself (plan 4.6), and in a persistent database every
-statement is a logged transaction. Explicit multi-statement
-transactions and isolation levels are plans 7.2 to 7.6.
+Transactions and isolation run (plans 7.2 to 7.6): explicit transactions with
+\code{\textbackslash begin}, \code{\textbackslash commit}, and
+\code{\textbackslash abort}; the four isolation levels; and all twelve specs,
+on both backends. A persistent database runs each statement as its own
+transaction and does not accept \code{\textbackslash begin} yet.
 \end{status}
 
 \begin{checkyourself}

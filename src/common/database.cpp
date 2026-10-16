@@ -12,6 +12,7 @@
 #include "buffer/buffer_pool_manager.h"
 #include "catalog/catalog.h"
 #include "common/exception.h"
+#include "concurrency/lock_resources.h"
 #include "dictionary/disk_dictionary.h"
 #include "dictionary/mem_dictionary.h"
 #include "parser/parser.h"
@@ -69,9 +70,19 @@ void CopyTriples(Dictionary& from_terms, TripleStore& from, Dictionary& to_terms
 }  // namespace
 
 Database::Database()
-    : dictionary_(std::make_unique<MemDictionary>()), store_(std::make_unique<MemStore>()) {}
+    : dictionary_(std::make_unique<MemDictionary>())
+    , store_(std::make_unique<MemStore>())
+    , txns_(std::make_unique<TransactionManager>(&locks_, store_.get())) {
+  locks_.StartDeadlockDetection();
+}
 
 Database::~Database() = default;
+
+auto Database::CurrentTransaction() -> Transaction* {
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  const auto it = current_.find(std::this_thread::get_id());
+  return it == current_.end() ? nullptr : it->second;
+}
 
 auto Database::CurrentStatistics() -> std::shared_ptr<const Statistics> {
   std::lock_guard<std::mutex> guard(statistics_mu_);
@@ -97,7 +108,13 @@ auto Database::GetStore() -> TripleStore* {
 }
 
 void Database::SetBackend(BackendKind kind) {
-  std::lock_guard<std::mutex> guard(indexed_mu_);
+  std::unique_lock<std::shared_mutex> alone(backend_mu_);
+  {
+    std::lock_guard<std::mutex> guard(sessions_mu_);
+    if (!current_.empty()) {
+      throw std::runtime_error("finish the open transactions before switching backends");
+    }
+  }
   if (kind == BackendKind::kIndexed && !indexed_) {
     if (durability_) {
       throw std::runtime_error(
@@ -119,6 +136,7 @@ void Database::SetBackend(BackendKind kind) {
     bpm_ = nullptr;
     indexed_.reset();
   }
+  txns_ = std::make_unique<TransactionManager>(&locks_, GetStore());
   Config config = GetConfig();
   config.backend = kind;
   UpdateConfig(config);
@@ -137,19 +155,28 @@ auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
   return db;
 }
 
+// A load locks the whole database exclusively for its length, rather than
+// taking one lock per triple of a file that may hold millions.
 auto Database::Load(const std::string& path) -> LoadStats {
-  if (!durability_) {
-    std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
-    if (indexed_) {
-      one_at_a_time.lock();
-    }
-    const LoadStats stats = RdfLoader().Load(path, *GetDictionary(), *GetStore());
-    InvalidateStatistics();
-    return stats;
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
+  if (CurrentTransaction() != nullptr) {
+    throw std::runtime_error("\\load runs on its own, not inside a transaction");
   }
+  Transaction* txn = txns_->Begin(GetConfig().isolation);
   LoadStats stats;
-  durability_->Run(
-      [&](TripleStore& store) { stats = RdfLoader().Load(path, *dictionary_, store); });
+  try {
+    locks_.Lock(txn, DatabaseResource(), LockMode::kX, nullptr);
+    if (!durability_) {
+      stats = RdfLoader().Load(path, *GetDictionary(), *GetStore());
+    } else {
+      durability_->Run(
+          [&](TripleStore& store) { stats = RdfLoader().Load(path, *dictionary_, store); });
+    }
+  } catch (...) {
+    txns_->Abort(txn);
+    throw;
+  }
+  txns_->Commit(txn);
   InvalidateStatistics();
   return stats;
 }
@@ -168,36 +195,64 @@ void Database::SetTracing(bool enabled) {
   trace_.SetEnabled(enabled);
 }
 
+// Runs one statement in this thread's explicit transaction, or in an implicit
+// one that commits at the end. If the transaction is chosen as a deadlock
+// victim, it is aborted (undone, its locks released) before the error reaches
+// the caller, and an explicit transaction is over.
 auto Database::Execute(const std::string& sparql, SessionState* session) -> StatementResult {
-  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
-  if (indexed_) {
-    one_at_a_time.lock();
-  }
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
   const AstQuery ast = Parser(sparql).Parse();
   const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
   const bool is_update =
       bound.kind == BoundQuery::Kind::kInsert || bound.kind == BoundQuery::Kind::kDelete;
-  if (!durability_ || !is_update) {
-    ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
-                        &stats_, &trace_, session);
-    const auto statistics = is_update ? nullptr : CurrentStatistics();
-    return ExecutionEngine(&ctx, statistics.get()).Execute(bound);
+  Transaction* txn = CurrentTransaction();
+  const bool implicit = txn == nullptr;
+  if (implicit) {
+    txn = txns_->Begin(config.isolation);
   }
   StatementResult result;
-  durability_->Run([&](TripleStore& store) {
-    ExecutorContext ctx(&store, dictionary_.get(), &config, nullptr, nullptr, nullptr, bpm_,
-                        &stats_, &trace_, session);
-    result = ExecutionEngine(&ctx).Execute(bound);
-  });
+  try {
+    if (!is_update && txn->GetIsolationLevel() == IsolationLevel::kSerializable) {
+      // Serializable's phantom protection: a shared lock on the whole
+      // database, a predicate lock whose predicate is "every triple". No
+      // insert can land in anything this transaction read, whether or not
+      // the scan found rows or even ran.
+      locks_.Lock(txn, DatabaseResource(), LockMode::kS, session);
+    }
+    if (!durability_ || !is_update) {
+      ExecutorContext ctx(GetStore(), GetDictionary(), &config, txn, txns_.get(), &locks_, bpm_,
+                          &stats_, &trace_, session);
+      const auto statistics = is_update ? nullptr : CurrentStatistics();
+      result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
+    } else {
+      durability_->Run([&](TripleStore& store) {
+        ExecutorContext ctx(&store, dictionary_.get(), &config, txn, txns_.get(), &locks_, bpm_,
+                            &stats_, &trace_, session);
+        result = ExecutionEngine(&ctx).Execute(bound);
+      });
+    }
+  } catch (const TransactionAbortException&) {
+    txns_->Abort(txn);
+    if (!implicit) {
+      std::lock_guard<std::mutex> guard(sessions_mu_);
+      current_.erase(std::this_thread::get_id());
+    }
+    throw;
+  } catch (...) {
+    if (implicit) {
+      txns_->Abort(txn);
+    }
+    throw;
+  }
+  if (implicit) {
+    txns_->Commit(txn);
+  }
   return result;
 }
 
 auto Database::Explain(const std::string& sparql) -> std::string {
-  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
-  if (indexed_) {
-    one_at_a_time.lock();
-  }
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
   const AstQuery ast = Parser(sparql).Parse();
   const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
@@ -207,11 +262,10 @@ auto Database::Explain(const std::string& sparql) -> std::string {
   return ExecutionEngine(&ctx, statistics.get()).Explain(bound);
 }
 
+// A diagnostic: the query runs without a transaction, so it takes no locks
+// and may see uncommitted triples.
 auto Database::ExplainAnalyze(const std::string& sparql) -> std::string {
-  std::unique_lock<std::mutex> one_at_a_time(indexed_mu_, std::defer_lock);
-  if (indexed_) {
-    one_at_a_time.lock();
-  }
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
   const AstQuery ast = Parser(sparql).Parse();
   const BoundQuery bound = Binder(*GetDictionary()).Bind(ast);
   const Config config = GetConfig();
@@ -281,23 +335,46 @@ auto Database::TreeDebug(const std::string& index, bool dot) const -> std::strin
 }
 
 void Database::Begin() {
-  throw NotImplementedException("PLAN 7.2: TransactionManager::Begin");
+  if (durability_) {
+    throw std::runtime_error(
+        "a persistent database runs each statement as its own transaction; \\begin is not "
+        "supported there yet");
+  }
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  auto& slot = current_[std::this_thread::get_id()];
+  if (slot != nullptr) {
+    throw std::runtime_error("already in transaction " + std::to_string(slot->GetId()));
+  }
+  slot = txns_->Begin(GetConfig().isolation);
 }
 
 void Database::Commit() {
-  throw NotImplementedException("PLAN 7.2: TransactionManager::Commit");
+  Transaction* txn = CurrentTransaction();
+  if (txn == nullptr) {
+    throw std::runtime_error("no transaction to commit");
+  }
+  txns_->Commit(txn);
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  current_.erase(std::this_thread::get_id());
 }
 
 void Database::Abort() {
-  throw NotImplementedException("PLAN 7.2: TransactionManager::Abort");
+  Transaction* txn = CurrentTransaction();
+  if (txn == nullptr) {
+    throw std::runtime_error("no transaction to abort");
+  }
+  txns_->Abort(txn);
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  current_.erase(std::this_thread::get_id());
 }
 
 auto Database::TransactionsDebug() const -> std::string {
-  throw NotImplementedException("PLAN 7.2: TransactionManager::DebugString");
+  return txns_->DebugString();
 }
 
 auto Database::LocksDebug() const -> std::string {
-  throw NotImplementedException("PLAN 7.3: LockManager::DebugString");
+  return locks_.DebugString();
 }
 
 auto Database::LogDebug(size_t n) const -> std::string {

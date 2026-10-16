@@ -15,6 +15,11 @@ namespace ontodb {
 // triples this statement already changed are put back before the exception
 // propagates, so the statement is atomic on either backend. Next returns one
 // row holding the number of triples changed, then false.
+//
+// Under a transaction it takes IX on the database and on the triple set, then
+// X on each triple before writing it, and records each change in the
+// transaction's write set (taken back out again if the statement undoes it).
+// Exclusive locks are held to the end of the transaction at every level.
 class ModifyExecutor : public AbstractExecutor {
  public:
   ModifyExecutor(ExecutorContext* ctx, const AbstractPlanNode* plan, bool insert);

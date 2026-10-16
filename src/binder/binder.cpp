@@ -162,7 +162,10 @@ auto Binder::Bind(const AstQuery& query) -> BoundQuery {
   bound.offset = query.offset;
 
   const bool ground = query.kind != AstQuery::Kind::kSelect;
-  const bool intern = query.kind != AstQuery::Kind::kDelete;
+  // Only INSERT DATA adds terms to the dictionary. A query or a delete looks
+  // them up: a term the store has never seen matches nothing, so the pattern
+  // can be answered (and locked) as empty without writing the dictionary.
+  const bool intern = query.kind == AstQuery::Kind::kInsert;
   for (const auto& triple : query.triples) {
     BoundTriplePattern pattern;
     pattern.subject = BindTerm(triple.subject, ground, intern);

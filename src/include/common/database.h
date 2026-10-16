@@ -3,12 +3,17 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
 
 #include "common/io_stats.h"
 #include "common/session_state.h"
 #include "common/trace.h"
 #include "common/types.h"
+#include "concurrency/lock_manager.h"
+#include "concurrency/transaction_manager.h"
 #include "dictionary/mem_dictionary.h"
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
@@ -32,10 +37,15 @@ class BufferPoolManager;
 // triple across by spelling, so ids are those of the new dictionary.
 // SetBackend(kMem) moves them back and deletes the file. A persistent
 // database stays on the memory backend until page-level recovery (PLAN 8).
-// Statements on the indexed backend run one at a time: the tree is safe for
-// concurrent use (PLAN 7.1), but a scan holds a leaf latch between rows, and
-// a transaction waiting for a lock while holding a latch could deadlock with
-// a writer in a way the lock manager cannot see.
+// Concurrency (PLAN 7): each session thread has at most one explicit
+// transaction (\begin ... \commit or \abort); a statement outside one runs in
+// its own implicit transaction. Statements lock triples through the lock
+// manager on both backends (strict two-phase locking, deadlock detection);
+// the isolation levels are described in execution/executors. \load takes an
+// exclusive lock on the whole database instead of one lock per triple. A
+// persistent database does not accept \begin yet: its log commits each
+// statement on its own. Switching backends waits for running statements and
+// is refused while a transaction is open.
 class Database {
  public:
   Database();
@@ -82,6 +92,7 @@ class Database {
   // re-ANALYZEd). Sessions share one immutable snapshot.
   auto CurrentStatistics() -> std::shared_ptr<const Statistics>;
   void InvalidateStatistics();
+  auto CurrentTransaction() -> Transaction*;  // this thread's explicit transaction, or null
 
   std::unique_ptr<MemDictionary> dictionary_;
   std::unique_ptr<MemStore> store_;
@@ -92,7 +103,11 @@ class Database {
   BufferPoolManager* bpm_{nullptr};
   std::unique_ptr<Durability> durability_;
   std::unique_ptr<IndexedBackend> indexed_;
-  std::mutex indexed_mu_;  // one statement at a time on the indexed backend
+  std::shared_mutex backend_mu_;  // statements share it; a backend switch takes it alone
+  LockManager locks_;
+  std::unique_ptr<TransactionManager> txns_;  // over the active store
+  std::mutex sessions_mu_;
+  std::unordered_map<std::thread::id, Transaction*> current_;  // explicit transaction per thread
   std::mutex statistics_mu_;
   std::shared_ptr<const Statistics> statistics_;
 };

@@ -136,7 +136,7 @@ operations use latch crabbing, and the whole feature runs under
 ThreadSanitizer. MVCC is a deliberate future comparison, not part of the plan.
 \end{ontodb}
 
-\begin{decision}{Locking, not multiversioning (planned)}
+\begin{decision}{Locking, not multiversioning}
 \dpart{Choice} Strict two-phase locking with multi-granularity locks.
 \dpart{Alternatives} MVCC with snapshot isolation, as PostgreSQL and most
 modern engines use; or optimistic concurrency control.
@@ -177,15 +177,36 @@ spec expects. Jumping the queue would not avoid that deadlock either; the usual
 cure is to take the stronger lock when reading (``select for update'').
 \end{decision}
 
-\begin{decision}{The phantom mechanism is a written choice (planned)}
-\dpart{Choice} Serializable must block an insert into a range another
-transaction scanned, using key-range, gap, or predicate locks; whichever is
-chosen is written above the code, and repeatable read does not take it.
-\dpart{Alternatives} Lock the whole index for every scan at serializable.
-\dpart{Why} The difference between repeatable read and serializable should be
-exactly one mechanism, visible in one place.
-\dpart{Cost} Range locks interact with splits and merges, which is why this is
-the last slice of the feature.
+\begin{decision}{Phantoms: a lock on the set at repeatable read, on everything at serializable}
+\dpart{Choice} A repeatable-read scan takes S on the set of triples, so no
+insert can enter what it scanned until it commits. A serializable query takes
+S on the whole database: a predicate lock whose predicate is ``every triple'',
+which blocks every writer, including an insert into a range whose scan found
+nothing or never ran.
+\dpart{Alternatives} Key-range or gap locks on the index, which block only
+inserts into the scanned range; or true predicate locks on each pattern.
+\dpart{Why} Locks name triples, not index entries (next decision), so there is
+no index gap to lock; the coarse locks are simple and obviously correct. A
+pattern that names a term the store has never seen matches nothing and its
+scan does not run, which is why repeatable read lets the
+\code{phantom-rr} insert through while serializable still blocks
+\code{phantom-ser}'s.
+\dpart{Cost} Concurrency, badly: one serializable reader stops every writer,
+and one repeatable-read scan stops every insert. Gap locks are the natural
+refinement once locks are taken per index.
+\end{decision}
+
+\begin{decision}{Locks name triples, not index entries}
+\dpart{Choice} The lock hierarchy is the database, the set of triples, and one
+triple keyed by its SPO key, whichever index a scan used and however many
+indexes store the triple.
+\dpart{Alternatives} Lock each index's entries separately, as a relational
+engine locks index keys.
+\dpart{Why} A triple is one logical item stored three times; locking it once
+means a writer and a reader using different permutations still meet on the
+same lock. The same hierarchy serves the memory store, which has no indexes.
+\dpart{Cost} No range locks are possible on a resource with no order, so
+phantoms are handled coarsely (previous decision).
 \end{decision}
 
 \begin{decision}{Pessimistic crabbing, and emptied leaves stay}
@@ -212,10 +233,10 @@ ThreadSanitizer.
 \end{decision}
 
 \begin{status}
-Latch crabbing runs (plan 7.1): the B+ tree is safe for concurrent readers
-and writers. The transaction manager (plan 7.2) and the lock manager, with its
-deadlock detector (plan 7.3), run; isolation through the shell, deadlocks
-between sessions, and phantoms are plans 7.4 to 7.6. The isolation harness
+Concurrency control is complete (plans 7.1 to 7.6): latch crabbing, the
+transaction and lock managers, the four isolation levels, deadlock detection,
+and phantom protection. The twelve isolation specs pass on both backends, and
+the concurrency tests run under ThreadSanitizer. The isolation harness
 already exists and checks itself.
 \end{status}
 
