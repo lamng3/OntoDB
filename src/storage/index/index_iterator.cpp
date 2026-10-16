@@ -27,6 +27,18 @@ IndexIterator::IndexIterator(BufferPoolManager* bpm, page_id_t leaf, int index,
   Settle();
 }
 
+IndexIterator::IndexIterator(BufferPoolManager* bpm, ReadPageGuard leaf, int index,
+                             std::optional<TripleKey> upper)
+    : bpm_(bpm)
+    , guard_(std::move(leaf))
+    , leaf_(guard_.GetPageId())
+    , index_(index)
+    , end_(false)
+    , bounded_(upper.has_value())
+    , upper_(upper.value_or(TripleKey{})) {
+  Settle();
+}
+
 IndexIterator::IndexIterator(IndexIterator&& other) noexcept
     : bpm_(other.bpm_)
     , guard_(std::move(other.guard_))

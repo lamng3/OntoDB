@@ -214,21 +214,20 @@ structural mistake into a failure on the operation that caused it.
 every test.
 \end{decision}
 
-\begin{decision}{Remember the path, not parent pointers}
+\begin{decision}{Hold the path, not parent pointers}
 \dpart{Choice} Pages store no pointer to their parent. An insert or delete
-records the page ids on its way down, releasing each page before reading its
-child, and re-fetches a parent by id only if a split or merge reaches it. A
-descent pins one page at a time; a merge pins three (parent, node, sibling).
-\dpart{Alternatives} A parent pointer in every page; or keeping every page on
-the path pinned and latched until the operation ends.
+keeps the pages it may have to change latched on its way down (the latch
+crabbing of \cref{ch:concurrency}), so a split or merge finds its parent
+already in hand.
+\dpart{Alternatives} A parent pointer in every page.
 \dpart{Why} A split of an internal page with 145 children would have to rewrite
 the parent pointer of half of them, which is dozens of page writes for one
-insert. Releasing pages on the way down lets the whole tree run on a pool of
-three frames.
-\dpart{Cost} It is correct only while one thread changes the tree: another
-writer could split a remembered parent between the descent and the re-fetch.
-Latch crabbing (plan 7.1) replaces this with holding exactly the pages a
-structure change can reach.
+insert. A parent pointer is also one more thing a concurrent split can make
+stale.
+\dpart{Cost} The latched path is pinned: an insert into a tree whose pages are
+all full pins every level, so the pool must be larger than the tree's height
+plus two. The first, single-threaded version remembered page ids instead and
+re-read parents; that was correct only while one thread changed the tree.
 \end{decision}
 
 \begin{decision}{Split in the middle}
@@ -292,8 +291,8 @@ and others rarer, so the full-size tests stay as well.
 The B+ tree is complete (plans 2.1 to 2.7): the page layout, the invariant
 checker and \code{ToDot}, point search, insert with splits, the prefix
 iterator, bulk load, and delete with merge and redistribution, with all four
-crash points. It is single-threaded until latch crabbing (plan 7.1), and the
-shell's \code{\textbackslash tree} draws it on the indexed backend. Loading into
+crash points. It is safe for concurrent use by latch crabbing (plan 7.1), and
+the shell's \code{\textbackslash tree} draws it on the indexed backend. Loading into
 an empty indexed store goes through bulk load (plan 6.1), and LUBM(1) loads and
 answers queries on a 32-frame pool (plan 6.2).
 \end{status}

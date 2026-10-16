@@ -33,7 +33,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Query execution | `scripts/check execution` | Rebinding, index nested loop, hash join, distinct, limit, sort, insert. Done. |
 | Optimizer | `scripts/check optimizer` | Statistics, cardinality, join order, join method, explain analyze. Done. |
 | Bulk load | `scripts/check load` | Load by sorting permutations, then LUBM(1). Done. |
-| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. This is the next feature. |
+| Concurrency | `scripts/check concurrency` | Crabbing, transactions, locks, isolation, deadlock, phantoms. Uses TSan. 7.1 is done. |
 | Recovery | `scripts/check recovery` | Log, group commit, WAL, undo, checkpoints, ARIES, crash test. 8.1 and 8.2 are done. |
 | Durable memory database | `scripts/check durable` | Done. Snapshot plus logical WAL for the memory store, recovery modes, verify. |
 
@@ -142,7 +142,7 @@ The memory nested-loop join already returns the right rows. These slices change 
 
 Checked under the `tsan` preset. Latches protect pages for one tree operation. Locks protect triples for a transaction.
 
-**7.1 Crabbing.** Pessimistic crabbing holds a parent only while the child might split or merge. Optimistic crabbing latches the leaf and restarts the whole operation if the leaf splits.
+**7.1 Crabbing.** Done. Pessimistic crabbing holds a parent only while the child might split or merge. Optimistic crabbing latches the leaf and restarts the whole operation if the leaf splits. OntoDB uses pessimistic crabbing; a leaf emptied by a merge is kept, with its link, for iterators.
 
 **7.2 Transactions.** `Begin` ids start at 1. The younger transaction has the larger id. With a null log, `Abort` undoes the write set newest-first. A finished transaction accepts no more work.
 

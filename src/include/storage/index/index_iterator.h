@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "storage/index/triple_key.h"
 #include "storage/page/page_guard.h"
 
@@ -20,6 +22,10 @@ class IndexIterator {
   IndexIterator() = default;
   IndexIterator(BufferPoolManager* bpm, page_id_t leaf, int index);
   IndexIterator(BufferPoolManager* bpm, page_id_t leaf, int index, const TripleKey& upper);
+  // Starts on a leaf the caller has already latched (the tree's descent), so
+  // the leaf cannot change between finding the position and reading it.
+  IndexIterator(BufferPoolManager* bpm, ReadPageGuard leaf, int index,
+                std::optional<TripleKey> upper);
   IndexIterator(const IndexIterator&) = delete;
   auto operator=(const IndexIterator&) -> IndexIterator& = delete;
   IndexIterator(IndexIterator&& other) noexcept;

@@ -170,9 +170,33 @@ exactly one mechanism, visible in one place.
 the last slice of the feature.
 \end{decision}
 
+\begin{decision}{Pessimistic crabbing, and emptied leaves stay}
+\dpart{Choice} Readers latch each child before releasing its parent. Writers
+latch the header and the path in write mode and release every latched
+ancestor as soon as the newest page is safe: not full, for an insert; above its
+minimum, for a delete. A split writes its two leaves and releases them before
+allocating the parent's new page. A leaf emptied by a merge is not freed: it
+keeps its sibling link and stays as an empty page.
+\dpart{Alternatives} Optimistic crabbing (read-latch to the leaf, restart if
+the leaf must split); B-link trees, whose right links let readers skip
+latching altogether; or one latch for the whole tree.
+\dpart{Why} Pessimistic crabbing is the simplest protocol that lets operations
+on different parts of the tree run at once, and it reuses the single-threaded
+split and merge code with latched pages in place of re-read ones. An iterator
+moves right after releasing its leaf, so it may hold the id of a leaf that a
+merge has just emptied; keeping that page readable, with a link onward, means
+the iterator simply steps through it.
+\dpart{Cost} A writer on a full path latches and pins the whole path, which
+serializes inserts near the root and needs a pool larger than the height plus
+two. Emptied leaves are never reclaimed. A test with 3-key nodes, four writers,
+and a concurrent scanner checks every key and the invariants under
+ThreadSanitizer.
+\end{decision}
+
 \begin{status}
-Concurrency control is plans 7.1 to 7.6: crabbing, transactions, the lock
-manager, isolation, deadlock detection, and phantoms. The isolation harness
+Latch crabbing runs (plan 7.1): the B+ tree is safe for concurrent readers
+and writers. Transactions, the lock manager, isolation, deadlock detection,
+and phantoms are plans 7.2 to 7.6. The isolation harness
 already exists and checks itself.
 \end{status}
 
