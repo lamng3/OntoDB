@@ -2,6 +2,8 @@
 
 #include <optional>
 
+#include "concurrency/lock_resources.h"
+#include "concurrency/transaction.h"
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -57,6 +59,13 @@ void TripleScanExecutor::InitWith(const Row& bindings) {
   store_pattern.subject = value(pattern.subject);
   store_pattern.predicate = value(pattern.predicate);
   store_pattern.object = value(pattern.object);
+  Transaction* txn = ctx_->GetTransaction();
+  if (txn != nullptr && txn->GetIsolationLevel() != IsolationLevel::kReadUncommitted) {
+    LockManager* locks = ctx_->GetLockManager();
+    locks->Lock(txn, DatabaseResource(), LockMode::kIs, ctx_->GetSession());
+    const bool range = txn->GetIsolationLevel() == IsolationLevel::kRepeatableRead;
+    locks->Lock(txn, TriplesResource(), range ? LockMode::kS : LockMode::kIs, ctx_->GetSession());
+  }
   iter_ = ctx_->GetStore()->Scan(store_pattern);
   iter_->Init();
 }
@@ -85,10 +94,31 @@ auto TripleScanExecutor::Next(Row* row) -> bool {
         !BindPosition(pattern.object, triple.object, &candidate)) {
       continue;
     }
+    if (!LockRow(triple)) {
+      continue;
+    }
     *row = std::move(candidate);
     return true;
   }
   return false;
+}
+
+auto TripleScanExecutor::LockRow(const Triple& triple) -> bool {
+  Transaction* txn = ctx_->GetTransaction();
+  if (txn == nullptr || txn->GetIsolationLevel() == IsolationLevel::kReadUncommitted) {
+    return true;
+  }
+  bool waited = false;
+  ctx_->GetLockManager()->Lock(txn, TripleResource(triple), LockMode::kS, ctx_->GetSession(),
+                               &waited);
+  if (!waited) {
+    return true;
+  }
+  auto check =
+      ctx_->GetStore()->Scan(TriplePattern{triple.subject, triple.predicate, triple.object});
+  check->Init();
+  Triple found;
+  return check->Next(&found);
 }
 
 auto TripleScanExecutor::GetOutputSchema() const -> const Schema& {

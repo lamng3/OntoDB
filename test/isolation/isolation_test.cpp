@@ -88,13 +88,16 @@ class DatabaseDriver : public IsolationDriver {
   SessionPool pool_;
 };
 
-void RunFiles(const std::vector<std::filesystem::path>& paths) {
+void RunFiles(const std::vector<std::filesystem::path>& paths, bool indexed = false) {
   ASSERT_FALSE(paths.empty());
   for (const auto& path : paths) {
     const auto spec = LoadSpec(path);
     const auto problem = Validate(spec);
     ASSERT_TRUE(problem.empty()) << path << " " << problem;
     Database db;
+    if (indexed) {
+      db.SetBackend(BackendKind::kIndexed);
+    }
     ApplyIsolation(&db, spec.isolation);
     if (!spec.setup.empty()) {
       db.Execute(spec.setup, nullptr);
@@ -147,11 +150,17 @@ expect wait
   EXPECT_TRUE(matched.ok) << matched.message;
 }
 
-TEST(P7_4_Isolation, DISABLED_RunsSpecs) {
+TEST(P7_4_Isolation, RunsSpecs) {
   RunFiles(AllSpecs());
 }
 
-TEST(P7_5_Deadlock, DISABLED_AbortsYounger) {
+// The same contract on the indexed backend: B+ trees, latch crabbing, and
+// scans that hold no latch between rows, under concurrent sessions.
+TEST(P7_4_Isolation, RunsSpecsOnTheIndexedBackend) {
+  RunFiles(AllSpecs(), true);
+}
+
+TEST(P7_5_Deadlock, AbortsYounger) {
   std::vector<std::filesystem::path> paths;
   for (const auto& path : AllSpecs()) {
     if (path.filename().string().find("deadlock") != std::string::npos) {
@@ -161,7 +170,7 @@ TEST(P7_5_Deadlock, DISABLED_AbortsYounger) {
   RunFiles(paths);
 }
 
-TEST(P7_6_Phantom, DISABLED_RepeatableAllowsSerializableBlocks) {
+TEST(P7_6_Phantom, RepeatableAllowsSerializableBlocks) {
   std::vector<std::filesystem::path> paths;
   for (const auto& path : AllSpecs()) {
     if (path.filename().string().find("phantom") != std::string::npos) {

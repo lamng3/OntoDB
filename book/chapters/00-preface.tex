@@ -65,7 +65,8 @@ dictionary, and the indexed store, which the shell switches to with
 manager; every query operator and the optimizer (statistics, join order, the
 choice of join, and \code{\textbackslash explain analyze}); and durable
 databases (snapshots, a checksummed write-ahead log, recovery, and
-verification); and bulk loading. Concurrency control and page-level ARIES are
+verification); bulk loading; and concurrency control (latch crabbing,
+transactions, locks, isolation, deadlocks, and phantoms). Page-level ARIES is
 designed and being built.
 \end{status}
 

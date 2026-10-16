@@ -125,6 +125,20 @@ An empty pattern, with no triple to match, returns one empty row rather than
 none: the identity input for a join that has nothing to bind yet.
 \end{ontodb}
 
+\begin{decision}{Only inserts add terms to the dictionary}
+\dpart{Choice} The binder interns a constant only for \code{INSERT DATA}. In a
+query or a delete it looks the term up; a term the store has never seen gets no
+id, and the pattern that names it matches nothing without scanning.
+\dpart{Alternatives} Intern every constant the binder meets, as the first
+version did.
+\dpart{Why} A read-only query should not write: on the disk dictionary each new
+constant was a heap record and two tree inserts, and in a persistent database
+a term added by a query was logged later by an unrelated update. It also lets
+an impossible pattern take no locks, which the isolation specs rely on.
+\dpart{Cost} A filter constant is still interned, because comparisons look
+values up by id.
+\end{decision}
+
 \begin{decision}{Unsupported syntax fails at parse time}
 \dpart{Choice} \code{OPTIONAL}, \code{UNION}, property paths, aggregates, and
 \code{DELETE/INSERT WHERE} are recognized by the parser and rejected there with
