@@ -64,7 +64,8 @@ TEST(Shell, ExplainStatsSetAndUnbuiltCommands) {
   EXPECT_NE(out.find("not built yet (PLAN 8.5)"), std::string::npos);
   EXPECT_NE(out.find("not built yet (PLAN 8.3)"), std::string::npos);
   EXPECT_EQ(out.find("not built yet (PLAN 3.4)"), std::string::npos);
-  EXPECT_NE(out.find("not built yet (PLAN 5.5)"), std::string::npos);
+  EXPECT_EQ(out.find("not built yet (PLAN 5.5)"), std::string::npos);
+  EXPECT_NE(out.find("actual"), std::string::npos);
   EXPECT_NE(out.find("TripleScan"), std::string::npos);
   EXPECT_NE(out.find("\\session"), std::string::npos);
 }

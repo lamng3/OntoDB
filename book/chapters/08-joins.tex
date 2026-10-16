@@ -210,6 +210,21 @@ which greedy is close to optimal, and a greedy order is easy to explain in
 step wins, can be ordered badly.
 \end{decision}
 
+\begin{decision}{\code{EXPLAIN ANALYZE} wraps every executor}
+\dpart{Choice} \code{\textbackslash explain analyze} builds the plan's executors
+with each one wrapped in a counter, runs the query to the end, and prints every
+node with the optimizer's estimate beside the rows it actually returned. The
+inner scan of an index nested-loop join is marked ``probed by the join above'',
+since the join asks the store directly and the scan never runs.
+\dpart{Alternatives} Count only at the root; or sample timings per operator.
+\dpart{Why} The node where estimate and actual diverge most is where a
+statistic or an assumption failed, and only per-node counts show which node
+that is. Wrapping keeps the executors unaware of the measurement.
+\dpart{Cost} One extra virtual call per row per operator, and the query really
+runs: \code{explain analyze} of a slow query is slow. Updates are planned but
+not run.
+\end{decision}
+
 \begin{decision}{\code{auto} picks the operator per join, and is the default}
 \dpart{Choice} With \code{\textbackslash set join auto}, the default, each join
 of the reordered chain chooses its own operator: a cross product stays a nested
@@ -260,8 +275,10 @@ file under all three against the memory store. Statistics (plan 5.1), cardinalit
 ordering (plan 5.3) run: a query written with \code{?s ?p ?o} first is
 reordered to start from its selective pattern, and \code{\textbackslash
 explain} shows the reordered plan. The automatic choice of join (plan 5.4)
-runs and is the default. A query can carry a deadline, which every scan checks;
-the joins benchmark uses it. \code{\textbackslash explain analyze} is plan 5.5.
+runs and is the default, and \code{\textbackslash explain analyze} prints
+estimated against actual rows for every node (plan 5.5): the optimizer is
+complete. A query can carry a deadline, which every scan checks; the joins
+benchmark uses it.
 \end{status}
 
 \begin{checkyourself}
