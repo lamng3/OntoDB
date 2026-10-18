@@ -5,16 +5,17 @@ Short answers to the questions at the end of each chapter. Try a question
 before reading its answer; most of them take one line of reasoning, and that
 line is the point.
 
-\newcommand{\answers}[2]{\section*{\cref{#1}: \nameref{#1}}\begin{enumerate}[label=#2.\arabic*,leftmargin=2.4em]}
+% The question numbers come from the chapter's label, so inserting a chapter renumbers them.
+\newcommand{\answers}[1]{\section*{\cref{#1}: \nameref{#1}}\begin{enumerate}[label=\getrefnumber{#1}.\arabic*,leftmargin=2.4em]}
 
-\answers{ch:engine}{1}
+\answers{ch:engine}
 \item (a) The B+ tree, an access method. (b) The buffer pool. (c) The optimizer.
 \item It touches every layer: executors take locks on the keys they read and write, every page change is logged, and commit is decided at the interface. It cuts across the stack instead of sitting in it.
 \item A five-way self-join of the triple table on the subject column, each pattern being a selection on that table, followed by a projection.
 \item Only \code{Metal}. The stored triples say \code{Metal subClassOf Material}; \code{Alloy subClassOf Material} would have to be inferred, and OntoDB has no reasoner.
 \end{enumerate}
 
-\answers{ch:pages}{2}
+\answers{ch:pages}
 \item At byte $37 \times 4096 = 151{,}552$. Pages are fixed-size, so the offset is arithmetic on the page id.
 \item The index points at the record id, \emph{(page, slot)}. Compaction changes the offset stored in the slot, not the slot number.
 \item No: it was only in the operating system's page cache. \code{fsync} on the file (and, for a new file, on its directory) makes it durable.
@@ -24,7 +25,7 @@ line is the point.
 \item Allocation grew the file, but the new length was never made durable (no \code{fsync} before the crash), while the log record that uses the page was forced. Redo reads the page past the end as zeros and reapplies the record; writing the page back grows the file.
 \end{enumerate}
 
-\answers{ch:buffer}{3}
+\answers{ch:buffer}
 \item It must be written back to disk (after the log is flushed up to its pageLSN, by the write-ahead rule) before the frame is reused.
 \item At $t = 11$ the backward 2-distances are A: $11 - 8 = 3$, B: $11 - 3 = 8$, C: $11 - 7 = 4$. LRU-K evicts B.
 \item X. Both have fewer than three accesses, so both have infinite distance, and the tie goes to the earliest oldest access: X's is at time 2, Y's at time 5. Recency does not enter until a frame has $K$ accesses.
@@ -38,7 +39,7 @@ line is the point.
 \item That frame can never be evicted, so the pool is permanently one frame smaller; enough leaks and every frame is pinned and the next miss fails. Guards unpin exactly once at the end of their scope, and the tests check that nothing stays pinned.
 \end{enumerate}
 
-\answers{ch:btree}{4}
+\answers{ch:btree}
 \item A 24-byte key plus a 4-byte child page id. $n$ keys separate $n + 1$ children, so the leftmost child has no key of its own, and storing slots uniformly simply leaves that key unused.
 \item $300^3 = 2.7 \times 10^7 < 10^8 \le 300^4$, so four levels. The root and the roughly 300 pages below it are always cached, so a lookup costs about two reads.
 \item The right (new) leaf, whose first key it is. Left in the left leaf, a key equal to the separator sits in the left child, which breaks the separator rule, and a search for 14 goes right.
@@ -49,7 +50,7 @@ line is the point.
 \item A full leaf splits into two half-full leaves, so random inserts leave leaves about two-thirds full, and each insert is a random descent. Bulk load writes full leaves sequentially.
 \end{enumerate}
 
-\answers{ch:rdf-indexing}{5}
+\answers{ch:rdf-indexing}
 \item 258 is \code{0x0102}. Big-endian: \code{00 00 00 00 00 00 01 02}; little-endian: \code{02 01 00 00 00 00 00 00}. Against 3 (\code{...00 03} and \code{03 00...}), big-endian puts 258 above 3, correctly; little-endian puts it below.
 \item \code{(5, ?, ?)}: $[(5,0,0), (6,0,0))$. \code{(5, 7, ?)}: $[(5,7,0), (5,8,0))$.
 \item With $n = 2$, the predicate overflows to 0 and the carry bumps the subject: $(6, 0, 0)$. With $n = 1$ and subject $2^{64}-1$, nothing is above the prefix, so the bound saturates to $(2^{64}-1, 2^{64}-1, 2^{64}-1)$.
@@ -62,14 +63,14 @@ line is the point.
 \item A root moves whenever it splits or collapses; the header page absorbs those changes. The catalog changes only when an index is created or dropped.
 \end{enumerate}
 
-\answers{ch:lsm}{6}
+\answers{ch:lsm}
 \item An LSM tree: writes are sequential and batched. A B+ tree pays a random page write for each insert; the LSM tree pays later in compaction, and in read amplification.
 \item Older versions of the key sit in immutable SSTables that are never edited. The tombstone shadows them until compaction drops both.
 \item One wasted SSTable read. A Bloom filter never says ``absent'' for a present key.
 \item Appending to the log is the write path, and a checkpoint rewrites the whole state as one sorted image, which is a compaction into a single level that discards the old log.
 \end{enumerate}
 
-\answers{ch:plans}{7}
+\answers{ch:plans}
 \item \code{?s} is slot 0, \code{?name} slot 1, \code{?age} slot 2, in order of first appearance.
 \item Rows can differ in slots that are not projected: two students with the same name are two scan rows but one projected row.
 \item Ids are assigned in load order, not value order; \code{"10"} can have a smaller id than \code{"9"}. Sorting must compare values.
@@ -79,7 +80,7 @@ line is the point.
 \item An empty pattern has exactly one solution, the empty binding, and that row is the identity for a join. Zero rows would make every join empty.
 \end{enumerate}
 
-\answers{ch:joins}{8}
+\answers{ch:joins}
 \item Nested loop: $10^3 \times 10^6 = 10^9$ comparisons. Index nested loop: 1,000 prefix probes, each a root-to-leaf descent (mostly cached) plus the few matching triples.
 \item When both inputs are large, no index makes a probe selective, and the build side fits in memory.
 \item The exact number of triples with that predicate and object, read from the pair counts. Errors return at joins, where the estimator must assume how join values are distributed, and after updates, until the statistics are collected again.
@@ -91,7 +92,24 @@ line is the point.
 \item It joins three type patterns that share no variable: about 1,900 graduate students times 1,000 universities times 15 departments, tens of millions of rows of cross product, before the first pattern that connects them. Any operator must produce those rows; only putting a connected pattern first avoids them.
 \end{enumerate}
 
-\answers{ch:transactions}{9}
+\answers{ch:sparql}
+\item \code{(Steel, unbound)}, \code{(Copper, 1085)}, \code{(Glass, unbound)}. Steel's 1370 fails the join filter, so Steel survives padded; the filter decides only which right rows may join.
+\item Inner join is symmetric, so either side can be built. A left join must pad the preserved side's unmatched rows; probing with it pads at probe time, while building on it needs a matched flag per entry and a final pass to emit the unmatched ones, a different algorithm.
+\item Both \code{?a} and \code{?b}. Rows from the left side have \code{?b} unbound, and rows from the right side have \code{?a} unbound.
+\item It keeps the set of distinct values per group, so its memory grows with the data rather than with the number of groups; a hash table sized for the groups can overflow because of those sets.
+\item Every left row survives a left join, so its output has at least as many rows as its left input. An estimate of 40 below a left input of 100 is impossible, a bug in the estimator.
+\item The scan can meet triples the statement itself inserted, so which matches it processes depends on where new triples land relative to the cursor, and templates that create new matches can keep generating work. Materializing the solutions of \code{WHERE} first fixes them before anything changes.
+\end{enumerate}
+
+\answers{ch:inference}
+\item Rewriting wins when the hierarchy changes often and is queried rarely, or the closure is huge and queries touch little of it. Materializing wins for read-heavy workloads that ask for classes with their subclasses, the usual case for ontologies.
+\item Round 1: \code{A subClassOf C} (rdfs11) and \code{x a B} (rdfs9). Round 2: \code{x a C}. Round 3: nothing new, stop.
+\item A new triple can match either body pattern of a rule. Joining it only as the first premise misses every derivation in which it is the second.
+\item In a cycle the links support each other's derivations, so after the asserted support is deleted each still has a count from the cycle, though nothing outside the cycle derives it. DRed overdeletes everything the deleted triple could have supported and puts back only what follows from what remains, so self-support cannot keep a triple alive.
+\item It should still hold the triple, now as an inferred one. The store must record which triples were asserted, separately from whether they are entailed, so the delete removes the assertion and rederivation keeps the entailment.
+\end{enumerate}
+
+\answers{ch:transactions}
 \item $r_1(A)$ before $w_2(A)$ gives $T_1 \to T_2$; $r_2(B)$ before $w_1(B)$ gives $T_2 \to T_1$. The graph has a cycle, so the schedule is not conflict-serializable.
 \item $r_1(A)\, w_2(A)\, c_2\, r_1(A)$: $T_1$ reads two different values. Repeatable read is the first level that forbids it.
 \item Validity is defined by the application's invariants, such as ``every student has a name''. The engine cannot know them; it provides atomicity, isolation, and durability, so that the application can keep them.
@@ -99,7 +117,7 @@ line is the point.
 \item Both read $N$ and both insert a student they believe is number $N + 1$: an anomaly built on a phantom (write skew). It is possible at read uncommitted, read committed, and repeatable read. Serializable's range locks make one insert wait; if both hold the range in S and both want to insert, it is a deadlock, and the younger transaction is aborted.
 \end{enumerate}
 
-\answers{ch:concurrency}{10}
+\answers{ch:concurrency}
 \item Plain 2PL may release an X lock in its shrinking phase, before commit; another transaction reads the value and must abort if the writer later aborts. Strict 2PL holds X locks until commit or abort, so no one reads an uncommitted write.
 \item IS on the database and S on the \code{"spo"} index, with no key locks. Any writer below must hold IX on the index, and IX conflicts with S, so the one check on the index covers every key.
 \item $T_5$, the younger (larger id).
@@ -107,7 +125,7 @@ line is the point.
 \item For an insert, a child is safe if it is not full, so it cannot split. For a delete, it is safe if it is more than half full, so it cannot underflow.
 \end{enumerate}
 
-\answers{ch:wal}{11}
+\answers{ch:wal}
 \item Rule 1: a page is written only after the log records for its changes are durable; this makes steal safe. Rule 2: a commit is acknowledged only after its commit record is durable; this makes no force safe.
 \item Skip it: pageLSN $40 \ge 35$, so the change is already on the page.
 \item Without group commit, ten. With it, as few as one, or two if a flush was already running when they arrived.
@@ -118,7 +136,7 @@ line is the point.
 \item Simpler: redo is one copy, the same for every kind of page, and needs no code that understands the page. More expensive: every change logs about 4 KB per page, so the log grows by hundreds of times more than with records that describe the change.
 \end{enumerate}
 
-\answers{ch:aries}{12}
+\answers{ch:aries}
 \item Analysis is unchanged: the dirty page table still has P1 at recLSN 10, because nothing logged the flush. Redo fetches P1, sees pageLSN $40 \ge$ each record's LSN, and skips all three. Undo is unchanged: undo 40 (CLR 50), undo 20 (CLR 60), end.
 \item Repeating history puts the database in exactly its state at the crash, so undo can use the same logical operations as a normal abort, and CLRs from an interrupted earlier undo are replayed, not repeated.
 \item Analysis finds $T_2$ a loser with lastLSN 60. Redo reapplies CLRs 50 and 60 if the pages lack them. Undo reads CLR 60, which has no undoNextLSN, and writes the end record. Nothing is undone twice.
@@ -129,10 +147,28 @@ line is the point.
 \item That the harness fails when the store is broken: break redo, the page groups, and the idempotent undo in turn, and watch seeds fail. The workload must also reach the cases that matter, here splits, merges, and crashes inside them.
 \end{enumerate}
 
-\answers{ch:durability}{13}
+\answers{ch:durability}
 \item No steal: uncommitted changes never reach the snapshot, and replay simply does not apply an uncommitted transaction's updates.
 \item The new snapshot. Every record in the old log is at or below the snapshot's LSN, so none is applied.
 \item Ids are dense, and each term record carries its id. Skipping 19 would put the next term on id 19, so committed triples naming 20 would mean a different term; OntoDB's replay detects this and refuses.
 \item When damage could come from something other than a crash (a failing disk, copied or edited files) and nothing should be truncated before someone looks.
 \item Checksums show each record is intact as written. Replay shows the files actually reproduce the live database, which also catches logic bugs, such as a change that was never logged, that leave perfectly valid checksums.
+\end{enumerate}
+
+\answers{ch:pagestore}
+\item It cannot know what the newer layout means. Reading it could make recovery ``repair'' good pages into garbage and write them back. Refusing loses nothing.
+\item Redo is physical and needs only page ids and bytes. Undo of an index change is logical, because splits may have moved the key, so it needs the trees, whose roots the catalog names, and the catalog's pages are correct only after redo.
+\item In the log: commit forced it. Redo replays the page records onto the pages that were never written.
+\item When the trees it builds start empty, or are new trees swapped in at commit. Undo drops those trees and frees their pages.
+\item That the next open has nothing to redo or undo. A test reopens and checks that the recovery summary says so.
+\item \code{SELECT ?s WHERE \{ ?s ?p :Material \}} scans OSP, while \code{SELECT ?o WHERE \{ :Steel ?p ?o \}} scans SPO. If OSP lacks a triple SPO holds, the first query misses it and the second finds it.
+\end{enumerate}
+
+\answers{ch:logkeep}
+\item From LSN 120: the smaller of the smallest recLSN (140) and the smallest first LSN of an active transaction (120).
+\item pageLSNs on disk and LSNs inside records refer to each other; renumbering would break the comparisons redo depends on. The file records the LSN of its first record instead.
+\item A diff assumes the bytes around it are the old version, but a torn page mixes old and new sectors, so the result is neither. The first change after a checkpoint logs the full image, so redo rebuilds each page whole from the log before any diff applies.
+\item So that it applies only to the exact version it was computed against. Redo checks that the page's pageLSN equals that LSN.
+\item A begin record, then an end record with the active transactions and each dirty page's recLSN; no pages. The tables are copied while transactions run, so changes between begin and end may be missing, and analysis replays the records from the begin record to catch up.
+\item With no page writes at checkpoint time, recLSNs advance only when pages are written in the background. The cleaner keeps the redo start, and so the part of the log that must be kept, recent.
 \end{enumerate}

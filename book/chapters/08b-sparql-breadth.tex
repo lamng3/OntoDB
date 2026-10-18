@@ -1,0 +1,227 @@
+\chapter{Beyond Basic Graph Patterns}
+\label{ch:sparql}
+
+A basic graph pattern is a conjunction: every triple pattern must match, or the
+row is gone. Most questions people ask of an ontology are not conjunctions.
+``List every material, with its melting point \emph{if we know it}'' keeps a
+material whose melting point is missing. ``Metals or ceramics'' is a
+disjunction. ``How many subclasses does each class have'' collapses rows into
+groups. This chapter adds the operators behind those questions, \code{OPTIONAL},
+\code{UNION}, and aggregation, and the update form whose triples come from a
+query. Each one is a relational operator the earlier chapters did not need,
+and each one constrains the optimizer in a way an inner join does not.
+
+\section{Where a conjunction loses rows}
+
+Take three materials, two of them with a melting point:
+\begin{lstlisting}
+:Steel   :meltsAt 1370 .
+:Copper  :meltsAt 1085 .
+:Steel a :Material .  :Copper a :Material .  :Glass a :Material .
+\end{lstlisting}
+The pattern \code{\{ ?m a :Material . ?m :meltsAt ?t \}} is a join of two
+scans on \code{?m} (\cref{ch:joins}), and it returns two rows. \code{Glass} is
+not wrong; it is unknown, and the inner join cannot say ``unknown''. The fix is
+an operator whose output keeps every row of one side.
+
+\section{OPTIONAL is a left outer join}
+
+SPARQL's algebra works on \term{solution mappings}: partial functions from
+variables to terms. Two mappings are \term{compatible} when they agree on every
+variable both bind. For multisets of mappings $\Omega_1$ and $\Omega_2$ and a
+filter expression $e$ \cite{sparql,perez2009}:
+\[
+\mathit{LeftJoin}(\Omega_1, \Omega_2, e) \;=\;
+\mathit{Filter}\big(e, \mathit{Join}(\Omega_1, \Omega_2)\big) \;\cup\;
+\{\, \mu_1 \in \Omega_1 \mid \neg\exists \mu_2 \in \Omega_2 :\ \mu_1 \sim \mu_2 \wedge e(\mu_1 \cup \mu_2) \,\}.
+\]
+The first part is the inner join; the second keeps each left mapping that found
+no compatible partner, with the right side's variables \term{unbound}. For the
+example, \code{?m a :Material OPTIONAL \{ ?m :meltsAt ?t \}} gives:
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\code{?m} & \code{?t} \\
+\midrule
+\code{:Steel} & 1370 \\
+\code{:Copper} & 1085 \\
+\code{:Glass} & \emph{(unbound)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+An unbound value is not a value. It is a hole in the row, and the executor has
+to carry it: rows gain a ``not bound'' marker per column, which the result
+printer shows as an empty cell.
+
+\subsection{A filter inside OPTIONAL is part of the join}
+
+The $e$ in the definition matters. Compare
+\begin{lstlisting}
+SELECT ?m ?t WHERE { ?m a :Material OPTIONAL { ?m :meltsAt ?t FILTER(?t > 1200) } }
+SELECT ?m ?t WHERE { ?m a :Material OPTIONAL { ?m :meltsAt ?t } FILTER(?t > 1200) }
+\end{lstlisting}
+The first keeps all three materials: \code{Steel} with 1370, and \code{Copper}
+and \code{Glass} with \code{?t} unbound, because the filter only decides which
+right rows may join. The second filters the finished rows, and a comparison
+with an unbound value is an \emph{error}, which \code{FILTER} treats as false: it
+returns \code{Steel} alone. Moving a filter across an \code{OPTIONAL} boundary
+changes the answer, so the planner must not do it.
+
+\begin{keyidea}
+An outer join is not commutative, and filters do not move freely across it. The
+left side is preserved; the right side only decorates it.
+\end{keyidea}
+
+\section{Executing a left join}
+
+Both join algorithms of \cref{ch:joins} extend to outer joins with one extra bit
+of state.
+
+\begin{description}[leftmargin=1.2em]
+\item[Nested loop.] For each left row, rebind and scan the right side. If no
+right row matched (after the join filter), emit the left row once with the
+right columns unbound. The bit is ``did this left row match'', and it lives for
+one iteration of the outer loop.
+\item[Hash join.] Build the hash table on the \emph{right} side and probe with
+the left. A probe that finds no partner emits the left row padded. If the build
+side were the left one, every left row would need a ``matched'' flag in the
+table and a final pass over the table to emit the unmatched ones; that works,
+but it makes the operator blocking at its end as well as its start.
+\end{description}
+
+An index nested-loop left join is the common case in practice: the left side
+is a selective pattern, and the optional part is a lookup by subject on SPO.
+
+\begin{decision}{Left joins build on the right (planned)}
+\dpart{Choice} The hash left join builds on the optional (right) side and
+probes with the preserved (left) side.
+\dpart{Alternatives} Build on the left with a matched flag per entry, and emit
+unmatched entries after the probe phase.
+\dpart{Why} Padding happens at probe time, the operator streams its output,
+and the optimizer's choice is only whether the right side fits in memory.
+\dpart{Cost} When the right side is much larger than the left, building on it
+costs memory a left build would not.
+\end{decision}
+
+\section{UNION}
+
+\code{\{ P1 \} UNION \{ P2 \}} evaluates both sides and concatenates their rows.
+SPARQL union is a bag union: a row produced by both sides appears twice, and
+\code{DISTINCT} removes duplicates across sides. The sides may bind different
+variables, so a row from one side has the other side's variables unbound, the
+same marker \code{OPTIONAL} introduced. The executor is the simplest operator in
+the engine, a concatenation of two child iterators; the work is in the binder,
+which computes the output columns as the union of both sides' variables.
+
+\section{Aggregation}
+
+\code{GROUP BY} partitions rows by the values of its keys and computes one row
+per group:
+\begin{lstlisting}
+SELECT ?c (COUNT(?sub) AS ?n) WHERE { ?sub rdfs:subClassOf ?c }
+GROUP BY ?c HAVING (COUNT(?sub) > 2)
+\end{lstlisting}
+There are two classic implementations \cite{graefe}:
+\begin{description}[leftmargin=1.2em]
+\item[Sort aggregation.] Sort by the group keys (the external merge sort of
+\cref{ch:joins} already exists), then scan once, finishing a group whenever the
+key changes. Output comes out ordered by the keys.
+\item[Hash aggregation.] Keep a hash table from group key to an accumulator and
+update it per row. One pass, no sort, but the table must hold every group.
+\end{description}
+Accumulators are small: \code{COUNT} is a counter, \code{SUM}, \code{MIN}, and
+\code{MAX} one value, \code{AVG} a sum and a count, divided at the end.
+\code{COUNT(DISTINCT x)} is the exception: it needs the set of distinct values
+per group, so its memory grows with the data, not with the number of groups.
+\code{HAVING} is a filter on the output of the aggregation.
+
+\begin{decision}{Hash aggregation, and what to do when groups outgrow memory (planned)}
+\dpart{Choice} Hash aggregation. When the table exceeds its memory budget,
+the plan records whether to spill or refuse; the leading design is to partition
+the input by a hash of the key into files, then aggregate each partition in
+memory, as hybrid hash join does for joins.
+\dpart{Alternatives} Sort aggregation always; or refuse with a clear error past
+the budget.
+\dpart{Why} Ontology workloads group by class or property, and there are far
+fewer of those than triples, so the table almost always fits and one pass
+beats a sort.
+\dpart{Cost} Output is unordered, so \code{ORDER BY} on the keys still sorts;
+the spill path is code that runs rarely, which is why it needs its own tests.
+\end{decision}
+
+\section{Planning around the new operators}
+
+The join-order search of \cref{ch:joins} treats a basic graph pattern as a set
+of patterns to permute. With \code{OPTIONAL}, the pattern becomes a tree, and
+only parts of it may be reordered:
+\begin{itemize}
+\item Patterns inside the left side may be reordered among themselves, and so
+may patterns inside the right side. A pattern may not move from one side of an
+\code{OPTIONAL} to the other: that would turn an optional match into a required
+one, or the reverse.
+\item The cardinality of a left join is at least that of its left side, since
+every left row survives. An estimate below that is a bug, not a guess.
+\item \code{\textbackslash explain analyze} shows the new operators with
+estimated and actual rows, as it does for joins, so a bad estimate is visible.
+\end{itemize}
+Pérez, Arenas, and Gutierrez \cite{perez2009} identify the \term{well-designed}
+patterns, those where every variable shared between an optional part and the
+outside also appears on the left; for them, more rewrites are safe, and
+evaluation is easier. Patterns written by people are almost always
+well-designed.
+
+\section{Updates whose triples come from a query}
+
+\code{DELETE \{ \ldots \} INSERT \{ \ldots \} WHERE \{ \ldots \}} rewrites every
+match: move every class under \code{:Metal} to \code{:MetallicMaterial},
+for example. The order of the three parts is the whole semantics:
+
+\begin{enumerate}
+\item Evaluate the \code{WHERE} pattern \emph{in full}, producing every solution.
+\item Instantiate and delete the \code{DELETE} templates for every solution.
+\item Instantiate and insert the \code{INSERT} templates for every solution.
+\end{enumerate}
+
+Interleaving them is wrong for the same reason as the \emph{Halloween problem}
+of relational updates: a scan that sees its own inserts can match them again,
+and an update that adds a superclass link per subclass could loop forever or
+apply twice. Materializing the solutions first gives the update a snapshot of
+the data as it was before the statement, which is what the specification
+means. The whole statement is one transaction, under the same two-phase locks
+as \code{INSERT DATA} and \code{DELETE DATA} (\cref{ch:concurrency}).
+
+\begin{decision}{Evaluate WHERE first, then delete, then insert (planned)}
+\dpart{Choice} The solutions of \code{WHERE} are materialized before any triple
+changes; deletes run before inserts.
+\dpart{Alternatives} Pipeline solutions straight into the updates; or insert
+before delete.
+\dpart{Why} It is the specification's semantics and it avoids the Halloween
+problem. Deleting first means a triple both deleted and inserted by one
+statement ends up present, which is what a rewrite intends.
+\dpart{Cost} The solutions are held in memory (or spilled) for the statement's
+duration.
+\end{decision}
+
+\begin{status}
+Planned (plan 12.1--12.5): today \code{OPTIONAL}, \code{UNION}, aggregates, and
+\code{DELETE/INSERT WHERE} are parsed far enough to fail with a line and a
+column. Every new form will run on both backends and join the differential test
+that compares the indexed store with the memory store.
+\end{status}
+
+\begin{checkyourself}
+\item Write the rows of \code{?m a :Material OPTIONAL \{ ?m :meltsAt ?t FILTER(?t < 1200) \}} for the three materials above.
+\item Why can a hash left join not simply swap its build and probe sides when the left side is smaller, as an inner hash join can?
+\item A union's left side binds \code{?a} and its right side binds \code{?b}. What columns does the result have, and what is in them?
+\item Why does \code{COUNT(DISTINCT ?x)} need more memory than \code{COUNT(?x)}, and how does that interact with hash aggregation?
+\item An optimizer estimates 40 rows for a left join whose left input it estimates at 100. What is wrong?
+\item \code{INSERT \{ ?c rdfs:subClassOf :Thing \} WHERE \{ ?c rdfs:subClassOf ?d \}} runs with the inserts visible to the scan. What can go wrong, and how does materializing \code{WHERE} first prevent it?
+\end{checkyourself}
+
+\section*{Further reading}
+The SPARQL 1.1 specification \cite{sparql}, section 18, defines the algebra;
+Pérez, Arenas, and Gutierrez \cite{perez2009} give its semantics and
+complexity, including well-designed patterns; Graefe's survey \cite{graefe}
+covers outer joins and hash and sort aggregation.

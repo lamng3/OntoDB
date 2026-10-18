@@ -1,0 +1,179 @@
+\chapter{From Memory to Pages}
+\label{ch:pagestore}
+
+OntoDB now has two complete recovery designs. The memory database of
+\cref{ch:durability} is redo-only: no steal, a logical log, and snapshots. The
+page store of \cref{ch:aries} steals pages, logs page images, and recovers
+with ARIES, but only tests open it. This chapter is about the step that joins
+the second design to the shell, so that \code{ontodb <dir>} keeps its data on
+pages. Most of the work is not new algorithms; it is deciding what a directory
+\emph{is}, what opening one does, and which operations get which kind of log
+record. Those decisions are where real systems differ.
+
+\section{What is in a directory}
+
+A database directory must say which design wrote it, because the two have
+incompatible files. The memory database keeps \code{snapshot} and \code{wal};
+the page store keeps \code{db}, the database file of \cref{ch:pages}, and its
+own \code{wal}. A one-line \code{format} file names the store and its version,
+\code{pages 1}, much as PostgreSQL keeps a \code{PG\_VERSION} file in every
+data directory.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Directory holds & Opens as \\
+\midrule
+\code{format} = \code{pages 1} & a page store \\
+\code{snapshot}, no \code{format} & a memory database, as today \\
+\code{format} naming another store or version & refused, saying which \\
+nothing & a new page store (or memory, with \code{--memory}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Refusing an unknown format is the important row. A newer OntoDB that changes
+the page layout must not be opened by an older one that would misread it, and
+the cheapest protection is a version number checked before any page is read.
+
+\begin{decision}{A format file names the store (planned)}
+\dpart{Choice} New directories get \code{format} with the store and version;
+a directory without it but with a \code{snapshot} is a memory database.
+\dpart{Alternatives} Detect the store from which files exist; or put the
+version in the database file's header page.
+\dpart{Why} Detection by file names breaks the day both designs share a name,
+and a header page cannot describe a store that has no pages. A separate file
+is read before anything else and is trivial to inspect.
+\dpart{Cost} One more file to create atomically with the others.
+\end{decision}
+
+\section{Opening is recovery}
+
+On the memory path, opening means loading a snapshot and replaying the log.
+On the page path, opening a directory runs all of \cref{ch:aries}, in an order
+that matters:
+
+\begin{enumerate}
+\item \textbf{Cut a torn tail.} Scan the log and truncate it at the first record
+that is incomplete or fails its checksum. The recovery modes of
+\cref{ch:durability} apply: point in time truncates and reports; \code{--strict}
+refuses.
+\item \textbf{Analysis and redo.} Rebuild the transaction table and the dirty
+page table, then repeat history from the smallest recLSN, so every page is as
+it was at the crash, uncommitted changes included.
+\item \textbf{Open the catalog, the dictionary, and the indexes.} Only now are
+the pages that describe them trustworthy, since redo has brought them up to
+date.
+\item \textbf{Undo.} Roll back the loser transactions, writing compensation
+records, exactly as an abort does.
+\end{enumerate}
+
+Step 3 sits between redo and undo for a reason. Redo is physical: it needs
+page ids and bytes, not trees. Undo of an index change is logical, ``remove
+this key from that tree'', because a split may have moved the key to another
+page since it was inserted; logical undo needs the tree, and the tree needs
+its root page, which the catalog names.
+
+\begin{keyidea}
+Redo works on pages and needs nothing above the buffer pool. Undo works on
+structures and needs the access methods. Recovery opens the engine layer by
+layer, in that order.
+\end{keyidea}
+
+\section{Statements log on pages}
+
+On a page directory the transaction manager is given the log manager, and from
+then on the machinery of \cref{ch:wal,ch:aries} runs for every statement:
+each page change logs a record, commit forces the log, and abort undoes by the
+log. The dictionary's pages are pages like any other, so a new term is covered
+by the page records of the term heap and the dictionary tree; there is no
+separate term record as on the memory path. A term added by a transaction that
+then aborts stays in the dictionary, for the same reason as there: ids are
+handed out densely, and an unused term is invisible.
+
+The test for this step is blunt and sufficient: commit a triple, kill the
+process before any page is written, reopen, and find the triple. Only the log
+can have put it there.
+
+\section{Loading: one record per triple, or one per load}
+
+\code{\textbackslash load} of a large file is one transaction, and it is where
+the two obvious logging designs diverge most:
+
+\begin{description}[leftmargin=1.2em]
+\item[Log every change.] Each inserted triple dirties leaf pages of three
+trees, and each change is logged. Simple and uniform: a load is just a big
+transaction. The log grows with the data, roughly three page records per
+triple until pages fill, and the load runs at the speed of logging.
+\item[Minimal logging.] Build the trees bottom-up from sorted input
+(\cref{ch:btree}'s bulk load), write every page to the file, force the file,
+and log one record that names the load. Undo of the load is ``drop the new
+trees''. SQL Server calls this minimal logging, and PostgreSQL, with
+\code{wal\_level} set to \code{minimal}, skips the log for a table created in
+the same transaction, for the same reason.
+\end{description}
+
+Minimal logging is only correct when the trees it builds start empty (or are
+new trees swapped in at commit): there is nothing older on those pages for a
+partial load to have damaged, so undo can discard them whole.
+
+\begin{decision}{How a load is logged (planned, to be measured)}
+\dpart{Choice} Decide between per-triple logging and minimal logging by
+measuring both on LUBM(1): log bytes and load time. A crash during a load must
+leave the database as it was before it, either way.
+\dpart{Alternatives} The two above; or per-page images of the newly built
+trees.
+\dpart{Why} The answer depends on numbers this engine has not produced yet:
+how much faster a bulk build is than three tree inserts per triple, and how
+much log a load writes.
+\dpart{Cost} Minimal logging needs empty target trees and forces every page
+before commit; per-triple logging makes the log as large as the data.
+\end{decision}
+
+\section{Closing cleanly, and checkpoints}
+
+A clean exit (\code{\textbackslash quit}, or end of input) writes every dirty
+page, forces the log, and closes the file. The next open then finds nothing to
+redo, and its summary says so; that is the cheapest test that the close was
+clean. \code{\textbackslash checkpoint} runs the sharp checkpoint of
+\cref{ch:aries} with every statement held out, because a sharp checkpoint must
+not see a page change in the middle of being made. \Cref{ch:logkeep} replaces
+it with a fuzzy one.
+
+\section{Checking a page database}
+
+\code{\textbackslash verify} keeps its promise of changing nothing and grows
+three checks: every tree satisfies its invariants (\cref{ch:btree}); SPO, POS,
+and OSP hold the same set of triples; and every id in them is in the
+dictionary. The second check is the one specific to RDF: three indexes that
+disagree return different answers depending on which one the optimizer
+chooses, the worst kind of bug to find from the query side.
+
+\section{Testing through the shell}
+
+The crash harness of \cref{ch:aries} kills a store driven by test code. The
+last step drives the real \code{Database} with SPARQL text on a page directory
+and kills it between statements and at named crash points. Test-only options
+make tree nodes tiny and the buffer pool small, so a short script splits,
+merges, and steals pages constantly; otherwise a test database never leaves its
+first page, and the hard paths never run.
+
+\begin{status}
+Planned, and next (plan 10.1--10.7). Today \code{ontodb <dir>} opens the memory
+database of \cref{ch:durability}, and the page store's recovery runs only in
+tests and in the crash harness.
+\end{status}
+
+\begin{checkyourself}
+\item Why must an older OntoDB refuse to open a directory whose \code{format} names a newer version, rather than try?
+\item Why are the catalog and the indexes opened after redo but before undo?
+\item A transaction commits one \code{INSERT DATA}, and the process is killed before any page is written. Where does the reopened database find the triple?
+\item Under what condition is minimal logging of a load correct, and what does undo of such a load do?
+\item What does a clean close guarantee about the next open, and how can a test observe it?
+\item Give a query whose answer depends on which of SPO, POS, or OSP the optimizer scans if the three disagree.
+\end{checkyourself}
+
+\section*{Further reading}
+Mohan et al.\ \cite{aries} on logical undo of index changes; Gray and Reuter
+\cite{grayreuter} on recovery-time ordering; the SQL Server documentation on
+minimally logged operations \cite{sqlminimal}.
