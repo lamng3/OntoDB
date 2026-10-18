@@ -133,7 +133,7 @@ SELECT ?m ?kind WHERE {
 }
 ```
 
-The engine is `OntoDBEngine` in MOIRA (`moira.integrations.mneme`), and `examples/shared_memory_workflow.py` there runs it end to end: the ontology and the memory in OntoDB, both passing `\verify`.
+A memory engine built on OntoDB keeps the ontology and the memory in one database, both passing `\verify`.
 
 </details>
 
