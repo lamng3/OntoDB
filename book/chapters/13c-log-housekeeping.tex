@@ -1,0 +1,181 @@
+\chapter{Keeping the Log Small}
+\label{ch:logkeep}
+
+A write-ahead log only grows. Every commit appends, nothing removes, and a
+database that runs for months would keep every record since its creation and
+replay from the beginning of time on every crash. ARIES as described in
+\cref{ch:aries} is correct but not yet livable. This chapter covers the three
+pieces of housekeeping a long-lived page store needs: cutting the log after a
+checkpoint, making page records smaller, and checkpointing without stopping
+the world. Each is a statement about what recovery can still need, made
+precise.
+
+\section{What recovery still needs}
+
+After a crash, ARIES redo starts at the smallest recLSN in the dirty page
+table: the first change to any page not yet written. Undo walks back through
+every loser transaction, so it needs each active transaction's records back
+to its first one. Everything older than both is dead weight:
+\[
+\mathit{keep} \;=\; \min\Big(\min_{p\ \text{dirty}} \mathit{recLSN}(p),\ \ \min_{T\ \text{active}} \mathit{firstLSN}(T)\Big).
+\]
+A record below \textit{keep} describes a change already on disk, made by a
+transaction already finished; no crash can need it. A checkpoint is the moment
+these two minima are known and written down, which is why truncation follows a
+checkpoint.
+
+\begin{keyidea}
+The log is a queue of obligations: redo for pages not yet written, undo for
+transactions not yet finished. Its tail can be cut exactly at the oldest
+obligation still open.
+\end{keyidea}
+
+\section{Cutting the log}
+
+\Cref{ch:durability} empties its log after a snapshot, because the snapshot
+holds everything. The page store cannot empty it: after a checkpoint, dirty
+pages and active transactions still depend on records near the end. It keeps
+the suffix from \textit{keep} on, and must do so without ever leaving a log
+that recovers differently:
+
+\begin{enumerate}
+\item Write the records from \textit{keep} on to \code{wal.tmp}, and \code{fsync} it.
+\item \code{rename} it over \code{wal}, and \code{fsync} the directory.
+\end{enumerate}
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Crash after & On reopen \\
+\midrule
+writing \code{wal.tmp} & the old, full log: recovery as before \\
+the rename & the cut log: same recovery, less to read \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+LSNs are counters, not file offsets, so the records keep their LSNs and every
+pageLSN on disk still points where it did. The file only needs to know the
+LSN of its first record, which goes in its header.
+
+\begin{decision}{Truncate by copying the tail (planned)}
+\dpart{Choice} After a checkpoint, copy the needed suffix to a new file and
+rename it over the log.
+\dpart{Alternatives} A log made of fixed-size segment files, where truncation
+deletes whole old segments, as PostgreSQL and InnoDB do.
+\dpart{Why} One file keeps the log manager, the scanner, and the crash harness
+as they are, and copying is cheap right after a checkpoint, when the suffix is
+short.
+\dpart{Cost} Copying a long suffix while a long transaction stays open; segment
+files would avoid the copy and cost a directory of files to manage.
+\end{decision}
+
+\section{Torn pages and smaller page records}
+
+\Cref{ch:aries} logs a page's full image with every change. That is simple and
+robust, and it makes the log as large as the pages it touches: insert one
+24-byte key into a 4\,KiB leaf, and the log grows by 4\,KiB.
+
+Logging only the changed bytes is the obvious saving, and it has one hazard.
+A page write is not atomic: the device may write some sectors of a page and
+not others, leaving a \term{torn page} that is neither the old version nor the
+new. Redo that applies a byte diff to a torn page produces garbage, because the
+diff assumes the bytes around it are the old ones.
+
+PostgreSQL's answer, \term{full-page writes}, is the one the plan adopts: the
+\emph{first} change to a page after a checkpoint logs the page's full image,
+and later changes until the next checkpoint log only the byte ranges that
+differ from the page as it was when latched. Recovery starts from the
+checkpoint, so for every page redo touches, it meets that page's full image
+first and rebuilds the page whole, torn or not; every later diff then applies
+to a known image.
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Inserting 100 keys into one leaf, one checkpoint & Log bytes \\
+\midrule
+Full image every change & $100 \times 4{,}096 \approx 410$\,KB \\
+Full image first, then diffs (about 40 bytes each) & $4{,}096 + 99 \times 40 \approx 8$\,KB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+A diff must also say what it applies to. Redo applies a diff only to a page
+whose pageLSN equals the LSN of that page's previous record, so a diff can
+never land on the wrong version of the page.
+
+\begin{decision}{Full image after a checkpoint, then diffs (planned)}
+\dpart{Choice} Log a page's full image on its first change after each
+checkpoint, and byte-range diffs for later changes.
+\dpart{Alternatives} Full images always (today); diffs always, with a
+doublewrite buffer to repair torn pages (InnoDB).
+\dpart{Why} Torn pages are repaired from the log with no second write path,
+and the log shrinks by roughly the ratio of a page to a change.
+\dpart{Cost} Every checkpoint makes the next change to each page expensive
+again, so checkpoints that are too frequent waste log; the benchmark measures
+log bytes per triple before and after.
+\end{decision}
+
+\section{Fuzzy checkpoints}
+
+The sharp checkpoint of \cref{ch:aries} holds every statement out, writes
+every dirty page, and then records that nothing is dirty. Its pause grows with
+the buffer pool. A \term{fuzzy checkpoint} writes no pages at all:
+
+\begin{enumerate}
+\item Append a \textbf{begin-checkpoint} record.
+\item Copy the transaction table and the dirty page table, each page with its
+recLSN, while transactions keep running, and append them in an
+\textbf{end-checkpoint} record.
+\item Force the log, and record the begin-checkpoint's LSN in a known place.
+\end{enumerate}
+
+Recovery's analysis pass starts from the begin-checkpoint record with the
+tables the end record carries, and redo starts from the smallest recLSN in
+the dirty page table. The checkpoint's copy of the tables may be slightly out
+of date by the time it is written, which is why it is ``fuzzy'': analysis reads
+the records between begin and end and brings the tables up to date, just as
+it does for every record after the checkpoint.
+
+Writing dirty pages becomes a background job (a page cleaner, in InnoDB's
+terms) that keeps the smallest recLSN moving forward, so that redo after a
+crash, and the log that truncation must keep, stay short. The two mechanisms
+work together: the cleaner advances \textit{keep}, and the checkpoint records
+where it is.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize,rec/.style={draw,minimum height=0.5cm,inner sep=2pt,fill=white}]
+\node[rec] (a) {upd T5 p12};
+\node[rec,right=0pt of a,fill=boxbg] (b) {begin ckpt};
+\node[rec,right=0pt of b] (c) {upd T6 p40};
+\node[rec,right=0pt of c,fill=boxbg] (d) {end ckpt: ATT \{T5, T6\}, DPT \{p12: 88, p40: 97\}};
+\node[rec,right=0pt of d] (e) {commit T5};
+\draw[decorate,decoration={brace,mirror,amplitude=4pt}] ([yshift=-3pt]b.south west) -- node[below=4pt]{transactions keep running} ([yshift=-3pt]d.south east);
+\end{tikzpicture}
+\caption{A fuzzy checkpoint. No page is written; the end record carries the
+active transactions and each dirty page's recLSN as they were seen.}
+\end{figure}
+
+\begin{status}
+Planned (plan 11.1--11.3), after the page store reaches the shell
+(\cref{ch:pagestore}). Today the log is never truncated, every page record is a
+full image, and the checkpoint is sharp. The sharp checkpoint stays as an
+option for comparison, and \code{benchmarks/logging/} will measure log bytes per
+inserted triple, the checkpoint pause, and recovery time.
+\end{status}
+
+\begin{checkyourself}
+\item The dirty page table holds p3 (recLSN 140) and p9 (recLSN 212); T7 is active with first LSN 120 and T8 with first LSN 300. From which LSN must the log be kept?
+\item Why may truncation keep the old LSNs instead of renumbering from zero?
+\item What goes wrong if redo applies a byte diff to a torn page, and how does a full image after each checkpoint prevent it?
+\item Why does a diff record need the LSN of the page's previous record?
+\item What does a fuzzy checkpoint write, and why may its tables be out of date when they reach the log?
+\item Why does a fuzzy checkpoint make the page cleaner more important?
+\end{checkyourself}
+
+\section*{Further reading}
+Mohan et al.\ \cite{aries} on fuzzy checkpoints and the dirty page table;
+Gray and Reuter \cite{grayreuter} on log management; the PostgreSQL
+documentation on WAL and full-page writes \cite{pgwal}.

@@ -1,0 +1,210 @@
+\chapter{Materialized Inference}
+\label{ch:inference}
+
+An ontology says more than it stores. If \code{Alloy subClassOf Metal} and
+\code{Metal subClassOf Material}, then every alloy is a material, though no
+triple says so; \cref{ch:engine} ended on exactly that gap, with a query for
+materials that missed \code{Alloy}. A store that answers ontology queries has
+to close it. This chapter treats inference as a database problem: the
+entailed triples are a \emph{view} of the stored ones, and the questions are
+the old ones for views: compute it on read, or store it and keep it current on
+every write.
+
+\section{Two ways to answer with entailments}
+
+\begin{description}[leftmargin=1.2em]
+\item[Rewrite at read time] (backward chaining). Turn \code{?x a :Material}
+into \code{?x a ?c . ?c rdfs:subClassOf* :Material}, a property path, and let
+the executor follow it. Nothing extra is stored; every query pays for the
+closure it needs, and a query planner must estimate a recursive path.
+\item[Materialize at write time] (forward chaining). Compute every entailed
+triple once, store it in the same indexes, and answer \code{?x a :Material}
+with one scan of POS, as if the triples had been asserted. Reads stay as fast
+as they are; writes and space pay.
+\end{description}
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+& Rewrite & Materialize \\
+\midrule
+Read cost & a recursive path per query & one scan \\
+Write cost & none & maintain the closure \\
+Space & asserted triples & asserted plus entailed \\
+Planner & estimate recursion & unchanged \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ontologies are read far more often than they change, and their queries ask
+for classes \emph{and} their subclasses almost every time, so OntoDB
+materializes, like RDFox and GraphDB.
+
+\section{The rules}
+
+RDFS entailment is a handful of rules \cite{rdfsemantics}. Written as Datalog,
+with \code{T(s,p,o)} for ``the store holds triple $(s,p,o)$'':
+\begin{align*}
+T(c, \mathit{sc}, e) &\leftarrow T(c, \mathit{sc}, d),\ T(d, \mathit{sc}, e) && \text{(rdfs11, subclass is transitive)}\\
+T(x, \mathit{type}, d) &\leftarrow T(x, \mathit{type}, c),\ T(c, \mathit{sc}, d) && \text{(rdfs9, types go up)}\\
+T(p, \mathit{sp}, r) &\leftarrow T(p, \mathit{sp}, q),\ T(q, \mathit{sp}, r) && \text{(rdfs5, subproperty is transitive)}\\
+T(x, q, y) &\leftarrow T(x, p, y),\ T(p, \mathit{sp}, q) && \text{(rdfs7, triples go up)}\\
+T(x, \mathit{type}, c) &\leftarrow T(x, p, y),\ T(p, \mathit{domain}, c) && \text{(rdfs2)}\\
+T(y, \mathit{type}, c) &\leftarrow T(x, p, y),\ T(p, \mathit{range}, c) && \text{(rdfs3)}
+\end{align*}
+Each rule body is a two-pattern basic graph pattern, so each rule is one join
+of two scans, and the executor of \cref{ch:joins} already evaluates it. The
+closure is the least set of triples containing the data and closed under the
+rules.
+
+\section{Naive and semi-naive evaluation}
+
+The obvious way to compute the closure is to apply every rule to everything,
+add what is new, and repeat until a round adds nothing. That is
+\term{naive evaluation}, and it is wasteful: round $i$ rederives every triple of
+rounds $1$ to $i-1$ before finding the new ones.
+
+The fix is to notice that a triple can be new in round $i$ only if one of the
+triples it was derived from was new in round $i-1$. \term{Semi-naive
+evaluation} \cite{alicebook} keeps the set $\Delta$ of triples new in the last
+round and evaluates each rule with at least one body pattern restricted to
+$\Delta$:
+\[
+\Delta_{i+1} \;=\; \Big(\textstyle\bigcup_{\text{rules}}\ \big(\Delta_i \Join T_i\big) \cup \big(T_i \Join \Delta_i\big)\Big) \setminus T_i,
+\qquad T_{i+1} = T_i \cup \Delta_{i+1}.
+\]
+For a chain of subclasses $A \sqsubseteq B \sqsubseteq C \sqsubseteq D \sqsubseteq E$:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Round & $\Delta$ (new subclass triples) & Joins evaluated \\
+\midrule
+0 & the 4 asserted links & --- \\
+1 & $A{\sqsubseteq}C$, $B{\sqsubseteq}D$, $C{\sqsubseteq}E$ & $\Delta_0 \times T_0$ \\
+2 & $A{\sqsubseteq}D$, $A{\sqsubseteq}E$, $B{\sqsubseteq}E$ & $\Delta_1 \times T_1$ \\
+3 & (none) & $\Delta_2 \times T_2$; stop \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Naive evaluation would rejoin all four asserted links in every round. On a
+deep hierarchy the difference is the difference between joining the frontier
+and joining the whole closure, round after round.
+
+\begin{keyidea}
+Inference is recursive query evaluation, and semi-naive evaluation is to
+recursion what a delta is to an update: only what changed can cause anything
+new.
+\end{keyidea}
+
+\section{Keeping the closure current}
+
+\subsection{Insert}
+
+An inserted triple is a closure computation that starts small: run the same
+rounds with $\Delta_0 = \{t\}$, inside the inserting transaction, so that the
+closure is complete when the transaction commits. Inserting
+\code{Bronze subClassOf Alloy} into a hierarchy above it derives \code{Bronze
+subClassOf Metal} and \code{Bronze subClassOf Material} in two rounds, and the
+types of every bronze instance in the same rounds.
+
+\subsection{Delete is harder}
+
+Deleting \code{Alloy subClassOf Metal} should remove \code{Alloy subClassOf
+Material}, unless it still follows some other way, for example because a
+curator also asserted \code{Alloy subClassOf Material} directly. A triple can
+have several derivations, and deleting one support must not delete a triple
+another support still holds. Two classic answers \cite{gupta1993}:
+
+\begin{description}[leftmargin=1.2em]
+\item[Counting.] Store, for each triple, how many derivations it has; a delete
+decrements the counts of what it supported and removes triples whose count
+reaches zero. Exact for non-recursive rules, but under recursion a triple can
+support itself through a cycle, and its count never reaches zero.
+\item[Delete and rederive (DRed).] Three steps: (1) \emph{overdelete}:
+remove the deleted triple and, by semi-naive rounds, everything it could have
+helped derive; (2) \emph{rederive}: for each overdeleted triple, check whether
+it still follows in one step from what remains, and put it back if so; (3)
+propagate the rederived triples by semi-naive insertion.
+\end{description}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize,node distance=0.55cm and 1.2cm,
+  cls/.style={draw,rounded corners=2pt,minimum width=1.5cm,minimum height=0.5cm,fill=white}]
+\node[cls] (al) {Alloy};
+\node[cls,above=of al] (me) {Metal};
+\node[cls,above=of me] (ma) {Material};
+\draw[arrow,dashed,red!70!black] (al) -- node[right]{deleted} (me);
+\draw[arrow] (me) -- (ma);
+\draw[arrow] (al.west) to[bend left=50] node[left,align=right]{asserted:\\stays} (ma.west);
+\draw[arrow,dotted] (al.east) to[bend right=50] node[right,align=left]{inferred:\\overdeleted,\\rederived} (ma.east);
+\end{tikzpicture}
+\caption{DRed on one delete. Overdeletion removes the inferred \code{Alloy
+subClassOf Material}; rederivation finds it is also asserted, so the triple
+is back before the transaction commits.}
+\end{figure}
+
+DRed is correct with recursion because rederivation asks a positive question,
+``does this follow from what remains'', instead of trusting a count. Its cost is
+that one delete near the top of a hierarchy overdeletes a large part of the
+closure and rederives most of it.
+
+\begin{decision}{Materialize, and maintain with DRed (planned)}
+\dpart{Choice} Entailed triples are computed by semi-naive evaluation, stored
+in the indexes, extended on insert, and maintained on delete by delete and
+rederive. \code{\textbackslash set inference rdfs|off}, off by default.
+\dpart{Alternatives} Query rewriting with property paths; counting
+derivations; recomputing the closure from scratch after each delete.
+\dpart{Why} Reads stay one scan and the planner stays unchanged. DRed is
+correct under recursion, which counting is not, and it touches only what the
+deleted triple could have supported.
+\dpart{Cost} More triples and more index work per write, and a delete high in
+a hierarchy is expensive. A test checks after random inserts and deletes that
+the store equals a closure computed from scratch.
+\end{decision}
+
+\begin{decision}{Where inferred triples live (planned)}
+\dpart{Choice} To be decided by measurement: a mark on each triple in the
+existing SPO, POS, and OSP indexes, or separate permutations for inferred
+triples that scans also read.
+\dpart{Alternatives} The two above.
+\dpart{Why} A mark keeps one scan per pattern but makes deleting all inferred
+triples (\code{\textbackslash set inference off}) a full pass; separate
+permutations make that a drop, but double the scans of every pattern.
+\dpart{Cost} Either way, a delete must know which triples were asserted, so an
+asserted triple that is also inferred keeps its asserted status.
+\end{decision}
+
+\section{What it costs}
+
+Materialization trades space and write time for read time, and the exchange
+rate depends on the hierarchy's depth. A triple deep in a hierarchy of depth
+$d$ entails up to $d$ type triples, and a subclass chain of $n$ classes has
+$n(n-1)/2$ entailed links. LUBM's ontology is shallow, so its closure adds a
+modest fraction of triples; an anatomy ontology several levels deep adds many
+more. The plan measures load time and size with and without inference on
+LUBM(1), and checks that the LUBM queries that need RDFS return the official
+answer counts.
+
+\begin{status}
+Planned (plan 13.1--13.5). Today OntoDB stores OWL as triples and has no
+reasoner: the query for materials in \cref{ch:engine} misses \code{Alloy}, as
+it should.
+\end{status}
+
+\begin{checkyourself}
+\item Give one workload for which rewriting at read time beats materializing, and one for which it does not.
+\item Run semi-naive evaluation on $A \sqsubseteq B$, $B \sqsubseteq C$ and the type triple \code{x a A}. Which triples are new in each round?
+\item Why does the semi-naive formula join $\Delta_i$ with $T_i$ in both orders?
+\item With counting, a delete in a subclass cycle $A \sqsubseteq B \sqsubseteq A$ leaves both links' counts above zero. Why, and how does DRed avoid the problem?
+\item An asserted triple is also inferred. A user deletes it. What should the store hold afterwards, and what must the store know to get this right?
+\end{checkyourself}
+
+\section*{Further reading}
+Abiteboul, Hull, and Vianu \cite{alicebook} on Datalog and semi-naive
+evaluation; Gupta, Mumick, and Subrahmanian \cite{gupta1993} on counting and
+DRed; the RDF 1.1 Semantics \cite{rdfsemantics} for the RDFS rules; Motik et
+al.\ \cite{rdfox} on materialization in RDFox; Guo, Pan, and Heflin \cite{lubm}
+on LUBM.
