@@ -73,6 +73,7 @@ ontodb_sanitize(ontodb_cli)
 ontodb_sanitize(ontodb_test)
 ontodb_sanitize(ontodb_bench_indexing)
 ontodb_sanitize(ontodb_bench_joins)
+ontodb_sanitize(ontodb_bench_semantic)
 
 enable_testing()
 add_test(NAME ontodb_test COMMAND ontodb_test)

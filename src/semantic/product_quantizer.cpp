@@ -1,5 +1,7 @@
 #include "semantic/product_quantizer.h"
 
+#include "semantic/dot.h"
+
 #include <stdexcept>
 
 #include "semantic/kmeans.h"
@@ -45,11 +47,7 @@ auto ProductQuantizer::Table(const float* query) const -> std::vector<float> {
     const float* q = query + static_cast<size_t>(j) * dsub_;
     for (uint32_t c = 0; c < 256; c++) {
       const float* ctr = centers_.data() + (static_cast<size_t>(j) * 256 + c) * dsub_;
-      float s = 0;
-      for (uint32_t i = 0; i < dsub_; i++) {
-        s += q[i] * ctr[i];
-      }
-      table[static_cast<size_t>(j) * 256 + c] = s;
+      table[static_cast<size_t>(j) * 256 + c] = Dot(q, ctr, dsub_);
     }
   }
   return table;
