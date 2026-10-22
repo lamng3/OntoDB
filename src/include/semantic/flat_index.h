@@ -14,7 +14,13 @@ struct Neighbor {
 
 struct SearchStats {
   size_t scored{0};  // vectors whose similarity was computed
+  size_t lists{0};   // IVF lists probed
+  size_t keys{0};    // IVF list entries read
+  size_t hops{0};    // HNSW nodes expanded
 };
+
+// A mask over store rows: 1 means the row may be returned. Null means all.
+using RowMask = std::vector<uint8_t>;
 
 // Exact nearest neighbors by scoring every vector, optionally from 8-bit
 // codes. The reference every other index is measured against.
