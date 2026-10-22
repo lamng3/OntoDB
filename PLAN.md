@@ -41,6 +41,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Log housekeeping | `scripts/check logkeep` | Planned. Log truncation, smaller page records, fuzzy checkpoints. |
 | SPARQL breadth | `scripts/check sparql` | Planned. `OPTIONAL`, `UNION`, aggregates, `DELETE/INSERT WHERE`. |
 | RDFS inference | `scripts/check rdfs` | Planned. Materialized RDFS entailment, kept up to date on insert and delete. |
+| Semantic search | `scripts/check semantic` | In progress. Class hierarchy as intervals, one vector per term, flat, IVF, and HNSW indexes, and hierarchy-filtered nearest neighbors. Theory in `docs/semantic-search.md`. |
 
 The planned features have no tests or stubs yet. Starting one means adding its tests disabled, its `scripts/check` name, and its `not built yet (PLAN x.y)` messages, in that order, as the earlier features did. They are listed in the order to build them: each later one is more useful once the shell keeps its data on pages.
 
@@ -256,3 +257,24 @@ Store what RDFS entails, so a query for `?x a ub:Student` finds graduate student
 
 **13.5 LUBM.** With inference on, the LUBM(1) queries that need RDFS (q06 among them) return the official answer counts. Record load time and size with and without inference in `benchmarks/inference/`.
 
+## Semantic search
+
+Find the terms close in meaning to a term, and the terms under a class, without a reasoner and without leaving the engine. Two separate ideas, because a sort order cannot hold similarity (`docs/semantic-search.md`, section 2): a hierarchy becomes intervals that a B+ tree range-scans, and meaning lives in a vector index beside the triples. Everything is in `src/semantic/`; ids stay first-seen. Methods are compared in `benchmarks/semantic/`.
+
+**14.1 Class labels.** `ClassHierarchy` takes `(class, parent)` pairs, collapses cycles into one class, picks a spanning forest, numbers it in postorder, and gives each class a set of intervals (Lemma 3). `IsDescendant`, `Descendants`, `Ancestors`. Tests: a tree has one interval per class; random DAGs match a transitive closure computed by search; a cycle collapses.
+
+**14.2 Interval indexes.** The labels go into B+ trees: `(po, class)` for the classes, and `(po(type), instance)` for `rdf:type` triples. `InstancesOf(C)` is one range scan per interval of `C`. Tests compare with the rewrite strategy (one scan per descendant) and with a materialized closure.
+
+**14.3 Vector store.** One normalized float vector per term id, saved to and loaded from a file with a checksum. `\vload` reads it.
+
+**14.4 Flat search.** Exact top-k by dot product, in float32 and with 8-bit scalar quantization. The ground truth for every recall number.
+
+**14.5 IVF.** Spherical k-means centroids; each list is a prefix of a B+ tree key `(list, term, 0)`. `nprobe` trades recall for time. Product quantization for the stored codes.
+
+**14.6 HNSW.** An in-memory proximity graph with `M`, `efConstruction`, and `efSearch`, and a predicate that is tested while walking.
+
+**14.7 Hybrid search.** `Similar(term, k, under C)`: pre-filter (interval scan, exact), post-filter (index search with a growing candidate list), or chosen by selectivity.
+
+**14.8 Shell.** `\hindex build`, `\under <class>`, `\vload <file>`, `\similar <term> [k] [under <class>]`.
+
+**14.9 Measure.** Gene Ontology with real embeddings, LUBM(1), and a synthetic annotation set: does id order give neighbors, how many intervals a DAG needs, three ways to answer a type query, recall against latency for each index, and filtered search against selectivity. Write the findings in `writeups/` and the paper in `paper/`.
