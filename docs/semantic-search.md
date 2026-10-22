@@ -105,7 +105,13 @@ The difference matters for range scans. Seeking a lower bound `lo` needs to know
 
 ## 8. Measurements
 
-See `benchmarks/semantic/results.md`.
+Full tables: `benchmarks/semantic/results.md`. On the Gene Ontology (38,092 classes, 57,456 `is_a` edges) with MiniLM embeddings of the term names:
+
+- **Order.** The hierarchy's postorder is the best order (median rank gap to a term's nearest neighbor 45, against 1,739 for first-seen ids), and it still finds only 38% of the ten nearest neighbors within ±100 positions and 56% within ±1000. Lemma 1 is not an artifact of the grid.
+- **Labels.** 2.01 intervals per class on average (598 KiB for the ontology), at most 741, always within the bound of Lemma 4. Reachability takes 27 ns, 29 times faster than a search up the parents. A subtree of 1,000+ classes is 101 range scans, 48 times fewer page reads than one scan per class.
+- **Type queries.** On 200,000 synthetic entities, materializing the closure stores 8.1 times the triples (309.5 MiB against 63.6) and takes 180 s to load against 5; the interval index adds 15% and 0.17 s, and reads 265 pages against 182 (materialized) and 12,803 (rewrite) for the largest classes.
+- **Vector indexes.** HNSW reaches recall 0.993 at 44 µs, 51 times faster than the exact scan (2.2 ms). IVF with lists in a B+ tree reaches 0.929 at 255 µs; its per-row cost is about 2.7 times that of a flat scan. PQ is for memory, and needs exact re-ranking for accuracy.
+- **Filtering by a class.** Resolving the members and scoring them exactly is best up to about 1,000 members (3 to 62 µs, exact). The filter is correlated with the vectors: the share of the unfiltered top 100 under the class is 0.04 to 0.72 for a query inside it and 0.00 to 0.12 outside, so post-filtering fails for outside queries (IVF recall 0.07 on small classes). Beyond 5,000 members a masked HNSW search wins (105 µs inside, 900 µs outside).
 
 ## 9. Related systems
 
