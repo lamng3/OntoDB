@@ -66,6 +66,8 @@ class ClassHierarchy {
   // Every class at or above `cls`; empty when absent.
   auto Ancestors(term_id_t cls) const -> std::vector<term_id_t>;
   auto IsDescendant(term_id_t d, term_id_t c) const -> bool;
+  // How many classes Descendants(cls) would return, without listing them.
+  auto DescendantCount(term_id_t cls) const -> size_t;
   // The classes that carry a label (several only for a collapsed cycle).
   auto ClassesAt(uint32_t label) const -> const std::vector<term_id_t>&;
   auto MaxLabel() const -> uint32_t { return static_cast<uint32_t>(by_label_.size()); }
@@ -78,6 +80,7 @@ class ClassHierarchy {
   std::vector<uint32_t> label_;                           // component to postorder label
   std::vector<uint32_t> by_label_;                        // label - 1 to component
   std::vector<std::vector<Interval>> intervals_;          // component to intervals
+  std::vector<size_t> weight_;                            // prefix sums over labels of member counts
   Stats stats_;
 };
 
