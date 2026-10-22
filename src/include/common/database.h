@@ -18,6 +18,7 @@
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
 #include "recovery/durability.h"
+#include "semantic/semantic_engine.h"
 #include "stats/statistics.h"
 #include "store/mem_store.h"
 
@@ -66,6 +67,9 @@ class Database {
   auto GetStats() -> IoStats& { return stats_; }
   auto GetTrace() -> TraceSink* { return &trace_; }
   auto GetBufferPool() -> BufferPoolManager* { return bpm_; }
+  // The semantic search engine (PLAN 14), made on first use. Its labels and
+  // vectors name terms by the dictionary's ids, so a backend switch drops it.
+  auto Semantic() -> SemanticEngine&;
 
   auto GetConfig() -> Config;
   void UpdateConfig(const Config& config);
@@ -103,6 +107,7 @@ class Database {
   BufferPoolManager* bpm_{nullptr};
   std::unique_ptr<Durability> durability_;
   std::unique_ptr<IndexedBackend> indexed_;
+  std::unique_ptr<SemanticEngine> semantic_;
   std::shared_mutex backend_mu_;  // statements share it; a backend switch takes it alone
   LockManager locks_;
   std::unique_ptr<TransactionManager> txns_;  // over the active store

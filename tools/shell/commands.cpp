@@ -186,6 +186,51 @@ auto Log(Database& db, const std::string& arg) -> CommandResult {
   return Text(db.LogDebug(n));
 }
 
+auto HIndex(Database& db, const std::string& arg) -> CommandResult {
+  const std::string lower = Lower(arg);
+  if (lower.empty() || lower == "status") {
+    return Text(db.Semantic().Status());
+  }
+  if (lower.rfind("build", 0) != 0) {
+    return Text("error: usage: \\hindex build [<predicate>]");
+  }
+  return Text(db.Semantic().BuildHierarchy(db.GetStore(), db.GetDictionary(), Trim(std::string_view(arg).substr(5))));
+}
+
+auto Under(Database& db, const std::string& arg) -> CommandResult {
+  if (arg.empty()) {
+    return Text("error: usage: \\under <class> [limit]");
+  }
+  // A trailing number is a limit.
+  std::string cls = arg;
+  size_t limit = 20;
+  const auto cut = arg.find_last_of(" \t");
+  if (cut != std::string::npos && arg.find_first_not_of("0123456789", cut + 1) == std::string::npos) {
+    limit = std::stoul(arg.substr(cut + 1));
+    cls = arg.substr(0, cut);
+  }
+  return Text(db.Semantic().Under(db.GetStore(), db.GetDictionary(), cls, limit));
+}
+
+auto VLoad(Database& db, const std::string& arg) -> CommandResult {
+  return Text(db.Semantic().LoadVectors(db.GetDictionary(), arg));
+}
+
+auto VIndex(Database& db, const std::string& arg) -> CommandResult {
+  const std::string lower = Lower(arg);
+  if (lower.empty() || lower == "status") {
+    return Text(db.Semantic().Status());
+  }
+  if (lower.rfind("build", 0) != 0) {
+    return Text("error: usage: \\vindex build [ivf|hnsw|all]");
+  }
+  return Text(db.Semantic().BuildIndex(Trim(std::string_view(arg).substr(5))));
+}
+
+auto Similar(Database& db, const std::string& arg) -> CommandResult {
+  return Text(db.Semantic().Similar(db.GetStore(), db.GetDictionary(), arg));
+}
+
 auto BuildCommands() -> std::vector<ShellCommand> {
   using Run = std::function<CommandResult(Database&, const std::string&)>;
   auto no_arg = [](auto fn) -> Run {
@@ -193,6 +238,28 @@ auto BuildCommands() -> std::vector<ShellCommand> {
   };
   return {
       {"\\load", "\\load <file>", "load Turtle, N-Triples, or RDF/XML", {}, Load},
+      {"\\hindex",
+       "\\hindex build [<predicate>]",
+       "label the class hierarchy (rdfs:subClassOf) as intervals",
+       {"\\hindex                 show what is built"},
+       HIndex},
+      {"\\under",
+       "\\under <class> [limit]",
+       "classes at or below a class, by range scans over the labels",
+       {},
+       Under},
+      {"\\vload", "\\vload <file>", "read one vector per term (scripts/embed-terms writes the file)", {}, VLoad},
+      {"\\vindex",
+       "\\vindex build [ivf|hnsw|all]",
+       "build the approximate indexes (search is exact without them)",
+       {},
+       VIndex},
+      {"\\similar",
+       "\\similar <term> [k] [under <class>] [using <strategy>]",
+       "terms nearest in meaning, optionally only under a class",
+       {"a <term> is <iri>, or the text of its rdfs:label, quoted or bare",
+        "strategy: auto pre post-hnsw post-ivf mask-hnsw mask-ivf"},
+       Similar},
       {"\\explain",
        "\\explain <q>",
        "print the plan",

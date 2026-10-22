@@ -33,6 +33,9 @@ class VectorStore {
     size_t skipped_unknown{0};  // spelling not in the dictionary
   };
 
+  // The dimension recorded in a vector file's header.
+  static auto PeekDimension(const std::string& path) -> uint32_t;
+
   auto Dim() const -> uint32_t { return dim_; }
   auto Size() const -> size_t { return ids_.size(); }
 

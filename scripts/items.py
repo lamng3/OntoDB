@@ -63,6 +63,7 @@ ITEMS = [
     ("14.5", "P14_5_*", False, False),
     ("14.6", "P14_6_*", False, False),
     ("14.7", "P14_7_*", False, False),
+    ("14.8", "P14_8_*", False, False),
 ]
 
 PROGRESS = [item for item in ITEMS if item[0] not in ("0.1", "0.3")]
@@ -80,7 +81,7 @@ FEATURES = [
     ("concurrency", "Concurrency", ("7.1", "7.2", "7.3", "7.4", "7.5", "7.6")),
     ("recovery", "Recovery", ("8.1", "8.2", "8.3", "8.4", "8.5", "8.6", "8.7")),
     ("durable", "Durable memory database", ("9.1", "9.2", "9.3", "9.4", "9.5", "9.6", "9.7")),
-    ("semantic", "Semantic search", ("14.1", "14.2", "14.3", "14.4", "14.5", "14.6", "14.7")),
+    ("semantic", "Semantic search", ("14.1", "14.2", "14.3", "14.4", "14.5", "14.6", "14.7", "14.8")),
 ]
 
 
