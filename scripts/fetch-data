@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download Pizza, generate LUBM(1), or fetch the Gene Ontology.
 
-Usage: scripts/fetch-data pizza|lubm|go
+Usage: scripts/fetch-data pizza|lubm|lubm-ontology|go
 """
 
 import re
@@ -18,6 +18,7 @@ PIZZA_URL = "https://raw.githubusercontent.com/owlcs/pizza-ontology/master/pizza
 UBA_URL = "http://swat.cse.lehigh.edu/projects/lubm/uba1.7.zip"
 # The ontology IRI the generated data and data/lubm/queries use.
 UNIV_BENCH = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl"
+UNIV_BENCH_SOURCE = "http://swat.cse.lehigh.edu/onto/univ-bench.owl"
 
 
 def fetch(url, dest):
@@ -128,14 +129,25 @@ def go():
     print(f"{len(live)} terms, {edges} is_a edges -> {out / 'go.nt'}")
 
 
+def lubm_ontology():
+    """The univ-bench ontology itself (class hierarchy), with its IRIs renamed to
+    the ones the generated data uses, so the two load together."""
+    dest = DOWNLOADS / "lubm" / "univ-bench.owl"
+    fetch(UNIV_BENCH_SOURCE, dest)
+    dest.write_text(dest.read_text(encoding="utf-8").replace(UNIV_BENCH_SOURCE, UNIV_BENCH), encoding="utf-8")
+    print(dest)
+
+
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm", "go"):
-        print("usage: scripts/fetch-data pizza|lubm|go", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm", "lubm-ontology", "go"):
+        print("usage: scripts/fetch-data pizza|lubm|lubm-ontology|go", file=sys.stderr)
         return 2
     if sys.argv[1] == "pizza":
         pizza()
     elif sys.argv[1] == "go":
         go()
+    elif sys.argv[1] == "lubm-ontology":
+        lubm_ontology()
     else:
         lubm()
     return 0
