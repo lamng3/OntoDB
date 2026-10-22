@@ -84,7 +84,7 @@ auto IvfIndex::Bytes() const -> size_t {
   }
 }
 
-auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowMask* allowed, SearchStats* stats)
+auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowFilter* allowed, SearchStats* stats)
     -> std::vector<Neighbor> {
   const uint32_t dim = store_->Dim();
   const auto q = Normalized(query, dim);
@@ -93,8 +93,9 @@ auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowMa
   for (uint32_t c = 0; c < lists_; c++) {
     order[c] = {Dot(q.data(), centroids_.data() + static_cast<size_t>(c) * dim, dim), c};
   }
-  std::partial_sort(order.begin(), order.begin() + nprobe, order.end(),
-                    [](const auto& a, const auto& b) { return a.first > b.first; });
+  const auto nearer = [](const auto& a, const auto& b) { return a.first > b.first; };
+  std::partial_sort(order.begin(), order.begin() + nprobe, order.end(), nearer);
+  uint32_t sorted_to = nprobe;
   std::vector<float> table;
   if (options_.encoding == Encoding::kPq) {
     table = pq_.Table(q.data());
@@ -102,14 +103,23 @@ auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowMa
   using Entry = std::pair<float, uint32_t>;
   std::priority_queue<Entry, std::vector<Entry>, std::greater<>> heap;
   size_t scored = 0, keys = 0;
-  for (uint32_t p = 0; p < nprobe && k > 0; p++) {
+  uint32_t probed = 0;
+  for (uint32_t p = 0; k > 0 && p < lists_; p++) {
+    if (p >= nprobe && (allowed == nullptr || heap.size() >= k)) {
+      break;
+    }
+    if (p >= sorted_to) {  // past the requested probes: sort on, a few lists at a time
+      sorted_to = std::min<uint32_t>(lists_, sorted_to + 16);
+      std::partial_sort(order.begin() + p, order.begin() + sorted_to, order.end(), nearer);
+    }
+    probed++;
     const uint32_t list = order[p].second;
     for (auto it = tree_.BeginRange(ListKey(list, 0), ListKey(list + 1, 0)); !it.IsEnd(); ++it) {
       term_id_t l = 0, row64 = 0, unused = 0;
       (*it).Decode(&l, &row64, &unused);
       const uint32_t row = static_cast<uint32_t>(row64);
       keys++;
-      if (allowed != nullptr && (*allowed)[row] == 0) {
+      if (allowed != nullptr && !allowed->Allows(row)) {
         continue;
       }
       const float s = options_.encoding == Encoding::kPq
@@ -126,7 +136,7 @@ auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowMa
   }
   if (stats != nullptr) {
     stats->scored += scored;
-    stats->lists += nprobe;
+    stats->lists += probed;
     stats->keys += keys;
   }
   std::vector<Neighbor> out(heap.size());

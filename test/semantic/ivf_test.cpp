@@ -173,14 +173,42 @@ TEST(P14_5_IvfIndex, MaskSkipsRowsBeforeScoring) {
   for (uint32_t row = 0; row < store.Size(); row += 2) {
     allowed[row] = 1;
   }
+  const RowFilter allowed_filter(&allowed);
   SearchStats stats;
-  const auto got = ivf.Search(store.Vector(3), 5, 8, &allowed, &stats);
+  const auto got = ivf.Search(store.Vector(3), 5, 8, &allowed_filter, &stats);
   EXPECT_EQ(got.size(), 5u);
   for (const auto& n : got) {
     EXPECT_EQ(*store.Row(n.id) % 2, 0u);
   }
   EXPECT_EQ(stats.scored, 100u);
   EXPECT_EQ(stats.keys, 200u);
+}
+
+TEST(P14_5_IvfIndex, UnderAFilterItKeepsProbingUntilItHasEnough) {
+  test::DiskEnv env(64);
+  MemDictionary dict;
+  VectorStore store(16);
+  Blobs(&store, &dict, 10, 40, 0.2f, 8);
+  IvfIndex ivf(&store, &env.bpm, {.lists = 10});
+  ivf.Build();
+  // Allow only the last blob. A query from the first blob finds nothing allowed
+  // in its nearest list, so one probe is not enough.
+  RowMask allowed(store.Size(), 0);
+  for (uint32_t row = 360; row < 400; row++) {
+    allowed[row] = 1;
+  }
+  const RowFilter filter(&allowed);
+  SearchStats stats;
+  const auto got = ivf.Search(store.Vector(0), 5, 1, &filter, &stats);
+  EXPECT_EQ(got.size(), 5u);
+  EXPECT_GT(stats.lists, 1u);
+  for (const auto& n : got) {
+    EXPECT_GE(*store.Row(n.id), 360u);
+  }
+  // Without a filter the same call probes exactly one list.
+  SearchStats plain;
+  ivf.Search(store.Vector(0), 5, 1, nullptr, &plain);
+  EXPECT_EQ(plain.lists, 1u);
 }
 
 TEST(P14_5_IvfIndex, Sq8AndPqKeepMostOfTheRecall) {

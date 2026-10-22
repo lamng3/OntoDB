@@ -1,0 +1,14 @@
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=6.2cm,xmode=log,xlabel={$\mu$s per query (log)},ylabel={recall@10},ymin=0.6,ymax=1.005,grid=both,legend pos=south east,legend style={font=\scriptsize},tick label style={font=\scriptsize},label style={font=\small}]
+\addplot+[mark=*,color=blue!70!black,thick] coordinates {(44,0.993) (66,0.997) (108,0.997) (192,0.998) (350,0.998) (643,0.998)};
+\addlegendentry{HNSW $M{=}16$}
+\addplot+[mark=square*,color=red!70!black,thick] coordinates {(48,0.671) (64,0.779) (93,0.841) (149,0.892) (255,0.929) (459,0.954) (928,0.976)};
+\addlegendentry{IVF $L{=}512$}
+\addplot+[mark=triangle*,color=orange!80!black,thick] coordinates {(52,0.67) (65,0.777) (98,0.838) (152,0.89) (263,0.926) (464,0.951) (868,0.972)};
+\addlegendentry{IVF $L{=}512$, sq8}
+\addplot+[mark=diamond*,color=green!50!black,thick] coordinates {(65,0.632) (75,0.721) (94,0.77) (122,0.811) (178,0.839) (292,0.857) (517,0.871)};
+\addlegendentry{IVF $L{=}512$, pq96}
+\addplot[only marks,mark=pentagon*,mark size=3pt,color=black] coordinates {(2238,1)};
+\addlegendentry{flat, exact}
+\end{axis}
+\end{tikzpicture}

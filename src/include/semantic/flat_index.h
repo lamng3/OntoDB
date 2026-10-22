@@ -1,8 +1,10 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
+#include "semantic/class_hierarchy.h"
 #include "semantic/vector_store.h"
 
 namespace ontodb {
@@ -19,8 +21,36 @@ struct SearchStats {
   size_t hops{0};    // HNSW nodes expanded
 };
 
-// A mask over store rows: 1 means the row may be returned. Null means all.
+// A mask over store rows: 1 means the row may be returned.
 using RowMask = std::vector<uint8_t>;
+
+// Which rows a search may return. Either an explicit mask, or a predicate that
+// a row is allowed when its label lies in one of a class's intervals. The
+// second form resolves nothing in advance: each row a search touches costs one
+// binary search over the intervals, instead of a scan of the whole subtree.
+// A null `const RowFilter*` means every row is allowed.
+struct RowFilter {
+  const RowMask* mask{nullptr};
+  const std::vector<uint32_t>* row_label{nullptr};  // label of each row, 0 when it has none
+  const std::vector<Interval>* intervals{nullptr};
+
+  RowFilter() = default;
+  RowFilter(const RowMask* m) : mask(m) {}  // NOLINT: a mask is the common case
+  RowFilter(const std::vector<uint32_t>* labels, const std::vector<Interval>* ivs) : row_label(labels), intervals(ivs) {}
+
+  auto Allows(uint32_t row) const -> bool {
+    if (mask != nullptr) {
+      return (*mask)[row] != 0;
+    }
+    const uint32_t label = (*row_label)[row];
+    if (label == 0) {
+      return false;
+    }
+    const auto it = std::upper_bound(intervals->begin(), intervals->end(), label,
+                                     [](uint32_t value, const Interval& iv) { return value < iv.lo; });
+    return it != intervals->begin() && label <= (it - 1)->hi;
+  }
+};
 
 // Exact nearest neighbors by scoring every vector, optionally from 8-bit
 // codes. The reference every other index is measured against.

@@ -50,7 +50,7 @@ auto HnswIndex::SimQ(const float* q, uint32_t row) const -> float {
 }
 
 auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t ef, int layer,
-                            const RowMask* allowed, SearchStats* stats, size_t max_visits) const
+                            const RowFilter* allowed, SearchStats* stats, size_t max_visits) const
     -> std::vector<Cand> {
   g_visited.Reset(store_->Size());
   auto worse = [](const Cand& a, const Cand& b) { return a.score < b.score; };  // max-heap: best on top
@@ -64,7 +64,7 @@ auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t 
       continue;
     }
     frontier.push(e);
-    if (allowed == nullptr || (*allowed)[e.row] != 0) {
+    if (allowed == nullptr || allowed->Allows(e.row)) {
       found.push(e);
     }
   }
@@ -84,7 +84,7 @@ auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t 
       }
       const float s = SimQ(q, nb);
       scored++;
-      const bool ok = allowed == nullptr || (*allowed)[nb] != 0;
+      const bool ok = allowed == nullptr || allowed->Allows(nb);
       if (found.size() < ef || s > found.top().score || !ok) {
         frontier.push({s, nb});
         if (ok) {
@@ -200,7 +200,7 @@ auto HnswIndex::MeanDegree() const -> double {
   return static_cast<double>(total) / static_cast<double>(links_.size());
 }
 
-auto HnswIndex::Search(const float* query, size_t k, uint32_t ef, const RowMask* allowed, SearchStats* stats,
+auto HnswIndex::Search(const float* query, size_t k, uint32_t ef, const RowFilter* allowed, SearchStats* stats,
                        size_t max_visits) const -> std::vector<Neighbor> {
   if (entry_ == kNone || k == 0) {
     return {};

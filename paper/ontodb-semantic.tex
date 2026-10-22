@@ -1,0 +1,245 @@
+\documentclass[sigconf, nonacm]{acmart}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{pgfplots}
+\usepackage[ruled,linesnumbered,noend]{algorithm2e}
+\pgfplotsset{compat=1.17}
+
+\settopmatter{printacmref=false, printccs=false, printfolios=true}
+\renewcommand\footnotetextcopyrightpermission[1]{}
+\setcopyright{none}
+
+\newcommand{\sys}{OntoDB}
+\newcommand{\code}[1]{\texttt{#1}}
+\newtheorem{lemma}{Lemma}
+
+\begin{document}
+
+\title{Beyond the Sort Order: Hierarchy Intervals and Vector Indexes\\in a B+~Tree Ontology Store}
+
+\author{Lam Nguyen}
+\affiliation{%
+  \institution{Microsoft}
+  \country{USA}}
+\email{lamng3.work@gmail.com}
+
+\renewcommand{\shortauthors}{Nguyen}
+
+\begin{abstract}
+An ontology store is asked two kinds of question. \emph{Structural} ones, such as ``which instances have a type at or below class $C$'', have an exact answer in the data. \emph{Semantic} ones, such as ``which terms are closest in meaning to $t$'', have no answer in the data and need a similarity measure. Sorted indexes are the workhorse of triple stores, and it is tempting to think that sorted means close. We show it does not. A bandwidth argument proves that no linear order of points in two or more dimensions keeps all neighbors within a short scan, and on the Gene Ontology with sentence embeddings the best order we tried, the postorder of the class hierarchy, finds only 38\% of a term's ten nearest neighbors within 100 positions. We then use the order for what it can do. A postorder numbering of the class DAG with an interval set per class, kept in the engine's own B+~tree, turns ``everything under $C$'' into a few range scans. Against materializing the RDFS closure, it stores 8.1$\times$ fewer triples and a 4.9$\times$ smaller file on synthetic instances over the Gene Ontology, and answers within 1.5$\times$ of its page reads; against rewriting the query it reads 48$\times$ fewer pages for large classes. For similarity we add vector indexes inside the same engine: exact search, IVF with posting lists stored as B+~tree key ranges, product quantization, and HNSW. XXABSTRACT We implement everything in \sys, an open-source C++ ontology database, and every number in this paper regenerates from one script.
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+Ontologies are stored and queried as graphs of triples, and the engines that hold them index those triples in sorted structures: B+~trees over permutations of subject, predicate, and object~\cite{rdfox}. A sorted index answers a bound prefix with one range scan, and this is the right tool for the questions it was built for. Two newer questions are not among them.
+
+The first asks about the hierarchy. A query for the instances of \code{Material} should return the instances of \code{Metal} too, because \code{Metal} is a subclass. The second asks about meaning: given a term, which other terms are close to it? This is the question behind retrieval over ontologies, term matching, and ontology alignment, and it is what a vector index answers. The two questions meet in the third, ``the terms most similar to $t$ that lie under $C$''.
+
+This paper asks what a B+~tree ontology store should do about them, and it makes four contributions.
+
+\begin{enumerate}
+\item \textbf{Order is not similarity.} We prove that any linear order of a $d$-dimensional point set separates some neighbors by $\Omega(n^{(d-1)/d}/d)$ positions (Lemma~\ref{lem:bw}), and measure how much locality the orders available to a store do give on a real ontology with real embeddings (Section~\ref{sec:order}). A hierarchy order is far better than first-seen ids and still leaves most neighbors out of a short scan.
+\item \textbf{Hierarchies are intervals.} We label the class DAG so that the descendants of a class are a few integer intervals, bound the number of intervals by the number of non-tree edges (Lemma~\ref{lem:size}), and keep them in a B+~tree beside the triples. On the Gene Ontology the mean class needs 2.0 intervals; against materialization it saves 8.1$\times$ the triples, and against rewriting it saves 48$\times$ the page reads (Section~\ref{sec:labels}).
+\item \textbf{Vector indexes in the engine.} We add exact, IVF, PQ, and HNSW search to the engine, and store IVF posting lists as key ranges of the same B+~tree that holds the triples (Section~\ref{sec:vectors}).
+\item \textbf{Filtering by a class.} We compare pre-filtering, post-filtering, and masked search for ``nearest under $C$'', and show that in an ontology the filter is correlated with the vectors, which breaks the independence assumption behind the usual cost estimate (Section~\ref{sec:hybrid}).
+\end{enumerate}
+
+Everything is built in \sys{}, an open-source ontology database in C++20 (Section~\ref{sec:impl}); the benchmark is one script.
+
+\section{Background and Related Work}
+
+\paragraph{Triple stores and inference.} RDF stores keep triples in several sorted permutations; \sys{} keeps three (SPO, POS, OSP), enough to make every bound/unbound pattern a prefix scan. RDFS entailment is usually either \emph{rewritten} into the query or \emph{materialized} at write time, as RDFox does~\cite{rdfox}, with maintenance by counting or by delete-and-rederive~\cite{gupta1993}. Section~\ref{sec:labels} adds a third option that stores no entailed triple.
+
+\paragraph{Labelling a hierarchy.} Agrawal, Borgida, and Jagadish~\cite{agrawal1989} store a compressed transitive closure by numbering a spanning forest in postorder and giving each node a set of intervals; Grust~\cite{grust2002} numbers XML trees in pre- and postorder so axes become regions of a plane. We use the former, on class DAGs, inside a B+~tree store, and measure it against the other two ways to answer a type query.
+
+\paragraph{Vector search.} Approximate nearest neighbor search has three families that matter here: inverted files and product quantization~\cite{jegou2011}, proximity graphs, of which HNSW~\cite{malkov2020} is the standard, and disk-oriented graphs such as DiskANN~\cite{subramanya2019}. FAISS~\cite{johnson2021} packages the first two. Pan, Wang, and Li survey vector database systems and the hybrid queries (attribute plus vector) that are hard for them~\cite{pan2024}. ACORN~\cite{patel2024} makes HNSW traverse only the nodes that pass a predicate.
+
+\paragraph{Graph and RDF systems with vectors.} Neo4j offers an HNSW vector index queried from Cypher~\cite{neo4jvec}; Amazon Neptune Analytics offers vector similarity over graph nodes~\cite{neptunevec}; Fluree provides inline similarity functions and HNSW indexes for RDF~\cite{fluree}; GraphDB has had similarity indexes queried from SPARQL since version 8~\cite{graphdbsim}. In the documentation we read, none turns the class hierarchy into range-scannable intervals, in the engine that holds the triples, to restrict a vector search.
+
+\paragraph{Embeddings of hierarchies.} Euclidean embeddings of names are what we use; hyperbolic embeddings~\cite{nickel2017} represent hierarchies more faithfully and would change the vectors, not the indexes.
+
+\paragraph{Adaptive radix trees.} The ART~\cite{leis2013} orders keys by byte, so its range scan is lexical; DuckDB persists it~\cite{duckdbart}. We discuss it in Section~\ref{sec:discussion}.
+
+\section{What a Sorted Index Can Say About Meaning}
+\label{sec:order}
+
+\paragraph{The order of \sys's trees.} A triple is a 24-byte key of three dictionary ids compared with \code{memcmp}. The dictionary assigns ids densely, in first-seen order, and the loader interns the terms of each statement in file order. So the order of every tree is the order in which terms first appeared in the input. Two classes are adjacent in the index only if they were adjacent in the file.
+
+\paragraph{No order holds similarity.}
+
+\begin{lemma}[Bandwidth]\label{lem:bw}
+Let $G$ have $n$ vertices and diameter $D$. In every linear order of the vertices some edge joins vertices at least $(n-1)/D$ positions apart.
+\end{lemma}
+\begin{proof}
+The first and last vertices of the order are $n-1$ apart and joined by a path of at most $D$ edges; some edge of the path covers at least $(n-1)/D$.
+\end{proof}
+
+For the neighbor graph of a $d$-dimensional grid with $n=k^d$ points (diameter $d(k-1)$) this gives $(k^d-1)/(d(k-1)) \ge k^{d-1}/d$ positions, in any order. A scan of width $w$ cannot contain all neighbors unless $w$ is that large. Space-filling curves keep neighbors close on average and need several scans to cover a query ball; they do not escape the lemma.
+
+\paragraph{How much locality do real orders give?} We took the Gene Ontology (release 2026-07-26, without obsolete terms: 38\,092 classes, 57\,456 \code{is\_a} edges), embedded each term's name with \code{all-MiniLM-L6-v2}~\cite{reimers2019} (384 dimensions, on a CPU, 45 s), and for 2\,000 random terms took the ten nearest by cosine. For each order of the terms, \autoref{tab:order} gives the share of those neighbors within $\pm W$ positions.
+
+\begin{table}[t]
+\caption{Share of the 10 nearest neighbors (by cosine) found within $\pm W$ positions of a term, and the median position gap to the nearest neighbor. GO, 38\,092 terms, 2\,000 queries.}
+\label{tab:order}
+\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Order & gap & $\pm$50 & $\pm$100 & $\pm$500 & $\pm$1000 & $\pm$5000 \\
+\midrule
+dictionary id (first seen) & 1739 & .195 & .211 & .258 & .284 & .438 \\
+hierarchy, deepest parent & 45 & .328 & .377 & .498 & .561 & .735 \\
+hierarchy, first parent & 37 & .319 & .366 & .481 & .546 & .726 \\
+label, alphabetical & 1749 & .310 & .334 & .379 & .408 & .558 \\
+random & 10823 & .003 & .005 & .024 & .049 & .242 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three things follow. First, the hierarchy's postorder is the best order, and it is much better than \sys's first-seen ids: the nearest neighbor is 45 positions away instead of 1\,739. Second, even so, a scan of 100 positions finds 38\% of the ten neighbors, and 561 positions in a thousand still miss 44\%; Lemma~\ref{lem:bw} is not an artifact of the grid. Third, first-seen ids are not random: the Gene Ontology's ids were minted in related batches, so ids carry some locality (0.21 at $\pm$100) that depends on the file and not on the engine. Of the ten neighbors, 12\% are a parent or child and 32\% are within two \code{is\_a} steps; a two-step neighborhood holds 45 terms (0.12\% of the ontology), so hierarchy proximity is highly informative about meaning without being sufficient.
+
+The order is therefore useful for structure and not a substitute for a vector index.
+
+\section{Hierarchies as Intervals}
+\label{sec:labels}
+
+\paragraph{Labelling.} Let the class hierarchy be a DAG, after collapsing each cycle ($A \sqsubseteq B \sqsubseteq A$) into one class, since such classes are equivalent. Choose a spanning forest by taking, for each class with several parents, the parent with the longest path from a root. Number the forest's nodes $1..n$ in postorder, and let $\mathit{lo}(c)$ be the smallest number in the tree subtree of $c$. For a forest, $d$ is at or below $c$ iff $\mathit{lo}(c)\le \mathit{po}(d)\le \mathit{po}(c)$. For a DAG each class carries a \emph{set} of intervals, built bottom-up (Algorithm~\ref{alg:label}).
+
+\begin{algorithm}[t]
+\caption{Interval sets for a class DAG}\label{alg:label}
+\small
+\KwIn{edges $(c,p)$: $c$ is a subclass of $p$}
+\KwOut{$\mathit{po}(c)$ and an interval set $I(c)$ for each class}
+collapse strongly connected components (Tarjan), number them parents first\;
+\For{each component $c$, parents first}{
+  $\mathit{depth}(c) \gets 1 + \max_{p}\ \mathit{depth}(p)$ \tcp*{0 for a root}
+  $\mathit{tp}(c) \gets$ the parent with the largest depth\;
+}
+number the forest $\{(c,\mathit{tp}(c))\}$ in postorder; record $\mathit{lo}(c)$\;
+\For{each component $c$, children first}{
+  $I(c) \gets \textsc{Merge}\big(\{[\mathit{lo}(c),\mathit{po}(c)]\} \cup \bigcup_{c\to v} I(v)\big)$ \tcp*{sort, join overlapping or adjacent}
+}
+\end{algorithm}
+
+\begin{lemma}[Correctness]
+$d$ is at or below $c$ iff $\mathit{po}(d)$ lies in an interval of $I(c)$.
+\end{lemma}
+\begin{proof}
+Induction over the order in which Algorithm~\ref{alg:label} builds $I$: the numbers covered by $I(c)$ are exactly those of the descendants of $c$.
+\end{proof}
+
+\begin{lemma}[Size]\label{lem:size}
+Let $E'(c)$ be the non-tree edges with tail at or below $c$. Then $|I(c)|\le 1+|E'(c)|$.
+\end{lemma}
+\begin{proof}
+A descendant $d$ is reached from $c$ by a path. If it uses no non-tree edge, $d$ is in the tree subtree of $c$; otherwise let $v$ be the head of the last non-tree edge on it, and $d$ is in the tree subtree of $v$. So the covered set is $\mathrm{own}(c)\cup\bigcup_{e\in E'(c)}\mathrm{own}(\mathrm{head}(e))$, a union of $1+|E'(c)|$ intervals.
+\end{proof}
+
+The labelling takes $O(n+m)$ plus the merges. A tree needs one interval per class. We check Lemma~\ref{lem:size} on every class of the Gene Ontology and on 60 random DAGs in the test suite.
+
+\paragraph{Index.} The labels go into B+~trees of \sys: key $(\mathit{po}(c),c,0)$ for the classes, and $(\mathit{po}(t),x,0)$ for each triple $(x,\mathit{type},t)$. The descendants of $c$, or the instances of $c$ and its subclasses, are one range scan per interval of $c$. An instance insert adds one key. Labels are rebuilt when the hierarchy changes (here in 15~ms for GO); incremental maintenance with gaps~\cite{agrawal1989} is not built. Dictionary ids are untouched: ids appear in three permutations, the log, and snapshots, and renumbering them to follow the hierarchy would rewrite all of it.
+
+\subsection{Evaluation}
+
+\paragraph{Setup.} Gene Ontology as above; LUBM(1)~\cite{lubm} with its ontology (43 classes, 103\,410 triples); and 200\,000 synthetic entities, one to three types each drawn uniformly from GO's classes (495\,552 triples), because GO has no instances. Release build on an Apple M2 Pro, one thread. Page reads are counted on a cold 64-frame buffer pool, the methodology of \sys's indexing benchmark.
+
+\paragraph{Label size.} \autoref{tab:labels} shows that GO needs 76\,570 intervals for 38\,092 classes, 2.01 per class, 598 KiB in all; the closure it replaces has 393\,448 ancestor pairs, 9 MiB at 24 bytes each and one permutation. The spanning-forest rule matters little (deepest parent saves 13\%). The tail is long: one class has 741 intervals, bounded by Lemma~\ref{lem:size}. Labels build in 15 ms. Asking whether $d$ is below $c$ takes 27 ns against 775 ns for a search up the parents.
+
+\begin{table}[t]
+\caption{Interval labels for the Gene Ontology.}
+\label{tab:labels}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Spanning-forest rule & non-tree edges & intervals & mean / p99 / max & build \\
+\midrule
+deepest parent & 19\,367 & 76\,570 & 2.01 / 17 / 741 & 14.9 ms \\
+first parent & 19\,367 & 87\,769 & 2.30 / 22 / 740 & 14.4 ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Descendants of a class.} \autoref{tab:desc} compares the $B^+$-tree interval scans with a breadth-first search that scans POS once per class. For a class with a thousand or more descendants the intervals need 101 scans instead of 3\,304, 40 page reads instead of 694, and 0.5 ms instead of 9 ms.
+
+\begin{table}[t]
+\caption{Descendants of a class in GO, cold 64-frame pool, mean over up to 40 classes per row.}
+\label{tab:desc}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Below $C$ & method & scans & page reads & $\mu$s \\
+\midrule
+10--99 & intervals & 5.9 & 5.8 & 59 \\
+ & one scan per class & 30.6 & 16.3 & 149 \\
+100--999 & intervals & 29.1 & 13.2 & 147 \\
+ & one scan per class & 268.2 & 65.7 & 803 \\
+1000+ & intervals & 101.3 & 40.1 & 528 \\
+ & one scan per class & 3303.6 & 694.1 & 8998 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Instances of a class.} \autoref{tab:types} compares the three strategies on the synthetic instances. Materializing the closure turns 495\,552 triples into 4\,017\,973 (8.1$\times$), the file from 63.6 to 309.5~MiB, and the load from 5.1 s to 180 s. The interval index adds 9.3 MiB (15\%) and 0.17 s. On queries, the interval index is close to the materialized store and far from rewriting: for a class with a thousand or more descendants it reads 265 pages against 182 (materialized) and 12\,803 (rewrite), and runs in 4.6 ms against 3.8 and 82 ms. All three return identical answers on every sampled class. On LUBM(1) the hierarchy is shallow (43 classes) and the three are within a factor of two on every query; materialization adds 15\% to the triples. The benefit of intervals grows with the depth and breadth of the hierarchy, and LUBM has little of either.
+
+\begin{table}[t]
+\caption{Instances of $C$ on 200\,000 synthetic entities over GO, mean over 30 classes per row (cold 64-frame pool). Top: cost of the store.}
+\label{tab:types}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Strategy & triples & file (MiB) & load (s) \\
+\midrule
+rewrite & 495\,552 & 63.6 & 5.09 \\
+intervals & 495\,552 & 72.9 & 5.26 \\
+materialize & 4\,017\,973 & 309.5 & 180.31 \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Below $C$ & strategy & answers & page reads & $\mu$s \\
+\midrule
+10--99 & intervals & 278 & 8.4 & 90 \\
+ & rewrite & 278 & 87.5 & 571 \\
+ & materialized & 278 & 6.6 & 444 \\
+100--999 & intervals & 2\,954 & 40.9 & 1\,461 \\
+ & rewrite & 2\,954 & 1\,153 & 7\,280 \\
+ & materialized & 2\,954 & 22.5 & 987 \\
+1000+ & intervals & 29\,904 & 264.8 & 4\,555 \\
+ & rewrite & 29\,904 & 12\,803 & 82\,441 \\
+ & materialized & 29\,904 & 182.0 & 3\,776 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Vector Indexes in the Engine}
+\label{sec:vectors}
+
+XXVECTORS
+
+\section{Filtering a Vector Search by a Class}
+\label{sec:hybrid}
+
+XXHYBRID
+
+\section{Implementation}
+\label{sec:impl}
+
+XXIMPL
+
+\section{Discussion}
+\label{sec:discussion}
+
+XXDISCUSSION
+
+\section{Conclusion}
+
+XXCONCLUSION
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}
