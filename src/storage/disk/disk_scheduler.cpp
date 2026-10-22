@@ -6,6 +6,16 @@
 
 namespace ontodb {
 
+#ifdef __EMSCRIPTEN__
+// The web build has no threads: a request runs inside Schedule, which keeps
+// the order guarantee and the promise contract.
+DiskScheduler::DiskScheduler(DiskManager* disk_manager, TraceSink* trace)
+    : disk_manager_(disk_manager), trace_(trace) {}
+
+DiskScheduler::~DiskScheduler() = default;
+
+void DiskScheduler::Schedule(DiskRequest request) { Handle(request); }
+#else
 DiskScheduler::DiskScheduler(DiskManager* disk_manager, TraceSink* trace)
     : disk_manager_(disk_manager), trace_(trace), worker_([this] { Run(); }) {}
 
@@ -25,7 +35,26 @@ void DiskScheduler::Schedule(DiskRequest request) {
   }
   ready_.notify_one();
 }
+#endif
 
+void DiskScheduler::Handle(DiskRequest& request) {
+  if (trace_ != nullptr) {
+    trace_->Event("io", std::string(request.is_write ? "write" : "read") + " page " +
+                            std::to_string(request.page_id));
+  }
+  try {
+    if (request.is_write) {
+      disk_manager_->WritePage(request.page_id, request.data);
+    } else {
+      disk_manager_->ReadPage(request.page_id, request.data);
+    }
+    request.callback.set_value(true);
+  } catch (...) {
+    request.callback.set_exception(std::current_exception());
+  }
+}
+
+#ifndef __EMSCRIPTEN__
 void DiskScheduler::Run() {
   while (true) {
     std::optional<DiskRequest> request;
@@ -38,21 +67,10 @@ void DiskScheduler::Run() {
     if (!request.has_value()) {
       return;  // the stop marker is behind every request scheduled before it
     }
-    if (trace_ != nullptr) {
-      trace_->Event("io", std::string(request->is_write ? "write" : "read") + " page " +
-                              std::to_string(request->page_id));
-    }
-    try {
-      if (request->is_write) {
-        disk_manager_->WritePage(request->page_id, request->data);
-      } else {
-        disk_manager_->ReadPage(request->page_id, request->data);
-      }
-      request->callback.set_value(true);
-    } catch (...) {
-      request->callback.set_exception(std::current_exception());
-    }
+    Handle(*request);
   }
 }
+
+#endif
 
 }  // namespace ontodb

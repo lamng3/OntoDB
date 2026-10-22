@@ -1,18 +1,27 @@
 #include "loader/rdf_loader.h"
 
+#ifndef ONTODB_NO_RAPTOR
 #include <raptor2.h>
+#endif
 
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <exception>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
 #include "common/term_codec.h"
+#ifdef ONTODB_NO_RAPTOR
+#include "loader/turtle_parser.h"
+#endif
 
 namespace ontodb {
 namespace {
 
+#ifndef ONTODB_NO_RAPTOR
 struct LoadContext {
   Dictionary* dictionary{nullptr};
   raptor_parser* parser{nullptr};
@@ -105,6 +114,8 @@ void OnLog(void* user, raptor_log_message* message) {
   }
 }
 
+#endif
+
 }  // namespace
 
 auto RdfLoader::Load(const std::filesystem::path& path, Dictionary& dictionary,
@@ -125,6 +136,40 @@ auto RdfLoader::LoadFiles(const std::vector<std::filesystem::path>& paths, Dicti
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
   return stats;
 }
+
+#ifdef ONTODB_NO_RAPTOR
+auto RdfLoader::Parse(const std::filesystem::path& path, Dictionary& dictionary,
+                      std::vector<Triple>* batch) const -> uint64_t {
+  std::string ext = path.extension().string();
+  for (char& c : ext) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (ext == ".owl" || ext == ".rdf") {
+    throw std::runtime_error("RDF/XML is not supported in this build; use Turtle (.ttl) or N-Triples (.nt)");
+  }
+  if (ext != ".ttl" && ext != ".nt") {
+    throw std::runtime_error("unsupported RDF extension for " + path.string() +
+                             " (expected .ttl or .nt)");
+  }
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    throw std::runtime_error("no such file: " + path.string());
+  }
+  std::ostringstream text;
+  text << in.rdbuf();
+  uint64_t triples = 0;
+  ParseTurtle(text.str(), [&](const std::string& s, const std::string& p, const std::string& o) {
+    Triple triple;
+    triple.subject = dictionary.Insert(s);
+    triple.predicate = dictionary.Insert(p);
+    triple.object = dictionary.Insert(o);
+    batch->push_back(triple);
+    triples++;
+  });
+  return triples;
+}
+
+#else
 
 auto RdfLoader::Parse(const std::filesystem::path& path, Dictionary& dictionary,
                       std::vector<Triple>* batch) const -> uint64_t {
@@ -179,5 +224,7 @@ auto RdfLoader::Parse(const std::filesystem::path& path, Dictionary& dictionary,
   }
   return ctx.triples;
 }
+
+#endif
 
 }  // namespace ontodb

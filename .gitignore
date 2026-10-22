@@ -14,3 +14,5 @@ book/*.out
 book/*.toc
 book/chapters/*.aux
 .vibe-wise/
+web/build/
+web/out/
