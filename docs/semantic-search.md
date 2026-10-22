@@ -32,7 +32,7 @@ A class hierarchy (`rdfs:subClassOf`) *does* have an order in which "everything 
 
 So "all subclasses of `C`" is one range scan over an index keyed by `po`.
 
-Real ontologies are DAGs: a class can have several parents (Gene Ontology: 57,458 `is_a` edges over 48,340 terms). Following Agrawal, Borgida, and Jagadish (SIGMOD 1989), pick a spanning forest, number it in postorder, and give each class a **set** of intervals: its own tree interval, plus the intervals of every child, merged.
+Real ontologies are DAGs: a class can have several parents (Gene Ontology, release 2026-07-26, without obsolete terms: 57,456 `is_a` edges over 38,092 terms). Following Agrawal, Borgida, and Jagadish (SIGMOD 1989), pick a spanning forest, number it in postorder, and give each class a **set** of intervals: its own tree interval, plus the intervals of every child, merged.
 
 **Lemma 3 (interval sets).** With `intervals(c) = merge(own(c) ∪ ⋃_{c→v} intervals(v))`, `d` is a descendant of `c` iff `po(d)` lies in some interval of `c`.
 
