@@ -50,8 +50,11 @@ class ClassHierarchy {
     size_t closure_pairs{0};   // pairs (descendant, ancestor), reflexive, over terms
   };
 
+  // `isolated` lists classes that appear in no edge (a class with neither a
+  // parent nor a subclass); each becomes a root with one label.
   static auto Build(const std::vector<std::pair<term_id_t, term_id_t>>& edges,
-                    TreeParent rule = TreeParent::kDeepest) -> ClassHierarchy;
+                    TreeParent rule = TreeParent::kDeepest,
+                    const std::vector<term_id_t>& isolated = {}) -> ClassHierarchy;
 
   auto Contains(term_id_t cls) const -> bool { return comp_of_.count(cls) != 0; }
   // The postorder label of cls, or 0 when cls is not in the hierarchy.

@@ -57,6 +57,8 @@ class BPlusTree {
   auto GetValue(const TripleKey& key) const -> bool;
   auto Begin() -> IndexIterator;
   auto Begin(const TripleKey& key, int prefix_len) -> IndexIterator;
+  // The keys in [lower, upper): from the first key >= lower to the first key >= upper.
+  auto BeginRange(const TripleKey& lower, const TripleKey& upper) -> IndexIterator;
   auto End() -> IndexIterator;
   void BulkLoad(const std::vector<TripleKey>& keys);
   auto ToString() const -> std::string;
