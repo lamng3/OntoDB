@@ -16,3 +16,4 @@ book/chapters/*.aux
 .vibe-wise/
 web/build/
 web/out/
+web/data/

@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Cuts the slice of the Gene Ontology the web playground ships.
+
+Usage: scripts/web-slice [outdir]   (default web/data)
+
+Needs data/downloads/go (scripts/fetch-data go; scripts/embed-terms for go.ovec).
+The slice is everything below five biological-process classes plus their
+ancestors, with the rdfs:label and rdfs:subClassOf statements among them, and
+the vectors for those terms copied from go.ovec (same file format).
+"""
+import re
+import struct
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+root = Path(__file__).resolve().parent.parent
+out = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "web" / "data"
+go = root / "data" / "downloads" / "go"
+OBO = "http://purl.obolibrary.org/obo/GO_"
+ROOTS = ["0008219", "0007049", "0006955", "0006629", "0016049"]  # cell death, cell cycle, immune response, lipid metabolic process, cell growth
+SUB = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
+LABEL = "http://www.w3.org/2000/01/rdf-schema#label"
+
+children, parents, label = defaultdict(set), defaultdict(set), {}
+for line in (go / "go.nt").read_text(encoding="utf-8").splitlines():
+    m = re.match(r"<([^>]+)> <%s> <([^>]+)> \." % re.escape(SUB), line)
+    if m:
+        children[m.group(2)].add(m.group(1))
+        parents[m.group(1)].add(m.group(2))
+        continue
+    m = re.match(r'<([^>]+)> <%s> "(.*)" \.$' % re.escape(LABEL), line)
+    if m:
+        label[m.group(1)] = m.group(2)
+
+
+def closure(starts, edges):
+    seen, stack = set(starts), list(starts)
+    while stack:
+        for nxt in edges[stack.pop()]:
+            if nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return seen
+
+
+roots = [OBO + r for r in ROOTS]
+keep = closure(roots, children) | closure(roots, parents)
+keep = {t for t in keep if t in label}
+out.mkdir(parents=True, exist_ok=True)
+with (out / "go-slice.ttl").open("w", encoding="utf-8") as f:
+    f.write("@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n@prefix GO: <%s> .\n\n" % OBO)
+    short = lambda iri: "GO:" + iri[len(OBO):]
+    for t in sorted(keep):
+        f.write('%s rdfs:label "%s" .\n' % (short(t), label[t].replace("\\", "\\\\").replace('"', '\\"')))
+        for p in sorted(parents[t] & keep):
+            f.write("%s rdfs:subClassOf %s .\n" % (short(t), short(p)))
+
+data = (go / "go.ovec").read_bytes()
+assert data[:6] == b"OVEC1\n"
+dim, count = struct.unpack_from("<IQ", data, 6)
+pos, kept = 6 + 12, []
+for _ in range(count):
+    (n,) = struct.unpack_from("<I", data, pos)
+    spelling = data[pos + 4 : pos + 4 + n].decode("utf-8")
+    end = pos + 4 + n + 4 * dim
+    if spelling.startswith("<") and spelling[1:-1] in keep:
+        kept.append(data[pos:end])
+    pos = end
+with (out / "go-slice.ovec").open("wb") as f:
+    f.write(b"OVEC1\n" + struct.pack("<IQ", dim, len(kept)))
+    for rec in kept:
+        f.write(rec)
+print(f"{len(keep)} classes, {len(kept)} vectors of {dim} floats -> {out}")
