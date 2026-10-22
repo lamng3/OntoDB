@@ -5,11 +5,11 @@
 **A database management system for ontologies**
 
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
-[![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.github.io/ontodb-docs/)
+[![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.com/ontodb/)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
 [![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
 
-[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.github.io/ontodb-docs/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
+[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.com/ontodb/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
 
 </div>
 
@@ -152,7 +152,7 @@ One query and one committed statement, followed through the code: [docs/architec
 
 The book, [*OntoDB: Database Internals by Example*](book/ontodb-book.pdf), explains the theory behind each part: pages and the buffer pool, B+ trees and RDF indexing, query plans and joins, transactions and locking, the write-ahead log, ARIES, and durability.
 
-The [manual](https://lamng3.github.io/ontodb-docs/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
+The [manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
 
 ## 📝 Citation
 
