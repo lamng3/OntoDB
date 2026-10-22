@@ -40,8 +40,8 @@ TEST(TurtleParser, PrefixesPredicateListsAndObjectLists) {
 
 TEST(TurtleParser, BlankNodesAndCollections) {
   const auto rows = Parse("@prefix ex: <http://e/> .\nex:a ex:p [ ex:q ex:b ] , ( ex:x ex:y ) .\n");
-  // a-p-_:b1, _:b1-q-b, a-p-list, and first/rest for two cells.
-  EXPECT_EQ(rows.size(), 8u);
+  // a-p-_:b1, _:b1-q-b, a-p-list, and first/rest for two cells (4).
+  EXPECT_EQ(rows.size(), 7u);
 }
 
 TEST(TurtleParser, EscapesLongStringsAndBase) {
