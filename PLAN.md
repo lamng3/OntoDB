@@ -42,6 +42,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Log housekeeping | `scripts/check logkeep` | Planned. Log truncation, smaller page records, fuzzy checkpoints. |
 | SPARQL breadth | `scripts/check sparql` | Planned. `OPTIONAL`, `UNION`, aggregates, `DELETE/INSERT WHERE`. |
 | RDFS inference | `scripts/check rdfs` | Planned. Materialized RDFS entailment, kept up to date on insert and delete. |
+| Web build | `web/build.sh`, `web/smoke.mjs` | Done. The engine compiles to WebAssembly and runs in the manual's playground. Built-in Turtle parser, no threads, no durability. See `docs/web-build.md`. |
 | Semantic search | `scripts/check semantic` | Done. Class hierarchy as intervals in a B+ tree, one vector per term, flat, IVF (lists in a B+ tree), PQ, and HNSW indexes, hierarchy-filtered nearest neighbors, and shell commands. Theory in `docs/semantic-search.md`, measurements in `benchmarks/semantic/results.md`, paper in `paper/`. |
 
 The planned features have no tests or stubs yet. Starting one means adding its tests disabled, its `scripts/check` name, and its `not built yet (PLAN x.y)` messages, in that order, as the earlier features did. They are listed in the order to build them: each later one is more useful once the shell keeps its data on pages.
