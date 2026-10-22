@@ -77,8 +77,8 @@ void Coalesce(std::vector<Interval>* set) {
 
 }  // namespace
 
-auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& edges, TreeParent rule)
-    -> ClassHierarchy {
+auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& edges, TreeParent rule,
+                           const std::vector<term_id_t>& isolated) -> ClassHierarchy {
   ClassHierarchy h;
   std::vector<term_id_t> ids;
   std::unordered_map<term_id_t, uint32_t> node_of;
@@ -92,6 +92,9 @@ auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& e
   std::vector<std::pair<uint32_t, uint32_t>> arcs;
   for (const auto& [child, parent] : edges) {
     arcs.emplace_back(node(child), node(parent));
+  }
+  for (const term_id_t id : isolated) {
+    node(id);
   }
   const size_t n = ids.size();
   std::vector<std::vector<uint32_t>> up(n);

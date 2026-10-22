@@ -512,6 +512,17 @@ auto BPlusTree::Begin() -> IndexIterator {
   return {bpm_, std::move(leaf), 0, std::nullopt};
 }
 
+auto BPlusTree::BeginRange(const TripleKey& lower, const TripleKey& upper) -> IndexIterator {
+  ReadPageGuard leaf = LeafFor(&lower);
+  if (!leaf.IsValid()) {
+    return End();
+  }
+  const auto keys = LeafKeys(ReadLeaf(leaf));
+  const int index =
+      static_cast<int>(std::lower_bound(keys.begin(), keys.end(), lower, Less) - keys.begin());
+  return {bpm_, std::move(leaf), index, upper};
+}
+
 auto BPlusTree::Begin(const TripleKey& key, int prefix_len) -> IndexIterator {
   const TripleKey lower = TripleKey::PrefixLower(key, prefix_len);
   const TripleKey upper = TripleKey::PrefixUpper(key, prefix_len);
