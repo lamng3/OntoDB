@@ -20,6 +20,7 @@ The shell is the interface. A later query window, if we build one, sends the sam
 - The B+ tree (2.1 to 2.7): page layout, invariants, search, insert with splits, the prefix iterator, bulk load, and delete. Safe for concurrent use by latch crabbing (7.1); nodes remember their path instead of storing parent pointers.
 - The disk manager (1.1) and the I/O scheduler (1.2): allocate, read, and write pages of the database file on one background thread, the LRU-K replacer (1.3), the buffer pool (1.4), its page guards (1.5), and `\bpm`, `\page`, `\trace` (1.6); the pool flushes the log up to a page's pageLSN before writing it.
 - The triple key (0.2): encode, decode, compare, and prefix bounds. The B+ tree is its first user.
+- Semantic search (14.1 to 14.9): `\hindex build` labels the `rdfs:subClassOf` hierarchy as intervals, `\under <class>` lists what is below it by range scans, `\vload <file>` reads one vector per term, `\vindex build` adds IVF and HNSW, and `\similar <term> [k] [under <class>]` finds the nearest terms. Not a reasoner: only `subClassOf`.
 
 Without a directory, the shell starts an empty memory database that keeps nothing. `\set backend indexed` moves it onto pages and B+ trees in a temporary file; `\set backend mem` moves it back.
 
@@ -41,7 +42,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | Log housekeeping | `scripts/check logkeep` | Planned. Log truncation, smaller page records, fuzzy checkpoints. |
 | SPARQL breadth | `scripts/check sparql` | Planned. `OPTIONAL`, `UNION`, aggregates, `DELETE/INSERT WHERE`. |
 | RDFS inference | `scripts/check rdfs` | Planned. Materialized RDFS entailment, kept up to date on insert and delete. |
-| Semantic search | `scripts/check semantic` | In progress. Class hierarchy as intervals, one vector per term, flat, IVF, and HNSW indexes, and hierarchy-filtered nearest neighbors. Theory in `docs/semantic-search.md`. |
+| Semantic search | `scripts/check semantic` | Done. Class hierarchy as intervals in a B+ tree, one vector per term, flat, IVF (lists in a B+ tree), PQ, and HNSW indexes, hierarchy-filtered nearest neighbors, and shell commands. Theory in `docs/semantic-search.md`, measurements in `benchmarks/semantic/results.md`, paper in `paper/`. |
 
 The planned features have no tests or stubs yet. Starting one means adding its tests disabled, its `scripts/check` name, and its `not built yet (PLAN x.y)` messages, in that order, as the earlier features did. They are listed in the order to build them: each later one is more useful once the shell keeps its data on pages.
 
@@ -259,7 +260,7 @@ Store what RDFS entails, so a query for `?x a ub:Student` finds graduate student
 
 ## Semantic search
 
-Find the terms close in meaning to a term, and the terms under a class, without a reasoner and without leaving the engine. Two separate ideas, because a sort order cannot hold similarity (`docs/semantic-search.md`, section 2): a hierarchy becomes intervals that a B+ tree range-scans, and meaning lives in a vector index beside the triples. Everything is in `src/semantic/`; ids stay first-seen. Methods are compared in `benchmarks/semantic/`.
+Done, with the measurements in `benchmarks/semantic/`. Find the terms close in meaning to a term, and the terms under a class, without a reasoner and without leaving the engine. Two separate ideas, because a sort order cannot hold similarity (`docs/semantic-search.md`, section 2): a hierarchy becomes intervals that a B+ tree range-scans, and meaning lives in a vector index beside the triples. Everything is in `src/semantic/`; ids stay first-seen. Methods are compared in `benchmarks/semantic/`.
 
 **14.1 Class labels.** `ClassHierarchy` takes `(class, parent)` pairs, collapses cycles into one class, picks a spanning forest, numbers it in postorder, and gives each class a set of intervals (Lemma 3). `IsDescendant`, `Descendants`, `Ancestors`. Tests: a tree has one interval per class; random DAGs match a transitive closure computed by search; a cycle collapses.
 
@@ -275,6 +276,6 @@ Find the terms close in meaning to a term, and the terms under a class, without 
 
 **14.7 Hybrid search.** `Similar(term, k, under C)`: pre-filter (interval scan, exact), post-filter (index search with a growing candidate list), or chosen by selectivity.
 
-**14.8 Shell.** `\hindex build`, `\under <class>`, `\vload <file>`, `\similar <term> [k] [under <class>]`.
+**14.8 Shell.** `\hindex build [<predicate>]`, `\under <class> [limit]`, `\vload <file>`, `\vindex build [ivf|hnsw|all]`, `\similar <term> [k] [under <class>] [using <strategy>]`. A term is `<iri>` or the text of its `rdfs:label`. A backend switch drops the engine, because ids change.
 
 **14.9 Measure.** Gene Ontology with real embeddings, LUBM(1), and a synthetic annotation set: does id order give neighbors, how many intervals a DAG needs, three ways to answer a type query, recall against latency for each index, and filtered search against selectivity. Write the findings in `writeups/` and the paper in `paper/`.
