@@ -1,0 +1,280 @@
+\chapter{Semantic Search}
+\label{ch:semantic}
+
+Two questions come up the moment a store holds an ontology. \emph{What is under
+this class?} is a question about structure, and the store can answer it
+exactly. \emph{What is close in meaning to this term?} is a question about
+similarity, and no index built so far in this book can answer it. The B+ trees
+of \cref{ch:btree} are sorted, and it is tempting to think that sorted means
+close. This chapter shows why that fails, what a hierarchy offers instead,
+and where the vectors that do answer the second question live.
+
+\section{What the tree orders}
+
+A triple is a 24-byte key of three dictionary ids compared with
+\code{memcmp} (\cref{ch:rdf-indexing}). The dictionary gives out ids densely, from
+1, in the order terms are first seen: the memory dictionary takes
+\code{next\_++}, and the disk dictionary takes \code{Size() + 1}. The loader
+interns the subject, predicate, and object of each statement in file order. So
+the order of every tree in OntoDB is \emph{first-seen order}. A class sits
+next to another in the index only if their IRIs happened to appear close
+together in the input. Nothing sorts by hierarchy, by label, or by meaning.
+
+What the tree does give is \emph{structural} grouping: a bound prefix is one
+contiguous range, which is why \code{?x rdf:type C} is a single scan of POS.
+
+\section{A sort order cannot hold similarity}
+
+Suppose we wanted one order on terms so that a range scan around a term returned
+its neighbors in meaning. Embeddings live in hundreds of dimensions; the
+question is already hard in two.
+
+\begin{lemma}[Bandwidth]\label{lem:bandwidth}
+Let $G$ be a graph on $n$ vertices with diameter $D$. Every linear order of the
+vertices has an edge whose endpoints are at least $(n-1)/D$ apart in the order.
+\end{lemma}
+\begin{proof}
+The first and the last vertex of the order are $n-1$ apart in it, and joined by
+a path of at most $D$ edges. Some edge of that path covers at least $(n-1)/D$ of
+the distance.
+\end{proof}
+
+Take the neighbor graph of a $k \times \dots \times k$ grid in $d$ dimensions:
+$n = k^d$, diameter $d(k-1)$. Some two grid neighbors are at least
+$(k^d-1)/(d(k-1)) \ge k^{d-1}/d$ positions apart, in \emph{any} order. A scan of
+width $w$ around a point cannot hold all its neighbors unless $w$ is that large:
+$\Omega(n^{(d-1)/d}/d)$. With a million points in two dimensions some neighbors
+are about 500 positions away; in 384 dimensions the bound says ordering buys
+nothing in the worst case. Space-filling curves (Z-order, Hilbert) keep
+neighbors close on average and need several range scans to cover a ball; they do
+not escape the lemma.
+
+\begin{keyidea}
+A B+ tree, or an adaptive radix tree, is a one-dimensional order. It is the
+right structure for a prefix, a range of keys, or a subtree of a hierarchy. It is
+the wrong structure for ``close in meaning''; that needs a vector index.
+\end{keyidea}
+
+\section{The exception: a hierarchy is a set of intervals}
+
+A class hierarchy \emph{does} have an order in which everything below a class
+is contiguous.
+
+\begin{lemma}[Trees]\label{lem:tree}
+Number the nodes of a rooted forest $1..n$ in postorder, and let $\mathit{lo}(c)$
+be the smallest number in the subtree of $c$. Then $d$ lies in the subtree of $c$
+if and only if $\mathit{lo}(c) \le \mathit{po}(d) \le \mathit{po}(c)$.
+\end{lemma}
+\begin{proof}
+A postorder walk numbers a subtree as one contiguous block that ends at its
+root.
+\end{proof}
+
+So ``all subclasses of $C$'' is one range scan over an index keyed by
+$\mathit{po}$. Real ontologies are directed acyclic graphs: a class can have
+several parents (the Gene Ontology has 57\,456 \code{is\_a} edges over 38\,092
+terms). Following Agrawal, Borgida, and Jagadish \cite{agrawal1989}, choose a
+spanning forest, number it in postorder, and give every class a \emph{set} of
+intervals: its own tree interval merged with the intervals of every child.
+
+\begin{lemma}[Interval sets]\label{lem:sets}
+With $I(c) = \mathrm{merge}\big(\mathit{own}(c) \cup \bigcup_{c \to v} I(v)\big)$,
+class $d$ is at or below $c$ if and only if $\mathit{po}(d)$ lies in an interval
+of $I(c)$.
+\end{lemma}
+\begin{proof}
+Induction over a reverse topological order: the numbers covered by $I(c)$ are
+exactly those of the descendants of $c$.
+\end{proof}
+
+\begin{lemma}[Size]\label{lem:size}
+Let $E'(c)$ be the non-tree edges whose tail is at or below $c$. Then
+$|I(c)| \le 1 + |E'(c)|$.
+\end{lemma}
+\begin{proof}
+A descendant $d$ is reached by a path from $c$. If the path uses no non-tree
+edge, $d$ is in the tree subtree of $c$. Otherwise let $v$ be the head of the
+last non-tree edge on the path; $d$ is in the tree subtree of $v$. The covered
+set is therefore $\mathit{own}(c) \cup \bigcup_{e \in E'(c)} \mathit{own}(\mathrm{head}(e))$, a union of
+$1 + |E'(c)|$ intervals, which has at most that many maximal intervals.
+\end{proof}
+
+A tree has no non-tree edges, so every class has one interval. Classes on a cycle
+($A \sqsubseteq B \sqsubseteq A$) denote the same class; OntoDB collapses them
+into one component before numbering. Which parent carries a class in the spanning
+forest changes how many intervals the DAG needs; OntoDB takes the parent with the
+longest path from a root.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\scriptsize,level distance=1.1cm,
+  every node/.style={draw,rounded corners=1pt,inner sep=3pt,fill=white},
+  sibling distance=2.8cm]
+\node (a) {A\quad$\mathit{po}=6$,\ [1,6]}
+  child { node (b) {B\quad$3$,\ [1,3]} child { node (d) {D\quad$1$,\ [1]} } child { node (e) {E\quad$2$,\ [2]} } }
+  child { node (c) {C\quad$5$,\ [2]\,[4,5]} child { node (f) {F\quad$4$,\ [4]} } };
+\draw[-{Stealth[length=1.8mm]},dashed] (e) to[bend right=25] node[draw=none,fill=none,pos=0.5,below]{non-tree} (c);
+\end{tikzpicture}
+\caption{A DAG in which $E$ has two parents, $B$ and $C$. The spanning forest keeps
+$E$ under $B$; the dashed edge is outside it. Each node shows its postorder number
+and its interval set. $C$ needs two intervals: its own tree interval $[4,5]$ and
+$[2]$, the label of $E$.}
+\end{figure}
+
+\subsection{Three ways to answer a type query}
+
+Under RDFS, \code{?x a C} means ``$x$ has a type at or below $C$''.
+
+\begin{center}
+\begin{tabular}{@{}p{2.1cm}p{3.6cm}p{5.2cm}@{}}
+\toprule
+Strategy & Extra stored & One query costs \\
+\midrule
+Rewrite & nothing & one POS scan per class below $C$ \\
+Materialize (\cref{ch:inference}) & a type triple per ancestor of each type & one POS scan \\
+Intervals & one key per type triple & one range scan per interval of $C$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The interval index stores \code{(po(type), instance)} once per type triple. An
+instance insert adds one key. The price is that labels change when the hierarchy
+does, so OntoDB rebuilds them in $O(n+m)$ instead of maintaining them
+(Agrawal et al.\ describe incremental maintenance with gaps; it is not built). A
+related idea, numbering a tree in preorder and postorder so that axes become
+regions of a plane, was used for XML by Grust \cite{grust2002}.
+
+\begin{decision}{Ids stay first-seen; labels are a separate index}
+\dpart{Choice} The dictionary keeps handing out dense ids in first-seen order. The
+postorder labels live in their own B+ tree, \code{(label, member, 0)}, which
+OntoDB rebuilds when the hierarchy changes.
+\dpart{Alternatives} Renumber the dictionary so ids follow the hierarchy; then the
+existing SPO, POS, and OSP trees would give subtree scans with no extra index.
+\dpart{Why} Ids are stored in three permutations, in the log, and in snapshots.
+A hierarchy edit would renumber all of them. A label is derived data.
+\dpart{Cost} One more small tree, and a rebuild after the hierarchy changes.
+\end{decision}
+
+\section{Vector indexes}
+
+The second question needs vectors. OntoDB keeps one unit-length float vector
+per term id, so cosine similarity is a dot product. Embeddings come from
+outside; a small sentence model on a CPU embeds the 38\,092 Gene Ontology names
+in under a minute. OntoDB stores and searches them; it does not run the model.
+
+\begin{description}[leftmargin=1.2em]
+\item[Flat.] Score every vector: $O(nd)$ and exact. With 8-bit scalar
+quantization (one scale per vector, $s = \max|x|/127$) a stored coordinate is
+off by at most $s/2$, so for a unit query a score is off by at most
+$(s/2)\sqrt d$, at a quarter of the memory.
+\item[IVF] (inverted file \cite{jegou2011}). Cluster the vectors into $L$ lists
+with $k$-means \cite{arthur2007}. A query scores the $L$ centroids, then only the
+$p$ nearest lists: cost $Ld + p(n/L)d$, minimal at $L=\sqrt{pn}$, where it equals
+$2d\sqrt{pn}$. OntoDB stores each list as a range of a B+ tree: key
+\code{(list, row, 0)}, so a list is a prefix scan and an insert is a tree
+insert.
+\item[Product quantization.] Cut a vector into $m$ pieces and replace each by the
+index of its nearest of 256 learned centers: $m$ bytes per vector. A query builds
+$m$ tables of 256 dot products ($256d$ work), and a stored code scores as the sum
+of $m$ table entries. That equals the dot product with the decoded vector exactly,
+so all the error is in the stored side.
+\item[HNSW] (hierarchical navigable small world \cite{malkov2020}). A layered
+proximity graph searched greedily: memory $O(nM)$, the slowest to build, usually
+the best recall for a given time, and no worst-case bound.
+\end{description}
+
+\begin{decision}{IVF lists are B+ tree ranges}
+\dpart{Choice} A posting list is the set of keys \code{(list, row, 0)} in a
+B+ tree of the same kind as the triple indexes.
+\dpart{Alternatives} A separate array per list in memory, as FAISS keeps them
+\cite{johnson2021}.
+\dpart{Why} The tree already pages, caches, and latches; an insert or delete is a
+tree operation; a list is a prefix scan, the access path OntoDB is built around.
+\dpart{Cost} The vectors themselves are still fetched by row from the vector store,
+one random access per candidate.
+\end{decision}
+
+\section{Filtering a vector search by a class}
+
+A hybrid query asks for the $k$ terms nearest $t$ that lie under class $C$. Let
+$s = |\mathrm{subtree}(C)|/n$.
+
+\begin{description}[leftmargin=1.2em]
+\item[Pre-filter.] Resolve $C$ to its members first (one range scan per
+interval), then score only those, exactly: about $s\,n\,d$ work. Best when $s$ is
+small.
+\item[Post-filter.] Ask the index for more than $k$, keep those under $C$ (a
+membership test is a binary search over $C$'s intervals; no scan), and ask for
+four times as many until $k$ remain. If the filter were independent of the
+similarity one would need about $k/s$ candidates, so it fails when $s$ is small.
+\item[In-index filter.] Resolve $C$, then give the index the set as a mask: IVF
+skips list entries outside it, HNSW still crosses masked nodes to stay connected
+but never returns them \cite{patel2024}.
+\end{description}
+
+In an ontology the filter and the vectors are \emph{not} independent: the names
+of a class's descendants are close to the class and to each other. A query from
+inside $C$ finds most of its neighbors inside $C$, so post-filtering works far
+better than $k/s$ predicts; a query from outside finds almost none, and it works
+far worse. \Cref{sec:semantic-measure} measures both.
+
+\section{Why not an ART with sibling links}
+
+An adaptive radix tree \cite{leis2013} orders keys by byte, so its range scan is a
+\emph{lexical} range scan: every label that starts with \code{rub}. That is a real
+query, and the ART is good at it, but it is the same one-dimensional order as the
+B+ tree, and \cref{lem:bandwidth} applies unchanged.
+
+Sibling links on an ART's leaves are possible. Path compression and node growth
+never move a leaf. Lazy expansion does: an insert that meets a leaf turns it into
+an inner node and puts a \emph{copy} of the leaf under it, so a link that pointed
+at the old object now points at an inner node. Every insert must also find its
+sorted neighbors, a partial descent, and concurrent inserts must latch both. A B+
+tree has the link for free: a leaf is a page, and a split is local. The
+usual alternative is a stack-based iterator: no link, climb and descend a stack of
+\code{[node, keys, next child]}, which pays pointer chasing between leaves and
+costs nothing on insert. OntoDB's keys are three fixed-width
+integers, which gives an ART little prefix to compress, so the B+ tree stays.
+
+\paragraph{Pessimistic and optimistic prefixes.} Path compression stores a node's
+shared prefix. \emph{Pessimistic} storage keeps the bytes in the node, so a
+descent compares them and fails at the first wrong byte; the cost is
+variable-length storage. \emph{Optimistic} storage keeps only the length: the
+descent skips those bytes and the full key is checked once, at the leaf. Nodes are
+smaller, and a wrong path is found late. For a range scan the difference is in the
+seek. To find the first key at or above $\mathit{lo}$ the seek must know whether a
+whole subtree lies below or above $\mathit{lo}$. With stored bytes it decides at the
+node; with skipped bytes it must load a key from the subtree and compare. The
+upper bound needs no jumping: a second seek finds the first key past $\mathit{hi}$.
+The only binary search in a scan is over the sorted edge bytes of one node.
+
+\section{What it costs}
+\label{sec:semantic-measure}
+
+MEASUREMENTS
+
+\begin{status}
+Built (plan 14.1--14.7, 14.9): class labels, the interval indexes, the vector
+store, flat, IVF, and HNSW indexes, hybrid search, and the benchmarks of this
+chapter (\code{benchmarks/semantic/}). The shell commands (14.8) are planned.
+Vectors live in memory, not in buffer pool pages, and the structures are not
+updated by inserts: they are rebuilt.
+\end{status}
+
+\begin{checkyourself}
+\item Why does a sort order of dictionary ids not put similar classes next to each other? What would have to be true of the input file for it to?
+\item Use \cref{lem:bandwidth} to bound how far apart two neighbors must be in the best order of a $10 \times 10$ grid.
+\item Give the postorder labels and the interval sets of the diamond $D \sqsubseteq B, C \sqsubseteq A$ for a spanning forest that keeps $D$ under $B$.
+\item A class has 5 non-tree edges below it. How many intervals can it have at most, and why?
+\item When is pre-filtering better than post-filtering for a class filter, and when is it not?
+\item Why can post-filtering work better than the independence estimate $k/s$ says, in an ontology?
+\item What does a seek for a lower bound have to do differently if prefixes are stored optimistically?
+\end{checkyourself}
+
+\section*{Further reading}
+Agrawal, Borgida, and Jagadish \cite{agrawal1989} on interval labelling of
+transitive relationships; Jégou, Douze, and Schmid \cite{jegou2011} on
+inverted files and product quantization; Malkov and Yashunin \cite{malkov2020}
+on HNSW; Patel et al.\ \cite{patel2024} on filtered vector search; Pan, Wang, and
+Li \cite{pan2024} for a survey of vector database systems; Leis, Kemper, and
+Neumann \cite{leis2013} on the adaptive radix tree.
