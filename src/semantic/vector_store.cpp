@@ -34,6 +34,20 @@ auto Take(const std::string& in, size_t* pos) -> T {
 
 }  // namespace
 
+auto VectorStore::PeekDimension(const std::string& path) -> uint32_t {
+  std::ifstream file(path, std::ios::binary);
+  char header[kMagicLen + sizeof(uint32_t)];
+  if (!file.read(header, sizeof header)) {
+    throw StorageException(path + " is not a vector file");
+  }
+  if (std::memcmp(header, kMagic2, kMagicLen) != 0 && std::memcmp(header, kMagic1, kMagicLen) != 0) {
+    throw StorageException(path + " is not a vector file");
+  }
+  uint32_t dim;
+  std::memcpy(&dim, header + kMagicLen, sizeof dim);
+  return dim;
+}
+
 void VectorStore::Put(term_id_t id, const float* v) {
   double norm = 0;
   for (uint32_t i = 0; i < dim_; i++) {

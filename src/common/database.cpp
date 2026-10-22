@@ -107,6 +107,13 @@ auto Database::GetStore() -> TripleStore* {
   return indexed_ ? static_cast<TripleStore*>(&indexed_->store) : store_.get();
 }
 
+auto Database::Semantic() -> SemanticEngine& {
+  if (!semantic_) {
+    semantic_ = std::make_unique<SemanticEngine>();
+  }
+  return *semantic_;
+}
+
 void Database::SetBackend(BackendKind kind) {
   std::unique_lock<std::shared_mutex> alone(backend_mu_);
   {
@@ -114,6 +121,9 @@ void Database::SetBackend(BackendKind kind) {
     if (!current_.empty()) {
       throw std::runtime_error("finish the open transactions before switching backends");
     }
+  }
+  if ((kind == BackendKind::kIndexed) != (indexed_ != nullptr)) {
+    semantic_.reset();  // ids are about to change
   }
   if (kind == BackendKind::kIndexed && !indexed_) {
     if (durability_) {
