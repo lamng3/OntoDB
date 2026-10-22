@@ -1,5 +1,7 @@
 #include "semantic/flat_index.h"
 
+#include "semantic/dot.h"
+
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -44,19 +46,10 @@ FlatIndex::FlatIndex(const VectorStore* store, Precision precision) : store_(sto
 
 auto FlatIndex::Score(const float* query, uint32_t row) const -> float {
   const uint32_t dim = store_->Dim();
-  float sum = 0;
   if (precision_ == Precision::kFloat32) {
-    const float* v = store_->Vector(row);
-    for (uint32_t i = 0; i < dim; i++) {
-      sum += query[i] * v[i];
-    }
-    return sum;
+    return Dot(query, store_->Vector(row), dim);
   }
-  const int8_t* c = codes_.data() + static_cast<size_t>(row) * dim;
-  for (uint32_t i = 0; i < dim; i++) {
-    sum += query[i] * static_cast<float>(c[i]);
-  }
-  return sum * scales_[row];
+  return DotCodes(query, codes_.data() + static_cast<size_t>(row) * dim, dim) * scales_[row];
 }
 
 auto FlatIndex::Bytes() const -> size_t {

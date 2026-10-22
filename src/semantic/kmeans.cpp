@@ -1,5 +1,7 @@
 #include "semantic/kmeans.h"
 
+#include "semantic/dot.h"
+
 #include <algorithm>
 #include <cmath>
 #include <random>
@@ -7,14 +9,6 @@
 namespace ontodb {
 
 namespace {
-
-auto Dot(const float* a, const float* b, uint32_t dim) -> float {
-  float s = 0;
-  for (uint32_t i = 0; i < dim; i++) {
-    s += a[i] * b[i];
-  }
-  return s;
-}
 
 void Unit(float* v, uint32_t dim) {
   const float norm = std::sqrt(Dot(v, v, dim));

@@ -6,6 +6,7 @@
 #include <queue>
 #include <random>
 
+#include "semantic/dot.h"
 #include "semantic/kmeans.h"
 #include "storage/page/b_plus_tree_header_page.h"
 
@@ -90,12 +91,7 @@ auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowMa
   nprobe = std::min(std::max<uint32_t>(nprobe, 1), lists_);
   std::vector<std::pair<float, uint32_t>> order(lists_);
   for (uint32_t c = 0; c < lists_; c++) {
-    float s = 0;
-    const float* ctr = centroids_.data() + static_cast<size_t>(c) * dim;
-    for (uint32_t i = 0; i < dim; i++) {
-      s += q[i] * ctr[i];
-    }
-    order[c] = {s, c};
+    order[c] = {Dot(q.data(), centroids_.data() + static_cast<size_t>(c) * dim, dim), c};
   }
   std::partial_sort(order.begin(), order.begin() + nprobe, order.end(),
                     [](const auto& a, const auto& b) { return a.first > b.first; });

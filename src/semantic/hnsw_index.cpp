@@ -1,5 +1,7 @@
 #include "semantic/hnsw_index.h"
 
+#include "semantic/dot.h"
+
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -44,12 +46,7 @@ auto HnswIndex::Sim(uint32_t a, uint32_t b) const -> float {
 }
 
 auto HnswIndex::SimQ(const float* q, uint32_t row) const -> float {
-  const float* v = store_->Vector(row);
-  float s = 0;
-  for (uint32_t i = 0; i < store_->Dim(); i++) {
-    s += q[i] * v[i];
-  }
-  return s;
+  return Dot(q, store_->Vector(row), store_->Dim());
 }
 
 auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t ef, int layer,
