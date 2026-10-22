@@ -41,6 +41,7 @@ class DiskScheduler {
   void Schedule(DiskRequest request);
 
  private:
+  void Handle(DiskRequest& request);
   void Run();
 
   DiskManager* disk_manager_;
@@ -48,7 +49,9 @@ class DiskScheduler {
   std::mutex mu_;
   std::condition_variable ready_;
   std::deque<std::optional<DiskRequest>> queue_;  // nullopt asks the worker to stop
+#ifndef __EMSCRIPTEN__
   std::thread worker_;
+#endif
 };
 
 }  // namespace ontodb

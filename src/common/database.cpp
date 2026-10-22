@@ -73,7 +73,9 @@ Database::Database()
     : dictionary_(std::make_unique<MemDictionary>())
     , store_(std::make_unique<MemStore>())
     , txns_(std::make_unique<TransactionManager>(&locks_, store_.get())) {
-  locks_.StartDeadlockDetection();
+#ifndef __EMSCRIPTEN__
+  locks_.StartDeadlockDetection();  // the web build is single-threaded
+#endif
 }
 
 Database::~Database() = default;

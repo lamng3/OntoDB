@@ -9,7 +9,9 @@
 namespace ontodb {
 
 SessionPool::SessionPool() {
-  Ensure(1);
+#ifndef __EMSCRIPTEN__
+  Ensure(1);  // the web build has no threads and runs lines through Shell::Evaluate
+#endif
 }
 
 SessionPool::~SessionPool() {

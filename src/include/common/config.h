@@ -8,6 +8,9 @@ namespace ontodb {
 // Fixed for the whole system. Every on-disk page is this long, and the first
 // kPageLsnSize bytes of every page are the pageLSN (little-endian). Payload
 // layouts in later phases start at kPagePayloadOffset.
+#ifdef PAGE_SIZE
+#undef PAGE_SIZE  // musl's <limits.h> defines it as a macro (Emscripten)
+#endif
 inline constexpr size_t PAGE_SIZE = 4096;
 inline constexpr size_t kPageLsnOffset = 0;
 inline constexpr size_t kPageLsnSize = 8;
