@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Embed term names with a small sentence model, on the CPU, into an OntoDB vector file.
+
+Usage: scripts/embed-terms <terms.tsv> <out.ovec> [model]
+
+terms.tsv has one `<spelling>\\tname` per line (scripts/fetch-data go writes one).
+The file format is read by VectorStore::Load: magic "OVEC1\\n", uint32 dimension,
+uint64 count, then per record a uint32 length, the spelling, and `dimension`
+little-endian float32 values (L2-normalized).
+"""
+
+import struct
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+
+def main():
+    if len(sys.argv) < 3:
+        print(__doc__, file=sys.stderr)
+        return 2
+    src, dest = Path(sys.argv[1]), Path(sys.argv[2])
+    model_name = sys.argv[3] if len(sys.argv) > 3 else "all-MiniLM-L6-v2"
+    rows = [line.rstrip("\n").split("\t", 1) for line in src.read_text(encoding="utf-8").splitlines() if line]
+    spellings = [r[0] for r in rows]
+    names = [r[1] for r in rows]
+    model = SentenceTransformer(model_name, device="cpu")
+    start = time.time()
+    vectors = model.encode(names, batch_size=128, normalize_embeddings=True, show_progress_bar=False).astype("<f4")
+    dim = vectors.shape[1]
+    with dest.open("wb") as out:
+        out.write(b"OVEC1\n")
+        out.write(struct.pack("<IQ", dim, len(spellings)))
+        for spelling, vec in zip(spellings, vectors):
+            raw = spelling.encode("utf-8")
+            out.write(struct.pack("<I", len(raw)))
+            out.write(raw)
+            out.write(vec.tobytes())
+    print(f"{len(spellings)} vectors of {dim} floats from {model_name} in {time.time() - start:.0f}s -> {dest}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

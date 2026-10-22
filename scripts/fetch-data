@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Download Pizza or generate LUBM(1). Usage: scripts/fetch-data pizza|lubm"""
+"""Download Pizza, generate LUBM(1), or fetch the Gene Ontology.
 
+Usage: scripts/fetch-data pizza|lubm|go
+"""
+
+import re
 import shutil
 import subprocess
 import sys
@@ -75,12 +79,63 @@ def lubm():
     print(produced)
 
 
+GO_URL = "https://purl.obolibrary.org/obo/go/go-basic.obo"
+OBO = "http://purl.obolibrary.org/obo/"
+RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+
+
+def go():
+    """Gene Ontology (basic, acyclic) as N-Triples: rdfs:subClassOf for every
+    is_a edge and rdfs:label for every name. Obsolete terms are dropped.
+    Also writes go.terms.tsv (IRI, name) for the embedding script."""
+    out = DOWNLOADS / "go"
+    obo = out / "go-basic.obo"
+    if not obo.exists():
+        fetch(GO_URL, obo)
+    iri = lambda go_id: "<" + OBO + go_id.replace(":", "_") + ">"
+    terms = {}
+    cur = None
+    in_term = False
+    for line in obo.read_text(encoding="utf-8").splitlines():
+        if line.startswith("["):
+            in_term = line == "[Term]"
+            cur = None
+            continue
+        if not in_term or ": " not in line:
+            continue
+        key, _, value = line.partition(": ")
+        if key == "id":
+            cur = {"id": value, "name": "", "is_a": [], "obsolete": False}
+            terms[value] = cur
+        elif cur is None:
+            continue
+        elif key == "name":
+            cur["name"] = value
+        elif key == "is_a":
+            cur["is_a"].append(value.split(" ! ")[0].strip())
+        elif key == "is_obsolete" and value == "true":
+            cur["obsolete"] = True
+    live = {i: t for i, t in terms.items() if not t["obsolete"]}
+    edges = 0
+    with (out / "go.nt").open("w", encoding="utf-8") as nt, (out / "go.terms.tsv").open("w", encoding="utf-8") as tsv:
+        for go_id, term in live.items():
+            nt.write(f'{iri(go_id)} <{RDFS}label> "{term["name"].replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}" .\n')
+            tsv.write(f"{iri(go_id)}\t{term['name']}\n")
+            for parent in term["is_a"]:
+                if parent in live:
+                    nt.write(f"{iri(go_id)} <{RDFS}subClassOf> {iri(parent)} .\n")
+                    edges += 1
+    print(f"{len(live)} terms, {edges} is_a edges -> {out / 'go.nt'}")
+
+
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm"):
-        print("usage: scripts/fetch-data pizza|lubm", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm", "go"):
+        print("usage: scripts/fetch-data pizza|lubm|go", file=sys.stderr)
         return 2
     if sys.argv[1] == "pizza":
         pizza()
+    elif sys.argv[1] == "go":
+        go()
     else:
         lubm()
     return 0
