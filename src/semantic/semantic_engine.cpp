@@ -364,7 +364,11 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
     if (under_id != INVALID_TERM_ID) {
       out << ", under " << under;
     }
-    out << " [" << HybridSearch::Name(result.used) << ", " << ms * 1000.0 << " us]";
+    std::string used = HybridSearch::Name(result.used);
+    if (under_id == INVALID_TERM_ID) {  // with no class there is no filter to name
+      used = result.used == S::kMaskHnsw ? "hnsw" : result.used == S::kMaskIvf ? "ivf" : "exact scan";
+    }
+    out << " [" << used << ", " << ms * 1000.0 << " us]";
     size_t shown = 0;
     for (const Neighbor& n : result.neighbors) {
       if (n.id == *id) {
