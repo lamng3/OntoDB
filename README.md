@@ -54,6 +54,7 @@ write-ahead log. A restart is ARIES.
 - **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
 - **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
 - **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
+- **Semantic search.** A class hierarchy becomes a few integer intervals per class, kept in a B+ tree, so "everything under C" is a range scan. Vectors, one per term, are searched by exact, IVF (lists stored in a B+ tree), or HNSW indexes, and a search can be limited to the terms under a class. Theory and measurements: [docs/semantic-search.md](docs/semantic-search.md).
 - **Agent memory.** OntoDB can hold an agent memory log ([MemCommit](https://github.com/lamng3/memcommit)) beside the ontology, as RDF, so provenance is a SPARQL query. See *Store agent memory* below.
 
 Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
