@@ -96,3 +96,20 @@ Deliberate exceptions:
 - **No retry on a failed fsync.** A log flush that fails is reported, not retried. After a failed fsync the kernel may have dropped the dirty pages, so a retry that succeeds can still have lost data; this is the lesson of PostgreSQL's 2018 fsync incident.
 - **One process-wide test hook.** `CrashPoint` is global because a crash point has to be reachable from any depth of any call. It does nothing unless a test arms it.
 - **Constants, not literals.** Sizes and intervals have names: `PAGE_SIZE` and the defaults in `src/include/common/config.h`, `LogRecord::kHeaderSize` and `kMaxSize`, `kFlushInterval` in the log manager, and `kDefaultLogTail` in the shell.
+
+## One similarity query
+
+Take this, after `\load data/downloads/go/go.nt` (see `scripts/fetch-data go`), `\hindex build`, `\vload data/downloads/go/go.ovec`, and `\vindex build hnsw`:
+
+```text
+\similar "apoptotic process" 5 under "cell death"
+```
+
+1. `tools/shell/commands.cpp` hands the line to `Database::Semantic()`, a `SemanticEngine` made on first use (`src/semantic/semantic_engine.cpp`). It owns a private buffer pool on a temporary file, so the label tree and the IVF lists work on either backend. A backend switch drops it, because it names terms by the dictionary's ids.
+2. `SemanticEngine::Similar` splits the line into units (`<iri>`, `"text"`, bare words) and resolves each to a term id: an IRI through the dictionary, anything else through the `rdfs:label` triples (an OSP scan for the literal).
+3. The term's own vector is the query. `src/semantic/vector_store.cpp` holds one unit float vector per term id, loaded from a checksummed file whose records name terms by spelling.
+4. `src/semantic/hybrid_search.cpp` picks a strategy. With `under`, `kAuto` resolves the class when it has at most 4,096 members: `LabelIndex::Scan` (`src/semantic/label_index.cpp`) does one B+ tree range scan per interval of the class (`BPlusTree::BeginRange`), the intervals coming from `ClassHierarchy` (`src/semantic/class_hierarchy.cpp`, postorder labels and interval sets, plan 14.1). Above 4,096 it searches HNSW with a predicate instead: a row is allowed when its label lies in one of the class's intervals.
+5. The scoring is `FlatIndex::SearchRows` (exact, `src/semantic/flat_index.cpp`) or `HnswIndex::Search` (`src/semantic/hnsw_index.cpp`). `IvfIndex` (`src/semantic/ivf_index.cpp`) is the third choice: its lists are ranges of a B+ tree keyed `(list, row, 0)`.
+6. The engine prints each neighbor with its score, IRI, and label, and names the strategy and the time.
+
+The theory is in `docs/semantic-search.md`; every number is in `benchmarks/semantic/results.md`.
