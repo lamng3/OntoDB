@@ -49,7 +49,10 @@ class IvfIndex {
 
   // The k best among the probed lists, best first. `allowed` restricts the
   // rows that may be returned; rows it rules out are skipped before scoring.
-  auto Search(const float* query, size_t k, uint32_t nprobe, const RowMask* allowed = nullptr,
+  // Under a filter the search keeps probing further lists, nearest first, until
+  // it holds k allowed rows or has probed them all, so a filter that excludes
+  // everything near the query costs more instead of returning nothing.
+  auto Search(const float* query, size_t k, uint32_t nprobe, const RowFilter* allowed = nullptr,
               SearchStats* stats = nullptr) -> std::vector<Neighbor>;
 
  private:

@@ -116,10 +116,11 @@ TEST(P14_6_HnswIndex, MaskReturnsOnlyAllowedRows) {
       rows.push_back(row);
     }
   }
+  const RowFilter allowed_filter(&allowed);
   double recall = 0;
   int queries = 0;
   for (uint32_t row = 1; row < store.Size(); row += 31) {
-    const auto got = hnsw.Search(store.Vector(row), 10, 64, &allowed);
+    const auto got = hnsw.Search(store.Vector(row), 10, 64, &allowed_filter);
     for (const auto& n : got) {
       ASSERT_EQ(*store.Row(n.id) % 4, 0u);
     }
@@ -129,7 +130,8 @@ TEST(P14_6_HnswIndex, MaskReturnsOnlyAllowedRows) {
   EXPECT_GT(recall / queries, 0.85);
   // Nothing allowed: nothing returned, and the walk ends.
   const RowMask none(store.Size(), 0);
-  EXPECT_TRUE(hnsw.Search(store.Vector(0), 5, 32, &none).empty());
+  const RowFilter none_filter(&none);
+  EXPECT_TRUE(hnsw.Search(store.Vector(0), 5, 32, &none_filter).empty());
 }
 
 }  // namespace

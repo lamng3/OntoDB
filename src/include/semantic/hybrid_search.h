@@ -23,9 +23,12 @@ namespace ontodb {
 //                   intervals, no scan), and ask for four times as many again
 //                   until k remain or the index is exhausted. Cost grows as s
 //                   falls, unless the neighbors of q lie under C anyway.
-//   kMask*          Resolve C as for pre-filtering, but hand the set to the
-//                   index as a mask, so the walk or the list scan skips what is
-//                   outside C. HNSW still crosses the masked rows.
+//   kMask*          Hand the index a predicate, "this row's label lies in one of
+//                   C's intervals", so the walk or the list scan skips what is
+//                   outside C. Nothing is resolved in advance: each row the
+//                   search touches costs one binary search. HNSW still crosses
+//                   the rows it may not return; IVF keeps probing lists until it
+//                   holds k allowed rows.
 //   kAuto           kPreFilter when C has at most `pre_threshold` classes,
 //                   otherwise kMaskHnsw if there is an HNSW index, else
 //                   kMaskIvf, else kPreFilter.
@@ -52,13 +55,13 @@ class HybridSearch {
   struct Result {
     std::vector<Neighbor> neighbors;
     Strategy used{Strategy::kAuto};
-    size_t members{0};  // classes the filter resolved to (0 when it was not resolved)
+    size_t members{0};  // members resolved by range scans (0 when the filter was not resolved)
     size_t rounds{0};   // index searches made
     LabelIndex::ScanStats scans;
     SearchStats stats;
   };
 
-  explicit HybridSearch(const Parts& parts) : parts_(parts) {}
+  explicit HybridSearch(const Parts& parts);
 
   // `under == INVALID_TERM_ID` means no filter. A class that is not in the
   // hierarchy has no members, so the answer is empty.
@@ -72,6 +75,7 @@ class HybridSearch {
   auto Members(term_id_t under, Result* out) const -> std::vector<uint32_t>;
 
   Parts parts_;
+  std::vector<uint32_t> row_label_;  // label of each vector's term, 0 if it is not a class
 };
 
 }  // namespace ontodb

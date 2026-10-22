@@ -4,6 +4,13 @@
 
 namespace ontodb {
 
+HybridSearch::HybridSearch(const Parts& parts) : parts_(parts) {
+  row_label_.assign(parts_.vectors->Size(), 0);
+  for (uint32_t row = 0; row < row_label_.size(); row++) {
+    row_label_[row] = parts_.hierarchy->Label(parts_.vectors->IdAt(row));
+  }
+}
+
 auto HybridSearch::Name(Strategy s) -> const char* {
   switch (s) {
     case Strategy::kAuto: return "auto";
@@ -69,16 +76,12 @@ auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strate
     }
     case Strategy::kMaskHnsw:
     case Strategy::kMaskIvf: {
-      const auto rows = Members(under, &out);
-      RowMask mask(n, 0);
-      for (const uint32_t row : rows) {
-        mask[row] = 1;
-      }
+      const RowFilter filter(&row_label_, &parts_.hierarchy->Intervals(under));
       out.rounds = 1;
       if (strategy == Strategy::kMaskHnsw) {
-        out.neighbors = parts_.hnsw->Search(query, k, params.ef, &mask, &out.stats, params.max_visits);
+        out.neighbors = parts_.hnsw->Search(query, k, params.ef, &filter, &out.stats, params.max_visits);
       } else {
-        out.neighbors = parts_.ivf->Search(query, k, params.nprobe, &mask, &out.stats);
+        out.neighbors = parts_.ivf->Search(query, k, params.nprobe, &filter, &out.stats);
       }
       break;
     }
