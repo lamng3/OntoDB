@@ -219,14 +219,14 @@ auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& e
   h.stats_.non_tree_edges = h.stats_.edges - tree_edges;
   // Closure size: each component's descendants are the labels in its
   // intervals, each carrying its members.
-  std::vector<size_t> weight(m + 1, 0);
+  h.weight_.assign(m + 1, 0);
   for (uint32_t label = 1; label <= m; label++) {
-    weight[label] = weight[label - 1] + h.members_[h.by_label_[label - 1]].size();
+    h.weight_[label] = h.weight_[label - 1] + h.members_[h.by_label_[label - 1]].size();
   }
   for (uint32_t c = 0; c < m; c++) {
     size_t below = 0;
     for (const Interval& iv : h.intervals_[c]) {
-      below += weight[iv.hi] - weight[iv.lo - 1];
+      below += h.weight_[iv.hi] - h.weight_[iv.lo - 1];
     }
     h.stats_.closure_pairs += below * h.members_[c].size();
   }
@@ -282,6 +282,14 @@ auto ClassHierarchy::Ancestors(term_id_t cls) const -> std::vector<term_id_t> {
     }
   }
   return out;
+}
+
+auto ClassHierarchy::DescendantCount(term_id_t cls) const -> size_t {
+  size_t count = 0;
+  for (const Interval& iv : Intervals(cls)) {
+    count += weight_[iv.hi] - weight_[iv.lo - 1];
+  }
+  return count;
 }
 
 auto ClassHierarchy::IsDescendant(term_id_t d, term_id_t c) const -> bool {
