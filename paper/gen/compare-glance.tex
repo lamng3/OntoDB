@@ -7,13 +7,13 @@
 \toprule
  & Ox.\ RocksDB & Ox.\ memory & Jena TDB2 & SQLite \\
 \midrule
-pattern $(s,\cdot,\cdot)$ & 8.4$\times$ & 3.4$\times$ & 36.7$\times$ & 4.2$\times$ \\
-pattern $(s,p,\cdot)$ & 7.2$\times$ & 4.6$\times$ & 27.3$\times$ & 5.5$\times$ \\
-LUBM query 1 & 3.7$\times$ & 1.4$\times$ & 58.4$\times$ & 2.0$\times$ \\
-instances of a class, 10--99 below & 39.1$\times$ & 7.7$\times$ & 47.9$\times$ & 14.9$\times$ \\
-instances of a class, 1000+ below & 5.8$\times$ & 2.2$\times$ & 5.3$\times$ & 3.5$\times$ \\
-lookups per second, 8 threads & 7.0$\times$ & 3.2$\times$ & 6.1$\times$ & 3.9$\times$ \\
-lookups per second, 8 readers + 1 writer & 10.2$\times$ & 4.8$\times$ & 18.8$\times$ & 4.3$\times$ \\
+pattern $(s,\cdot,\cdot)$ & \cellcolor{ours!55}\textbf{8.4$\times$} & \cellcolor{ours!40}3.4$\times$ & \cellcolor{ours!100}\textbf{36.7$\times$} & \cellcolor{ours!42}4.2$\times$ \\
+pattern $(s,p,\cdot)$ & \cellcolor{ours!51}\textbf{7.2$\times$} & \cellcolor{ours!43}4.6$\times$ & \cellcolor{ours!100}\textbf{27.3$\times$} & \cellcolor{ours!46}\textbf{5.5$\times$} \\
+LUBM query 1 & \cellcolor{ours!41}3.7$\times$ & \cellcolor{ours!34}1.4$\times$ & \cellcolor{ours!100}\textbf{58.4$\times$} & \cellcolor{ours!36}2.0$\times$ \\
+instances of a class, 10--99 below & \cellcolor{ours!100}\textbf{39.1$\times$} & \cellcolor{ours!52}\textbf{7.7$\times$} & \cellcolor{ours!100}\textbf{47.9$\times$} & \cellcolor{ours!74}\textbf{14.9$\times$} \\
+instances of a class, 1000+ below & \cellcolor{ours!47}\textbf{5.8$\times$} & \cellcolor{ours!36}2.2$\times$ & \cellcolor{ours!46}\textbf{5.3$\times$} & \cellcolor{ours!40}3.5$\times$ \\
+lookups per second, 8 threads & \cellcolor{ours!51}\textbf{7.0$\times$} & \cellcolor{ours!39}3.2$\times$ & \cellcolor{ours!48}\textbf{6.1$\times$} & \cellcolor{ours!41}3.9$\times$ \\
+lookups per second, 8 readers + 1 writer & \cellcolor{ours!60}\textbf{10.2$\times$} & \cellcolor{ours!44}4.8$\times$ & \cellcolor{ours!86}\textbf{18.8$\times$} & \cellcolor{ours!42}4.3$\times$ \\
 \bottomrule
 \end{tabular}}
 \end{table}
