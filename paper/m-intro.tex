@@ -55,8 +55,9 @@ This paper introduces \sys, an open-source ontology database in C++20
 \begin{enumerate}
 \item \textbf{A concurrent B+ tree triple store} (Sections~\ref{sec-store}
   and~\ref{sec-conc}): the algorithms for search, insert, and delete, a bound
-  on the pages a range scan reads, and a latch-free hit path and an optimistic
-  writer descent that scale to eight threads.
+  on the pages a range scan reads, write-ahead logging with page-level
+  recovery, and a latch-free hit path and an optimistic writer descent that
+  scale to eight threads.
 \item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}): a postorder
   labelling of the class DAG kept in the same B+ tree, so that ``everything
   under $c$'' is a few range scans and no entailed triple is stored.
