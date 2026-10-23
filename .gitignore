@@ -17,3 +17,5 @@ book/chapters/*.aux
 web/build/
 web/out/
 web/data/
+benchmarks/compare/.venv/
+benchmarks/compare/oxigraph/target/

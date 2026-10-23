@@ -1,0 +1,17 @@
+\begin{table}[t]
+\caption{Instances of a class and its subclasses, 200\,000 entities over the Gene Ontology, 30 classes per row, warm: mean time. \sys{} answers by interval scans; Oxigraph by \texttt{?x a ?c . ?c rdfs:subClassOf* <C>}. \sys{} ``ids'' stops before the dictionary; ``strings'' decodes every answer, as Oxigraph does.}
+\label{tab:hier}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Below $C$ & answers & \sys{} ids & \sys{} strings & Ox., RocksDB & Ox., memory \\
+\midrule
+1 & 10 & 1\,$\mu$s & 11\,$\mu$s & 37\,$\mu$s & 13\,$\mu$s \\
+2-9 & 40 & 3\,$\mu$s & 42\,$\mu$s & 91\,$\mu$s & 23\,$\mu$s \\
+10-99 & 278 & 10\,$\mu$s & 275\,$\mu$s & 539\,$\mu$s & 110\,$\mu$s \\
+100-999 & 2,954 & 127\,$\mu$s & 2.9\,ms & 5.4\,ms & 1.1\,ms \\
+1000+ & 29,904 & 1.7\,ms & 29.1\,ms & 60.6\,ms & 21.8\,ms \\
+\bottomrule
+\end{tabular}}
+\end{table}

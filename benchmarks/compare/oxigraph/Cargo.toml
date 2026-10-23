@@ -1,0 +1,10 @@
+[package]
+name = "oxigraph-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+oxigraph = "0.5"
+
+[profile.release]
+opt-level = 3

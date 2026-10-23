@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{Loading LUBM in each engine (bulk loader, one thread of the loader, files on a local SSD). Oxigraph's count is distinct triples; \sys's is statements read.}
+\label{tab:load}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Data & Engine & triples & load (s) & disk (MiB) & RSS (MiB) \\
+\midrule
+LUBM(1) & \sys{} & 103\,104 & 1.02 & 10.8 & 322 \\
+ & Oxigraph, RocksDB & 100\,573 & 0.13 & 17.8 & 60 \\
+ & Oxigraph, memory & 100\,573 & 0.18 & --- & 53 \\
+\midrule
+LUBM(10) & \sys{} & 1\,316\,700 & 13.83 & 133.7 & 637 \\
+ & Oxigraph, RocksDB & 1\,272\,953 & 1.95 & 176.3 & 87 \\
+ & Oxigraph, memory & 1\,272\,953 & 2.32 & --- & 546 \\
+\bottomrule
+\end{tabular}}
+\end{table}
