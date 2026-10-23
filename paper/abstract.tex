@@ -10,8 +10,9 @@ We present \sys, an ontology database that answers all three kinds of query
 inside one disk-based, multi-threaded engine.
 Through \sys we make the following contributions.
 (1) A B+ tree triple store of three permutations behind a buffer pool, with
-algorithms for search, insert, delete, range scan, and bulk load, and a bound
-on the pages a range scan reads.
+algorithms for search, insert, delete, range scan, and bulk load, a bound on
+the pages a range scan reads, and write-ahead logging with ARIES-style
+recovery for persistence.
 (2) A concurrency design that scales: an optimistic leaf-only descent for
 inserts and deletes, a sharded buffer pool whose hits take no latch, and a
 one-word page latch.

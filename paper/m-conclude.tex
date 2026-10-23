@@ -13,7 +13,9 @@ and SQLite and serves 3 to 7 times their lookups per second under eight threads.
 
 \stitle{Limitations}.
 \sys implements a \sparql subset without \texttt{OPTIONAL}, \texttt{UNION}, property
-paths, or aggregates, and entails only \texttt{rdfs:subClassOf} over constant
+paths, or aggregates, its page-level recovery is exercised by a crash harness while
+its durable database mode is a snapshot and logical log over the in-memory backend,
+and it entails only \texttt{rdfs:subClassOf} over constant
 classes; it is the slowest to load and uses much memory while loading; decoding an
 id costs about $0.7\,\mu$s, which the cache hides on a warm store; labels and the
 entailment snapshot are rebuilt, not maintained, after updates; and the vectors

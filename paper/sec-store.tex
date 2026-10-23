@@ -272,7 +272,12 @@ The \sparql subset is basic graph patterns with \texttt{FILTER},
 \label{sec-store-log}
 
 Updates run under strict two-phase locking with a deadlock detector.
-Recovery is page-oriented: when a dirty page is released, the pool appends a
+Persistence has two paths: the database facade's durable mode (\texttt{Database::Open})
+keeps a checksummed snapshot and a logical log over the in-memory backend and replays
+committed transactions on opening, and the page store has the page-level log described
+here, exercised by a crash harness; wiring the page-level log into the facade is future
+work.
+Recovery of the page store is page-oriented: when a dirty page is released, the pool appends a
 record holding the page's image and stamps the page with its log sequence
 number, and before a page is written the pool forces the log to that stamp.
 Redo therefore copies page images whose stamp is older than the record and

@@ -148,7 +148,14 @@ The optimizer reorders a left-deep plan greedily by estimated join output
 $a_1a_2/\max(V_1,V_2)$ from exact counts collected at load, and picks a nested
 loop, an index nested loop, or a hash join per node; the \sparql subset has no
 \texttt{OPTIONAL}, \texttt{UNION}, property paths, or aggregates.
-Updates run under strict two-phase locking; recovery is page-oriented: a page
-image is logged when a dirty page is released, the log is forced before the page
-is written, redo copies images, undo of a triple is logical, and a split or
-merge is a \emph{page group} that is logged atomically.
+Updates run under strict two-phase locking.
+Persistence has two paths.
+The page store logs a page image when a dirty page is released, forces the log
+before the page is written, redoes by copying images, undoes a triple logically,
+and logs a split or merge as one atomic \emph{page group}; a crash harness kills
+the process between the pages of every multi-page operation and checks the tree
+afterwards.
+The database facade's durable mode (\texttt{Database::Open}) keeps a checksummed
+snapshot and a logical log over the in-memory backend and replays committed
+transactions on opening; wiring the page-level log into the facade is future
+work.
