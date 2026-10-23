@@ -1,0 +1,16 @@
+\begin{table}[t]
+\caption{The LUBM queries that return rows without inference, on LUBM(10): median time.}
+\label{tab:lubm}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Query & rows & \sys{} & Oxigraph, RocksDB & Oxigraph, memory \\
+\midrule
+q01 & 4 & 12\,$\mu$s & 38\,$\mu$s & 16\,$\mu$s \\
+q02 & 28 & 8.0\,ms & 253.6\,ms & 30.5\,ms \\
+q03 & 6 & 17\,$\mu$s & 41\,$\mu$s & 17\,$\mu$s \\
+q14 & 75,547 & 84.8\,ms & 89.8\,ms & 33.3\,ms \\
+\bottomrule
+\end{tabular}}
+\end{table}

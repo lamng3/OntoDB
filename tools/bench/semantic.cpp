@@ -617,6 +617,9 @@ auto RunTypes(int argc, char** argv) -> int {
     }
   }
   std::cout << "| Classes below C | strategy | answers | scans | keys read | page reads | µs |\n|---|---|---|---|---|---|---|\n";
+  // The sampled classes, with the interval strategy's answer count and warm time (a pool that
+  // holds the whole file, median of 9 runs, as ids and decoded to strings), for benchmarks/compare to run against other engines.
+  std::ofstream classes_out(work / "classes.tsv");
   for (const auto& [bucket, spellings] : sample) {
     struct Acc {
       std::vector<double> answers, scans, keys, reads, us;
@@ -625,6 +628,35 @@ auto RunTypes(int argc, char** argv) -> int {
     for (const auto& spelling : spellings) {
       std::vector<term_id_t> a_iv, a_rw, a_mt;
       std::vector<std::string> names_iv, names_rw, names_mt;
+      {
+        Session s(work / "base.db", 4096);
+        const auto type = *s.dict.Lookup(kType);
+        const auto sub = *s.dict.Lookup(kSubClassOf);
+        const auto c = *s.dict.Lookup(spelling);
+        const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub), ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&s.store, type));
+        LabelIndex idx(&s.pool, header);
+        std::vector<double> id_runs, string_runs;
+        size_t answers = 0;
+        for (int r = 0; r < 10; r++) {  // the first run warms the pool
+          const auto t = Clock::now();
+          const auto ids = InstancesByIntervals(dh, &idx, c, nullptr);
+          const double id_us = Seconds(t) * 1e6;
+          size_t bytes = 0;
+          for (const term_id_t id : ids) {  // decoded to spellings, as another engine returns them
+            bytes += s.dict.Lookup(id)->size();
+          }
+          volatile size_t sink = bytes;  // keeps the decoding from being optimized away
+          (void)sink;
+          answers = ids.size();
+          id_runs.push_back(id_us);
+          string_runs.push_back(Seconds(t) * 1e6);
+        }
+        id_runs.erase(id_runs.begin());
+        string_runs.erase(string_runs.begin());
+        std::sort(id_runs.begin(), id_runs.end());
+        std::sort(string_runs.begin(), string_runs.end());
+        classes_out << kBucketName[bucket] << '\t' << spelling << '\t' << answers << '\t' << id_runs[id_runs.size() / 2] << '\t' << string_runs[string_runs.size() / 2] << '\n';
+      }
       {
         Session s(work / "base.db", kColdPool);
         const auto type = *s.dict.Lookup(kType);

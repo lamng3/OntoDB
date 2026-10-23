@@ -17,8 +17,7 @@
 
 \begin{document}
 
-\title{Beyond the Sort Order: Hierarchy Intervals and Vector Indexes\\in a B+~Tree Ontology Store}
-
+\title{OntoDB: A B+~Tree Ontology Database\\with Hierarchy Intervals and Vector Search}
 \author{Lam Nguyen}
 \affiliation{%
   \institution{Microsoft}
@@ -28,31 +27,53 @@
 \renewcommand{\shortauthors}{Nguyen}
 
 \begin{abstract}
-An ontology store is asked two kinds of question. \emph{Structural} ones, such as ``which instances have a type at or below class $C$'', have an exact answer in the data. \emph{Semantic} ones, such as ``which terms are closest in meaning to $t$'', have no answer in the data and need a similarity measure. Sorted indexes are the workhorse of triple stores, and it is tempting to think that sorted means close. We show it does not. A bandwidth argument proves that no linear order of points in two or more dimensions keeps all neighbors within a short scan, and on the Gene Ontology with sentence embeddings the best order we tried, the postorder of the class hierarchy, finds only 38\% of a term's ten nearest neighbors within 100 positions. We then use the order for what it can do. A postorder numbering of the class DAG with an interval set per class, kept in the engine's own B+~tree, turns ``everything under $C$'' into a few range scans. Against materializing the RDFS closure, it stores 8.1$\times$ fewer triples and a 4.2$\times$ smaller file on synthetic instances over the Gene Ontology, and answers within 1.8$\times$ of its page reads; against rewriting the query it reads 48$\times$ fewer pages for large classes. For similarity we add vector indexes inside the same engine: exact search, IVF with posting lists stored as B+~tree key ranges, product quantization, and HNSW. Pre-filtering through the intervals is exact and 10$^2$--10$^4\times$ faster than any index strategy for classes below about 1\,000 members; beyond 5\,000, a masked HNSW search wins. The filter is correlated with the vectors: for a query outside a small class, post-filtering IVF finds 7\% of the right answers, because the neighbors of a term tend to lie under the term's own ancestors, not under the class asked for. We implement everything in \sys, an open-source C++ ontology database, and every number in this paper regenerates from one script.
+An ontology store is asked three kinds of question: for the triples that match a pattern, for the instances at or below a class, and for the terms closest in meaning to a given term. We describe \sys, an open-source ontology database in C++20 built from the parts of a disk-based DBMS (dictionary-encoded triples in three B+~tree permutations, a buffer pool with LRU-K eviction, latch crabbing, a bulk loader, and page-level write-ahead logging) and extended to the last two questions. We give its algorithms for search, insert, delete, range scan, and bulk load, and a bound on the pages a scan reads. A postorder labelling of the class DAG with an interval set per class, kept in the engine's own B+~tree, turns ``everything under $C$'' into a few range scans: on the Gene Ontology the mean class needs 2.0 intervals, and the store holds 8.1$\times$ fewer triples than materializing the closure and reads 48$\times$ fewer pages than rewriting the query. We add exact, IVF (posting lists as B+~tree key ranges), product-quantized, and HNSW vector indexes, prove that no linear order of points keeps neighbors close, and show that in an ontology a class filter is correlated with the vectors: post-filtered IVF finds 7\% of the right answers for a query outside a small class, and exact pre-filtering through the intervals is 10$^2$--10$^4\times$ faster than any index strategy below about 1\,000 members. Against Oxigraph on LUBM(10), \sys{} is 1.6--4.0$\times$ faster on selective patterns, equal on large scans, and 7$\times$ slower to load; for the instances of a class on the Gene Ontology it is about 2$\times$ faster than Oxigraph on RocksDB and slower than its in-memory store once answers are decoded to strings. The engine also compiles to a 0.85\,MB WebAssembly module that runs in a browser. Every number in this paper regenerates from scripts in the repository.
 \end{abstract}
 
 \maketitle
 
 \section{Introduction}
 
-Ontologies are stored and queried as graphs of triples, and the engines that hold them index those triples in sorted structures: B+~trees over permutations of subject, predicate, and object~\cite{rdfox}. A sorted index answers a bound prefix with one range scan, and this is the right tool for the questions it was built for. Two newer questions are not among them.
+Ontologies are stored and queried as sets of triples, and the engines that hold them have to answer three kinds of question. A \emph{pattern} question (``which resources have predicate $p$ and object $o$'') is the base case, and sorted indexes over permutations of subject, predicate, and object answer it with one range scan~\cite{weiss2008,neumann2010}. A \emph{structural} question (``which instances have a type at or below class $C$'') depends on the class hierarchy, which a plain index does not know. A \emph{semantic} question (``which terms are closest in meaning to $t$'') has no answer in the data at all and needs a similarity measure over embeddings. The three meet in ``the terms most similar to $t$ that lie under $C$''.
 
-The first asks about the hierarchy. A query for the instances of \code{Material} should return the instances of \code{Metal} too, because \code{Metal} is a subclass. The second asks about meaning: given a term, which other terms are close to it? This is the question behind retrieval over ontologies, term matching, and ontology alignment, and it is what a vector index answers. The two questions meet in the third, ``the terms most similar to $t$ that lie under $C$''.
+Existing stores split these jobs. General RDF stores such as Apache Jena TDB2~\cite{jenatdb} and Oxigraph~\cite{oxigraph} are built for the first, answer the second by rewriting a query or by materializing entailments (as RDFox does~\cite{rdfox}), and leave the third to a separate vector database. Each of these is a large system to deploy next to a small ontology, and none runs in a web page next to the document that uses it.
 
-This paper asks what a B+~tree ontology store should do about them, and it makes four contributions.
+This paper describes \sys{}, an open-source ontology database in C++20 that is built from the parts of a textbook disk-based DBMS and extended to all three questions. It makes five contributions.
 
 \begin{enumerate}
-\item \textbf{Order is not similarity.} We prove that any linear order of a $d$-dimensional point set separates some neighbors by $\Omega(n^{(d-1)/d}/d)$ positions (Lemma~\ref{lem:bw}), and measure how much locality the orders available to a store do give on a real ontology with real embeddings (Section~\ref{sec:order}). A hierarchy order is far better than first-seen ids and still leaves most neighbors out of a short scan.
-\item \textbf{Hierarchies are intervals.} We label the class DAG so that the descendants of a class are a few integer intervals, bound the number of intervals by the number of non-tree edges (Lemma~\ref{lem:size}), and keep them in a B+~tree beside the triples. On the Gene Ontology the mean class needs 2.0 intervals; against materialization it saves 8.1$\times$ the triples, and against rewriting it saves 48$\times$ the page reads (Section~\ref{sec:labels}).
-\item \textbf{Vector indexes in the engine.} We add exact, IVF, PQ, and HNSW search to the engine, and store IVF posting lists as key ranges of the same B+~tree that holds the triples (Section~\ref{sec:vectors}).
-\item \textbf{Filtering by a class.} We compare pre-filtering, post-filtering, and masked search for ``nearest under $C$'', and show that in an ontology the filter is correlated with the vectors, which breaks the independence assumption behind the usual cost estimate (Section~\ref{sec:hybrid}).
+\item \textbf{A B+~tree triple store with its algorithms.} Three B+~tree permutations over dictionary-encoded triples, a buffer pool with LRU-K eviction, crabbing latches, a bulk loader, and page-level write-ahead logging (Sections~\ref{sec:arch}--\ref{sec:recovery}). We give the algorithms for search, insert, delete, range scan, and bulk load, with the invariants they keep and the cost of a scan (Lemma~\ref{lem:scan}).
+\item \textbf{Hierarchies as intervals.} A labelling of the class DAG that makes ``everything under $C$'' a few range scans of the engine's own B+~tree, with a bound on the number of intervals (Lemma~\ref{lem:size}) and no stored entailment (Section~\ref{sec:labels}).
+\item \textbf{Vector indexes in the engine.} Exact, IVF, product-quantized, and HNSW search, with IVF posting lists stored as key ranges of the triple B+~tree (Section~\ref{sec:vectors}), and a proof that no sorted order can replace them (Lemma~\ref{lem:bw}, Section~\ref{sec:order}).
+\item \textbf{Filtered search through the hierarchy.} A comparison of pre-, post-, and masked filtering for ``nearest under $C$'' that shows the filter is correlated with the vectors in an ontology (Section~\ref{sec:hybrid}).
+\item \textbf{A build that runs in a browser.} The same engine compiled to a 0.85\,MB WebAssembly module, with its SPARQL, plans, and semantic search (Section~\ref{sec:web}).
 \end{enumerate}
 
-Everything is built in \sys{}, an open-source ontology database in C++20 (Section~\ref{sec:impl}); the benchmark is one script.
+We compare the store with Oxigraph on LUBM(10), and the hierarchy index with Oxigraph's property-path evaluation on the Gene Ontology (Sections~\ref{sec:eval-core} and~\ref{sec:labels}); every number regenerates from the scripts in the repository.
 
 \section{Background and Related Work}
+\label{sec:related}
 
-\paragraph{Triple stores and inference.} RDF stores keep triples in several sorted permutations; \sys{} keeps three (SPO, POS, OSP), enough to make every bound/unbound pattern a prefix scan. RDFS entailment is usually either \emph{rewritten} into the query or \emph{materialized} at write time, as RDFox does~\cite{rdfox}, with maintenance by counting or by delete-and-rederive~\cite{gupta1993}. Section~\ref{sec:labels} adds a third option that stores no entailed triple.
+\paragraph{RDF stores.} Triple stores keep triples in sorted permutations. Hexastore indexes all six~\cite{weiss2008}; RDF-3X keeps six compressed B+~trees and prunes joins with statistics~\cite{neumann2010}; QLever builds read-mostly permutation indexes in bulk~\cite{bast2017}; HDT is a compressed read-only format~\cite{fernandez2013}. Virtuoso stores quads in a relational engine~\cite{erling2010}. Among the systems we could run side by side, Apache Jena TDB2 uses B+~trees~\cite{jenatdb}, RDF4J's native store uses B-trees~\cite{rdf4j}, and Oxigraph~\cite{oxigraph} stores its indexes in RocksDB, a log-structured merge tree. \sys{} follows the B+~tree line and keeps three permutations, which we show suffice (Section~\ref{sec:eval-core}). The B+~tree~\cite{bayer1972,comer1979} and its concurrency and recovery machinery~\cite{lehman1981,graefe2011,mohan1992} are textbook; our contribution is the choice of parts, their measured behavior on ontologies, and what is built on top.
+
+\begin{table}[t]
+\caption{Stores for ontologies, as documented (October 2026). We ran only Oxigraph and \sys.}
+\label{tab:related}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+System & Triples are kept in & Hierarchy by & In a browser \\
+\midrule
+Oxigraph~\cite{oxigraph} & RocksDB (LSM) & query only & in-memory \\
+Jena TDB2~\cite{jenatdb} & B+ trees & reasoner layer & no \\
+RDF4J native~\cite{rdf4j} & B-trees & materialized & no \\
+RDF-3X~\cite{neumann2010} & 6 compressed B+ trees & query only & no \\
+RDFox~\cite{rdfox} & in memory & materialized & no \\
+\sys{} & 3 B+ trees & intervals & full engine \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Inference.} RDFS entailment is usually either \emph{rewritten} into the query or \emph{materialized} at write time, with maintenance by counting or by delete-and-rederive~\cite{gupta1993}. Section~\ref{sec:labels} adds a third option that stores no entailed triple.
 
 \paragraph{Labelling a hierarchy.} Agrawal, Borgida, and Jagadish~\cite{agrawal1989} store a compressed transitive closure by numbering a spanning forest in postorder and giving each node a set of intervals; Grust~\cite{grust2002} numbers XML trees in pre- and postorder so axes become regions of a plane. We use the former, on class DAGs, inside a B+~tree store, and measure it against the other two ways to answer a type query.
 
@@ -64,10 +85,247 @@ Everything is built in \sys{}, an open-source ontology database in C++20 (Sectio
 
 \paragraph{Adaptive radix trees.} The ART~\cite{leis2013} orders keys by byte, so its range scan is lexical; DuckDB persists it~\cite{duckdbart}. We discuss it in Section~\ref{sec:discussion}.
 
-\section{System Overview}
+\paragraph{Databases in the browser.} WebAssembly~\cite{haas2017} lets a C++ engine run in a page. Oxigraph ships a JavaScript build with an in-memory store. \sys{} compiles the whole engine, including the paged B+~trees, the buffer pool, and the semantic extension, by replacing the two parts that need threads or a native library (Section~\ref{sec:web}).
+
+\section{Architecture}
+\label{sec:arch}
+
+\sys{} is a single-process engine in C++20 with the layers of a conventional disk-based DBMS (\autoref{fig:stack}). A SPARQL query is parsed, bound against the dictionary, planned as a left-deep tree, reordered by the optimizer, and run by volcano-style executors that pull rows of term ids. The executors read triples through a \code{TripleStore} interface. Two stores implement it: a memory store, and the \emph{indexed store}, which is the one this paper is about. It keeps each triple in three B+~trees (SPO, POS, OSP), all in one page file, behind a buffer pool with LRU-K eviction~\cite{oneil1993}. Terms are dictionary-encoded by a dictionary that is itself built from the same parts: a term heap and two B+~trees. Updates are logged page by page for ARIES-style recovery~\cite{mohan1992}. A semantic extension (Sections~\ref{sec:order}--\ref{sec:hybrid}) sits beside the store and reads it through the same interface.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\scriptsize,
+  box/.style={draw,rounded corners=1.5pt,minimum height=0.55cm,inner sep=3pt,align=center,fill=white,text width=3.1cm},
+  side/.style={draw,rounded corners=1.5pt,minimum height=0.55cm,inner sep=3pt,align=center,fill=orange!12,text width=1.9cm},
+  arr/.style={-{Stealth[length=1.6mm]},thick}]
+\node[box] (q) {SPARQL parser, binder, planner};
+\node[box,below=0.22cm of q] (o) {optimizer (statistics), volcano executors};
+\node[box,below=0.22cm of o,fill=blue!8] (s) {indexed store: SPO, POS, OSP};
+\node[box,below=0.22cm of s,fill=blue!8] (t) {B+ tree: latch crabbing, sibling links};
+\node[box,below=0.22cm of t,fill=blue!8] (b) {buffer pool (LRU-K), page guards};
+\node[box,below=0.22cm of b] (d) {disk scheduler, disk manager};
+\node[side,right=0.45cm of s] (dict) {dictionary\\heap + 2 B+ trees};
+\node[side,right=0.45cm of b] (log) {log manager,\\recovery};
+\node[side,left=0.45cm of o,text width=1.5cm] (sem) {semantic\\extension};
+\draw[arr] (q) -- (o); \draw[arr] (o) -- (s); \draw[arr] (s) -- (t); \draw[arr] (t) -- (b); \draw[arr] (b) -- (d);
+\draw[arr] (s) -- (dict); \draw[arr] (b) -- (log);
+\draw[arr] (sem) |- (s);
+\end{tikzpicture}
+\caption{The layers of \sys. Blue boxes are what Section~\ref{sec:storage} describes.}
+\label{fig:stack}
+\end{figure}
+
+\section{Storage and Indexing}
+\label{sec:storage}
+
+\paragraph{Keys and pages.} A triple is a 24-byte key of three dictionary ids, stored big-endian, so \code{memcmp} is the order. A page is 4\,KiB; a leaf holds up to $B{=}169$ keys and an internal page up to $F{=}144$ separators with $F{+}1$ child ids. Leaves are linked to their \emph{right} sibling only. A header page names the root, so a root split changes one word and no tree changes identity. Every node but the root keeps at least half its maximum: a leaf at least $\lfloor B/2\rfloor=84$ keys, an internal page at least $\lfloor F/2\rfloor{+}1=73$ children.
+
+\paragraph{Three permutations are enough.} A triple pattern binds some of $s,p,o$. With SPO, POS, and OSP, every pattern has a permutation in which its bound positions form a prefix (\autoref{tab:perms}), so a pattern is one range scan that returns only matching triples. Algorithm~\ref{alg:pattern} picks the permutation with the longest bound prefix. The other three permutations (SOP, PSO, OPS) would make no pattern cheaper (Section~\ref{sec:eval-core}).
+
+\begin{table}[t]
+\caption{Which permutation answers which pattern ($\cdot$ is a free position). The bound positions are always a prefix.}
+\label{tab:perms}
+\small
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Pattern & $s\cdot\cdot$ & $\cdot p\cdot$ & $\cdot\cdot o$ & $\cdot\cdot\cdot$ \\
+Tree, prefix & SPO, 1 & POS, 1 & OSP, 1 & SPO, 0 \\
+\midrule
+Pattern & $sp\cdot$ & $\cdot po$ & $s\cdot o$ & $spo$ \\
+Tree, prefix & SPO, 2 & POS, 2 & OSP, 2 & SPO, 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{algorithm}[t]
+\caption{\textsc{ScanFor}$(s,p,o)$: choose a tree for a triple pattern}\label{alg:pattern}
+\small
+\For{each permutation $\pi$ of SPO, POS, OSP}{
+  $\ell(\pi) \gets$ the number of leading positions of $\pi$ that the pattern binds\;
+}
+$\pi^* \gets$ the permutation with the largest $\ell$ (the first one on a tie)\;
+$k \gets$ the bound values in the order of $\pi^*$, padded with zeros\;
+\Return $\textsc{Begin}(\text{tree}(\pi^*), k, \ell(\pi^*))$, keeping the triples that match the pattern\;
+\end{algorithm}
+
+\subsection{Search}
+
+A point lookup and the start of every scan use the same descent. \textsc{ChildFor} picks the child whose range holds the key: the last separator that is $\le$ the key, or child~0 if none is. The descent \emph{crabs}: it latches the child before it lets go of the parent, so a concurrent split cannot move the key away between two steps~\cite{lehman1981,graefe2011}.
+
+\begin{algorithm}[t]
+\caption{\textsc{LeafFor}$(k)$ and \textsc{GetValue}$(k)$}\label{alg:search}
+\small
+latch the header page (shared); $r \gets$ root; \lIf{$r$ is nil}{\Return nil}
+$g \gets$ latch $r$ (shared); release the header\;
+\While{$g$ is an internal page}{
+  $c \gets \textsc{ChildFor}(g,k)$ \tcp*{binary search over the separators}
+  $g' \gets$ latch $c$ (shared); release $g$; $g \gets g'$\;
+}
+\Return $g$\;
+\medskip
+\textsc{GetValue}$(k)$: $g \gets \textsc{LeafFor}(k)$; \Return whether $k$ is in $g$ (binary search)\;
+\end{algorithm}
+
+A lookup reads $h$ pages, where $h$ is the height. Every non-root leaf holds at least 84 keys and every non-root internal page has at least 73 children, so a tree of $n$ keys has at most $n/84$ leaves and height $h \le 2 + \log_{73}(n/84)$: at most four levels for the 1.3 million triples of LUBM(10), and three when the tree is bulk-loaded, as there it has about 7\,800 full leaves under 54 internal pages.
+
+\subsection{Insert}
+
+Insert is \emph{pessimistic} crabbing. It latches the header and then each page on the way down in write mode, and lets go of every latched ancestor, the header included, as soon as the page just latched is \emph{safe}, meaning it cannot split. What is still latched at the leaf is exactly what a split can reach, so a split never needs a latch it does not already hold and the latch order (header, then top to bottom, siblings left to right) is the same everywhere.
+
+\begin{algorithm}[t]
+\caption{\textsc{Insert}$(k)$}\label{alg:insert}
+\small
+latch the header (exclusive); \lIf{the tree is empty}{make a leaf holding $k$ the root; \Return true}
+$\mathit{path} \gets [\,]$; $id \gets$ root\;
+\Repeat{the page is a leaf}{
+  $g \gets$ latch $id$ (exclusive)\;
+  \If{$g$ is not full}{release every latch in $\mathit{path}$ and the header \tcp*{$g$ is safe}}
+  push $g$ on $\mathit{path}$; $id \gets \textsc{ChildFor}(g,k)$\;
+}
+$\ell \gets \mathit{path}.\text{pop}()$; \lIf{$k \in \ell$}{\Return false}
+insert $k$ into $\ell$; \lIf{$|\ell| \le B$}{\Return true}
+\tcp{split the leaf: the left half stays, the right half moves, its first key is \emph{copied} up}
+$r \gets$ new leaf with the upper half of $\ell$; $r.\text{next} \gets \ell.\text{next}$; $\ell.\text{next} \gets r$; $\mathit{sep} \gets r.\text{keys}[0]$\;
+\While{true}{
+  \If{$\mathit{path}$ is empty}{make a new root over $(\ell, r)$ with separator $\mathit{sep}$; set it in the header; \Return true}
+  $q \gets \mathit{path}.\text{pop}()$; insert $(\mathit{sep}, r)$ into $q$ after $\ell$\;
+  \lIf{$q$ has at most $F$ separators}{\Return true}
+  \tcp{split the internal page: the middle separator \emph{moves} up and leaves both halves}
+  $\ell \gets q$; $r \gets$ new page with the upper half; $\mathit{sep} \gets$ the middle separator of $q$\;
+}
+\end{algorithm}
+
+A leaf split leaves two leaves at $\lfloor (B{+}1)/2\rfloor$ and $\lceil (B{+}1)/2\rceil$ keys, so the half-full invariant holds. Splits propagate only while the parent is full, so with random keys a split costs $O(1/B)$ page writes per insert on average. The only structural change that spans pages is a split or merge, and Section~\ref{sec:recovery} makes that atomic for recovery.
+
+\subsection{Delete}
+
+Delete crabs the same way with a different notion of safe: a page that is above its minimum (for the root, more than one key), because only then can it not underflow. After removing the key from the leaf, a leaf below $\lfloor B/2\rfloor$ keys \emph{repairs} itself against a sibling under the same parent, preferring the left one.
+
+\begin{algorithm}[t]
+\caption{\textsc{Remove}$(k)$}\label{alg:remove}
+\small
+descend as in \textsc{Insert}, releasing ancestors when the page just latched is safe (above its minimum)\;
+$\ell \gets$ the leaf; \lIf{$k \notin \ell$}{\Return false}
+remove $k$ from $\ell$; \lIf{$\ell$ is the root or $|\ell| \ge \lfloor B/2\rfloor$}{\Return true}
+\While{the node $x$ on top of $\mathit{path}$ is under its minimum and has a parent $q$}{
+  $y \gets$ the left sibling of $x$ under $q$ (the right one if $x$ is first); latch siblings left to right\;
+  \eIf{$|x| + |y|$ fits in one page}{
+    \textbf{merge}: move the right node's entries into the left (a leaf keeps its sibling link; an internal page pulls the separator down); delete the right entry from $q$\;
+  }{
+    \textbf{redistribute}: move one entry from $y$ to $x$ (a leaf copies a key; an internal page rotates through $q$) and fix the separator in $q$\;
+  }
+  $x \gets q$\;
+}
+\lIf{the root has one child left}{make the child the root and free the old root}
+\end{algorithm}
+
+A leaf emptied by a merge is \emph{kept}, empty, with its sibling link still pointing on, rather than freed. An iterator may already hold its id (the next paragraph), and an empty page it can step through is cheaper than a protocol that tells every iterator the page is gone. Space reclaimed this way is not reused until the tree is rebuilt; freed internal pages are unreachable once their parent is updated and are released.
+
+\subsection{Range scan}
+
+The half-open range $[\mathit{lo},\mathit{hi})$ is the primitive the semantic extension needs (Section~\ref{sec:labels}); a prefix scan is a range between \textsc{PrefixLower} and \textsc{PrefixUpper}. \textsc{BeginRange} descends to the leaf for $\mathit{lo}$, finds the first key $\ge \mathit{lo}$ by binary search, and hands the leaf to the iterator.
+
+\begin{algorithm}[t]
+\caption{\textsc{BeginRange}$(\mathit{lo},\mathit{hi})$, \textsc{Take}, and \textsc{Settle}}\label{alg:range}
+\small
+$\ell \gets \textsc{LeafFor}(\mathit{lo})$; $i \gets$ the first position in $\ell$ with key $\ge \mathit{lo}$\;
+$\textsc{Take}(\ell, i)$; $\textsc{Settle}()$\;
+\medskip
+\textbf{Take}$(\ell, i)$: $\mathit{buf} \gets \langle \ell.\text{keys}[j] : j \ge i,\ \text{key} < \mathit{hi}\rangle$; $\mathit{pos} \gets 0$\;
+\quad $\mathit{next} \gets$ nil if some key $\ge \mathit{hi}$ was met, else $\ell.\text{next}$; release $\ell$ (latch and pin)\;
+\textbf{Settle}$()$: \While{$\mathit{pos} \ge |\mathit{buf}|$}{
+  \lIf{$\mathit{next}$ is nil}{become the end iterator; \Return}
+  $\textsc{Take}(\text{fetch}(\mathit{next}), 0)$ \tcp*{one sibling link, no climb to the root}
+}
+\medskip
+\textbf{Advance}: $\mathit{pos} \gets \mathit{pos}+1$; \textsc{Settle}()\;
+\end{algorithm}
+
+The iterator \emph{copies} the keys of a leaf that lie below $\mathit{hi}$, remembers the right sibling's id, and releases the leaf. It holds no latch and no pin between rows, so a consumer that stalls (a join waiting on its other input, a client reading slowly) blocks no writer and pins no frame. Reading the next leaf is one page read and no descent. The cost is the copy and a weaker guarantee: between two leaves a writer may change the tree, so a scan sees each leaf as it was when it was read; the transaction layer's locks, not the latches, give a query its isolation. The iterator checks that keys increase along the chain and that a run of empty leaves does not cycle, and stops with an error otherwise.
+
+\begin{lemma}[Cost of a range scan]\label{lem:scan}
+A scan that returns $m$ keys from an insert-only or bulk-loaded tree of height $h$ reads at most $h + \lceil m/\lfloor B/2\rfloor\rceil$ pages, and at most $h + \lceil m/B\rceil$ in a bulk-loaded tree.
+\end{lemma}
+\begin{proof}
+The descent ends at the first leaf, which is one of the $h$ pages. Every leaf after it holds at least $\lfloor B/2\rfloor$ keys, all inside the range except possibly the last, so at most $\lceil m/\lfloor B/2\rfloor\rceil$ more leaves are read. A bulk-loaded leaf (below) is full, which replaces $\lfloor B/2\rfloor$ by $B$.
+\end{proof}
+
+\subsection{Bulk load}
+
+Loading a file inserts hundreds of thousands of triples into an empty store, and inserting one at a time leaves leaves about half full. \sys{} instead sorts the triples once for each permutation and builds the tree bottom-up.
+
+\begin{algorithm}[t]
+\caption{\textsc{BulkLoad}$(K)$ for sorted, unique keys $K$}\label{alg:bulk}
+\small
+cut $K$ into runs of $B$ keys; if the last run has fewer than $\lfloor B/2\rfloor$, it and the run before it share their keys evenly\;
+write each run as a leaf and link it to the previous one; $L \gets$ the list of (first key, page id)\;
+\While{$|L| > 1$}{
+  cut $L$ into runs of $F{+}1$ children, again sharing the last two runs evenly if the last is too short\;
+  write each run as an internal page whose separators are the first keys of children $2..$; $L \gets$ the (first key, id) of the new pages\;
+}
+set the root in the header to the page of $L[0]$\;
+\end{algorithm}
+
+Each page is written once, in order, and no page is split. A bulk-loaded tree is full: LUBM(1) takes 10.8\,MiB for three permutations by bulk load against 16.2\,MiB by insertion, and a full scan reads 599 pages against 1\,131.
+
+\subsection{Buffer pool}
+
+Pages live in a fixed set of frames. A \emph{page guard} pins a frame and takes its latch for the guard's lifetime, and the destructor releases both, so no path leaves a page pinned. A frame is evicted by LRU-K with $K{=}2$~\cite{oneil1993}, which ranks a frame by the time of its second most recent use and so is not flooded by one long scan. Reads and writes go through a disk scheduler; in the WebAssembly build (Section~\ref{sec:web}) the scheduler runs requests inline.
+
+\section{The Dictionary and the Query Pipeline}
+\label{sec:query}
+
+\paragraph{Dictionary.} Terms (IRIs, literals with language or datatype, blank nodes) have one canonical spelling and get a dense 64-bit id in the order they first appear. The mapping is stored in pages: the spellings in a heap, \emph{id $\to$ record} in a B+~tree keyed $(\mathit{id}, \mathit{page}, \mathit{slot})$, and \emph{spelling $\to$ id} in a B+~tree keyed $(\text{hash}, \mathit{id}, 0)$ where the hash is 64-bit FNV-1a. A lookup scans the hash prefix and compares the spellings of the candidates, so a collision costs a comparison and not a wrong answer. Ids are in first-seen order, not hierarchy order, a fact that Section~\ref{sec:order} measures.
+
+\paragraph{Planning and joins.} The planner builds a left-deep tree of triple scans in textual order and the optimizer reorders it greedily: it appends, at each step, a pattern that shares a variable with what is already joined (any pattern, if none does), the one whose estimated join output is smallest; the output of a join is estimated as $|L|\,|R|/\max(d_L,d_R)$ for the distinct counts $d$ of the join variable. The counts are exact and the store collects them at load, for every position, every pair of positions, and every triple (about seven hash entries per triple). The join operator is a nested loop, an index nested loop (the inner scan is reopened with the outer row's bindings as constants, so it is again a prefix scan of one tree), or a hash join; \texttt{auto} chooses per node. The SPARQL subset is basic graph patterns with \texttt{FILTER}, \texttt{DISTINCT}, \texttt{ORDER BY}, \texttt{LIMIT} and \texttt{OFFSET}, and \texttt{INSERT DATA} and \texttt{DELETE DATA}; \texttt{OPTIONAL}, \texttt{UNION}, property paths, and aggregates are not yet implemented, which Section~\ref{sec:discussion} returns to.
+
+\section{Transactions and Recovery}
+\label{sec:recovery}
+
+Updates run under strict two-phase locking with a deadlock detector. Recovery is page-oriented: when a dirty page is released, the pool appends a record holding the page's image and stamps the page with its log sequence number; before a page is written, the pool forces the log to that stamp. Redo therefore copies page images whose stamp is older than the record and needs no knowledge of the B+~tree layout. Undo of a triple is \emph{logical} and writes a compensation record, because other transactions may have changed the page since. A split or merge is the one update that spans pages: \textsc{Insert} and \textsc{Remove} open a \emph{page group} that holds the log back from the group's first record until it ends, and the pool will not choose a page of the group as a victim, so a crash never leaves half a split on disk. A split or merge is redone and never logically undone. Commit forces the log, and checkpoints are sharp (flush every page, then write the record). Crash points sit between the pages of every multi-page operation, and a harness kills the process at each and checks the database after restart. The checks cover the invariants of Section~\ref{sec:storage}: sorted keys, separators consistent with leaves, a leaf chain that visits every key once, and the half-full bound.
+
+\section{Evaluation of the Store}
+\label{sec:eval-core}
+
+We compare \sys{} with Oxigraph~\cite{oxigraph}, a Rust SPARQL 1.1 store whose default engine keeps triples in RocksDB, an LSM tree. It is the closest system we could run side by side: embeddable, open source, single-process, without entailment, and with a build that also runs in the browser. Section~\ref{sec:related} lists the systems we did not run and why.
+
+\paragraph{Setup.} Both read the same files (the RDF/XML of the LUBM generator~\cite{lubm}, 15 files for LUBM(1) and 189 for LUBM(10)), parse them with their own parser (raptor for \sys{}, Oxigraph's for the other), load them with their bulk loaders, and run the same query text in-process on one thread of an Apple M2 Pro with 16\,GiB, a release build, and warm caches. \sys{} uses the indexed store with SPO, POS, and OSP and a 256\,MiB buffer pool, which holds LUBM(10); Oxigraph~0.5.13 is used through its Rust API with RocksDB on disk and, separately, with its in-memory store. Each query is run once to warm and then 5 to 9 times; we report the median. Rows are converted to strings in both engines, and the row counts of the two agree on every query. The query is parsed once outside the timer in both; planning and evaluation are timed. The queries are the 14 LUBM queries and 100 single-pattern queries per shape, with constants sampled from the data, so that every pattern shape of Table~\ref{tab:perms} is measured. \sys{} reads 1\,316\,700 statements from LUBM(10), of which Oxigraph stores 1\,272\,953 distinct triples. The benchmark is \code{benchmarks/compare}; it regenerates every number here.
+
+\paragraph{Permutations.} One tree, SPO, answers a pattern that does not bind the subject by a scan of the whole tree. \autoref{tab:permstudy} counts, on LUBM(1) with a cold 64-frame pool, the page reads of a pattern for one, three, and all six permutations (averages over 20 sampled patterns per shape). Three permutations cut the pages of $\cdot p\cdot$ by 7.9$\times$ and those of $\cdot\cdot o$ and $\cdot po$ by 40$\times$; the other three trees cost 66\% more space and change no pattern, because every shape already has a prefix scan in the first three.
+
+\begin{table}[t]
+\caption{Page reads per pattern on LUBM(1) (cold 64-frame pool, bulk-loaded) and file size, by set of permutations.}
+\label{tab:permstudy}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Permutations & $\cdot p\cdot$ & $\cdot\cdot o$ & $\cdot po$ & file (MiB) \\
+\midrule
+SPO & 599 & 599 & 599 & 6.1 \\
+SPO, POS, OSP & 76 & 15 & 15 & 10.8 \\
+all six & 76 & 15 & 15 & 17.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Load and space.} \autoref{tab:load} gives the load. Oxigraph loads LUBM(10) 7.1$\times$ faster than \sys{} (1.95 against 13.83\,s) and with a seventh of the memory. We did not profile Oxigraph. In \sys{} the time goes to parsing RDF/XML through raptor, interning every term through two B+~trees (on LUBM(1), the permutation study below attributes the time to the dictionary and not to the permutation trees), and building the exact statistics; the memory is the 256\,MiB pool and those statistics. \sys's file is 24\% smaller than the RocksDB directory (133.7 against 176.3\,MiB): a bulk-loaded B+~tree is packed with no per-key overhead, and RocksDB holds a block index and filters, and compression was not tuned for either system.
+
+\input{gen/compare-load}
+
+\paragraph{Triple patterns.} \autoref{tab:patterns} gives the mean and 99th percentile over 100 sampled patterns per shape. For patterns that return few rows, \sys{} is faster than Oxigraph on RocksDB: 1.6$\times$ for $s\cdot\cdot$ and 4.0$\times$ for $sp\cdot$ on LUBM(10). Both are an index descent and a few keys; we did not profile Oxigraph to say where its extra time goes. For patterns that return thousands of rows the two are within a few percent of each other ($\cdot\cdot o$: 33.4 against 33.6\,ms). Oxigraph's in-memory store is 3.5$\times$ faster than either on large results and within a factor of two of \sys{} on small ones. That is the comparison \sys's disk-oriented design does not win, and it is the cost of paging: a result is read out of pages through guards and copied, where a memory store follows pointers.
+
+\input{gen/compare-patterns}
+
+\paragraph{LUBM queries.} Ten of the fourteen LUBM queries return no rows without inference; both engines answer them in microseconds and the ratios of two tiny times mean nothing, so \autoref{tab:lubm} lists the four that return rows (all fourteen are in \code{benchmarks/compare/results.md}). On the triangle query (q2) \sys{} takes 8.0\,ms against 253.6\,ms on RocksDB and 30.5\,ms in memory. \sys's plan starts from the most selective pattern and runs index nested-loop joins, each inner scan a prefix scan; we did not inspect Oxigraph's plan. On the large scan (q14) the two are equal.
+
+\input{gen/compare-lubm}
+
+\paragraph{What the comparison does not show.} It does not show \sys{} faster in general. Oxigraph implements all of SPARQL 1.1 and \sys{} a subset; it loads much faster; it has a transaction story we did not test; and its in-memory store beats \sys{} on large results. What it shows is that a conventional B+~tree store with three permutations, a buffer pool, and an optimizer driven by exact counts is competitive with an LSM-based store on basic graph patterns, which is what the next sections need as a base.
+
+\section{The Semantic Extension}
 \label{sec:overview}
 
-\autoref{fig:arch} shows what \sys{} holds. The triples are dictionary-encoded and indexed in three B+~tree permutations, as before. The class hierarchy is read from the \code{rdfs:subClassOf} triples, labelled, and kept in a fourth B+~tree. Vectors, one per term id, sit in a store beside them, with three optional indexes; the IVF index is again a B+~tree. A hybrid query touches the label tree and one vector index, never the triple trees.
+\autoref{fig:arch} shows what the semantic extension adds to the store of Section~\ref{sec:storage}. The triples are dictionary-encoded and indexed in three B+~tree permutations. The class hierarchy is read from the \code{rdfs:subClassOf} triples, labelled, and kept in a fourth B+~tree. Vectors, one per term id, sit in a store beside them, with three optional indexes; the IVF index is again a B+~tree. A hybrid query touches the label tree and one vector index, never the triple trees.
 
 \begin{figure}[t]
 \centering
@@ -260,6 +518,10 @@ Below $C$ & strategy & answers & page reads & $\mu$s \\
 \end{tabular}
 \end{table}
 
+\paragraph{Against a property path.} The strategies above are all \sys's own. To compare with another engine we ask Oxigraph, which stores no entailment, for the same instances over the same data with the query \texttt{?x a ?c . ?c rdfs:subClassOf* <C>}, on the same 30 classes per row with warm caches. The answer counts agree on every class. \autoref{tab:hier} gives \sys{} twice. The interval scan alone, which returns term ids, takes 1.7\,ms for the 29\,904 answers of the largest classes (58\,ns each). Returning spellings, as Oxigraph does, adds the dictionary, and then \sys{} takes 29.1\,ms: decoding is 94\% of the time. At that level \sys{} is 1.9 to 3.3$\times$ faster than Oxigraph on RocksDB, and slower than its in-memory store by 1.3 to 2.5$\times$ for classes with two or more instances. The honest summary is narrower than the page counts above suggest: the intervals make the structural step cheap, and a vector filter uses them without decoding anything (Section~\ref{sec:hybrid}), but an engine that must return spellings is limited by its dictionary.
+
+\input{gen/compare-hier}
+
 \section{Vector Indexes in the Engine}
 \label{sec:vectors}
 
@@ -376,10 +638,23 @@ auto & 1.00 / 3 & 1.00 / 9 & 1.00 / 62 & 1.00 / 295 & 1.00 / 860 \\
 \paragraph{The auto rule.} With a threshold of 4\,096 members, auto matches the fastest strategy in every cell but one and is never slower than 0.9~ms. The exception is a class of 1\,001--5\,000 members with an inside query: 269~$\mu$s, against 70~$\mu$s for post-filtered HNSW and 183~$\mu$s for masked HNSW. Post-filtering would cost 5.5~ms for an outside query on the same class, so the rule gives up a factor of 3.8 in one cell to avoid a factor of 79 in its neighbor.
 
 
-\section{Implementation}
+\section{A Build for the Browser}
+\label{sec:web}
+
+The engine compiles with Emscripten to a 0.85\,MB WebAssembly module~\cite{haas2017} that runs the same indexed store, planner, optimizer, and semantic extension in a web page. Two parts of the native build do not carry over, and replacing them is the whole port.
+
+\paragraph{No raptor.} The native loader parses RDF/XML, Turtle, and N-Triples with raptor, a C library. The web build uses a 480-line Turtle and N-Triples parser of our own (prefixes, \texttt{a}, \texttt{;} and \texttt{,}, blank-node property lists, collections, long strings, escapes, language tags, datatypes, and numeric and boolean literals); a test checks that it yields the same triples as raptor on the shipped data. RDF/XML needs the native build.
+
+\paragraph{No threads.} The native engine has a disk-scheduler thread, a deadlock detector, and a worker per session. In the module the scheduler executes each request inline, the detector is not started, and a statement runs on the calling thread. There is one session, so there is nothing to deadlock. The buffer pool, the page file (held in the browser's memory file system), the B+~trees, and the plans are unchanged, so \autoref{tab:perms}'s page counts and the plans printed by \texttt{\textbackslash explain analyze} are the native ones.
+
+\paragraph{Using it.} The module exports three functions (execute a statement, run a query and return JSON, reset), and the playground page on the project's site calls them. It offers the memory store and the B+~tree store on a buffer pool, shows the buffer-pool hits and misses of each query, and loads a Gene Ontology slice of 834 classes with 384-dimensional embeddings for the semantic commands. In a desktop browser, building the interval labels takes 3\,ms, \texttt{\textbackslash under "cell death"} (97 classes, one range scan) 0.3\,ms, \texttt{\textbackslash similar} with a class filter 0.8\,ms, and building the IVF and HNSW indexes 58 and 98\,ms. Updates are saved as a journal in the page's local storage and replayed when the page loads, which keeps a session across reloads but is not durability: there is no write-ahead log or recovery in the web build.
+
+\paragraph{No GPU.} We considered WebGPU for the dot products and did not use it. A similarity query scores a few hundred vectors with HNSW or at most a few thousand exactly; in the module that is under a millisecond with 128-bit SIMD, which the build enables, and moving the query to a GPU and back costs more than that.
+
+\section{Implementation and Reproducibility}
 \label{sec:impl}
 
-\sys{} is a C++20 ontology database: a SPARQL subset over three B+~tree permutations of dictionary-encoded triples, with a buffer pool, a cost-based optimizer, strict two-phase locking, and ARIES recovery, checked by a crash harness. The semantic extension adds about 2\,100 lines in \code{src/semantic}: the class hierarchy and its labels, the label index, the type-closure strategies, the vector store, flat, IVF, PQ, and HNSW indexes, hybrid search, and an engine that drives them from the shell. It adds one B+~tree entry point (a range scan between two keys) and nothing else to the existing engine. 1\,000 lines of tests cover it, including property tests that compare every strategy against a naive oracle on random ontologies, and the benchmark is a 1\,000-line program, one script. In the shell:
+\sys{} is about 13\,000 lines of C++20 for the store, the query pipeline, transactions, and recovery; 2\,600 for the semantic extension; 900 for the shell; and 6\,200 for tests, including property tests that compare every strategy with a naive oracle on random ontologies and a crash harness that kills the process at each multi-page step of an update. The semantic extension adds one B+~tree entry point to the store (a range scan between two keys). In the shell:
 
 {\small
 \begin{verbatim}
@@ -394,10 +669,9 @@ auto & 1.00 / 3 & 1.00 / 9 & 1.00 / 62 & 1.00 / 295 & 1.00 / 860 \\
 96 classes (4 range scans, 0.012 ms)
 \end{verbatim}}
 
-Vectors are held in memory and the vector indexes are rebuilt, not updated, when the vectors change; labels are rebuilt when the hierarchy changes (15~ms for GO). An engine owns a private buffer pool on a temporary file for the label tree and the IVF lists, so it runs on either of the store's backends.
+Vectors are held in memory and the vector indexes are rebuilt, not updated, when the vectors change; labels are rebuilt when the hierarchy changes (15~ms for GO). The semantic engine owns a private buffer pool on a temporary file for the label tree and the IVF lists, so it runs on either of the store's backends.
 
-
-\paragraph{Reproducing the numbers.} Data and models are fetched, not shipped: the Gene Ontology \code{go-basic.obo} release 2026-07-26 (\code{scripts/fetch-data go}), embeddings by \code{all-MiniLM-L6-v2} through \code{sentence-transformers} on the CPU (\code{scripts/embed-terms}, 45~s), LUBM(1) and its ontology (\code{scripts/fetch-data lubm lubm-ontology}). \code{benchmarks/semantic/run.sh} builds the release binary and writes every table of this paper; seeds are fixed, queries are the same for every method, and the machine is an Apple M2 Pro with 16~GiB, one thread, \code{-O3}. Run-to-run variation in times is a few percent; page counts and recalls are deterministic.
+\paragraph{Reproducing the numbers.} Data and models are fetched, not shipped: the Gene Ontology \code{go-basic.obo} release 2026-07-26, embeddings by \code{all-MiniLM-L6-v2} through \code{sentence-transformers} on the CPU (45~s), and LUBM generated by the official generator. \code{benchmarks/semantic/run.sh} writes every table of Sections~\ref{sec:order}--\ref{sec:hybrid}, and \code{benchmarks/compare/run.sh} the comparison with Oxigraph 0.5.13 (Rust API, RocksDB and in-memory stores), which \code{paper/make-compare.py} turns into the tables of Sections~\ref{sec:eval-core} and~\ref{sec:labels}. Seeds are fixed, queries are the same for every method, and the machine is an Apple M2 Pro with 16~GiB, one thread, \code{-O3}. Run-to-run variation in times is a few percent; page counts, recalls, and row counts are deterministic.
 
 \section{Discussion}
 \label{sec:discussion}
@@ -406,14 +680,16 @@ Vectors are held in memory and the vector indexes are rebuilt, not updated, when
 
 \paragraph{Pessimistic or optimistic prefixes.} A compressed prefix can be stored in the node (pessimistic) or only its length (optimistic, with the full key checked once at the leaf). Seeking a lower bound needs to know whether a whole subtree is below or above it. With stored bytes the seek decides at the node; with skipped bytes it must load a key from the subtree and compare. The upper bound needs no jumping: a second seek finds the first key past it, and each step compares two keys.
 
-\paragraph{Limits.} The vectors in our measurements come from one ontology and one small model that embeds names only; definitions, synonyms, or a domain model would change the vectors, not the indexes. The instance data is synthetic, because GO has none, and LUBM's hierarchy is too shallow to separate the strategies. Everything is single-threaded and in memory. Labels are rebuilt, not maintained under edits to the hierarchy, and only \code{rdfs:subClassOf} is read; no reasoner. Embeddings are Euclidean; hyperbolic embeddings~\cite{nickel2017} would represent a hierarchy more faithfully and would change what the vectors say, not how they are searched. Query text needs an embedding model that \sys{} does not link; the shell searches from the vector of a term that is already stored.
+\paragraph{What \sys{} does not do.} The SPARQL subset has no \texttt{OPTIONAL}, \texttt{UNION}, property paths, or aggregates, and there is no reasoner beyond \texttt{rdfs:subClassOf}. Oxigraph implements SPARQL 1.1 and Jena and RDF4J come with reasoners, so a user who needs the full language needs one of them; our comparison is on basic graph patterns because that is where the two overlap. The dictionary is the slowest part: decoding an id to its spelling costs about 1\,$\mu$s (two B+~tree lookups under one mutex), which is 17 times the cost of the interval scan that produced the id (\autoref{tab:hier}); a cache of decoded terms is the obvious next step and would change the string columns, not the id ones. Loading is single-threaded and 7 times slower than Oxigraph's. Peak memory during a load is high because the optimizer's exact statistics are built in hash tables.
+
+\paragraph{Limits.} The vectors in our measurements come from one ontology and one small model that embeds names only; definitions, synonyms, or a domain model would change the vectors, not the indexes. The instance data is synthetic, because GO has none, and LUBM's hierarchy is too shallow to separate the strategies. The semantic benchmarks are single-threaded and keep the vectors in memory. Labels are rebuilt, not maintained under edits to the hierarchy, and only \code{rdfs:subClassOf} is read; no reasoner. Embeddings are Euclidean; hyperbolic embeddings~\cite{nickel2017} would represent a hierarchy more faithfully and would change what the vectors say, not how they are searched. Query text needs an embedding model that \sys{} does not link; the shell searches from the vector of a term that is already stored.
 
 \paragraph{What we did not find.} We did not find a vector index that makes the hierarchy order unnecessary: neighbors by meaning and descendants are different sets (a third of a term's ten nearest neighbors are within two \code{is\_a} steps, two thirds are not), which is why the two are combined at query time and not at index time.
 
 
 \section{Conclusion}
 
-A sorted index orders; it does not say what is close in meaning, and the bandwidth argument and the Gene Ontology measurements agree. What an ontology store can do is use the order for the part of the question that is structural, and a vector index for the rest. Labelling the class DAG with interval sets turns ``everything under $C$'' into a few range scans of the engine's own B+~tree, at 2.0 intervals per class on the Gene Ontology and a fraction of the cost of materializing the closure, and it makes membership in a class's subtree a binary search, which is what a filtered vector search needs. Exact pre-filtering through those intervals is the right answer for classes up to about a thousand members, and a masked graph search for the largest. Both fit in a B+~tree engine, in about two thousand lines.
+An ontology store is asked for patterns, for hierarchies, and for meaning. A B+~tree store with three permutations, a buffer pool, and an optimizer driven by exact counts answers patterns as fast as an LSM-based store and faster when they are selective, and its algorithms (crabbing insert and delete, a prefix range scan that holds no latch between rows, a bulk loader that fills pages) are small enough to state in a page. Labelling the class DAG with interval sets turns ``everything under $C$'' into a few range scans of the same tree, at 2.0 intervals per class on the Gene Ontology and a fraction of the cost of materializing the closure, and makes membership in a class's subtree a binary search, which a filtered vector search needs. A sorted index orders; it does not say what is close in meaning, and the bandwidth argument and the Gene Ontology measurements agree. Exact pre-filtering through the intervals is the right answer for classes up to about a thousand members, and a masked graph search for the largest. All of it fits in about sixteen thousand lines, runs in a browser from a 0.85\,MB module, and regenerates its numbers from one script per question.
 
 
 \bibliographystyle{ACM-Reference-Format}
