@@ -19,3 +19,6 @@ web/out/
 web/data/
 benchmarks/compare/.venv/
 benchmarks/compare/oxigraph/target/
+benchmarks/compare/jena/target/
+benchmarks/compare/jena/cp.txt
+__pycache__/
