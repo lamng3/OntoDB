@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\caption{The LUBM queries that need subclass reasoning, on LUBM(10) with the ontology: median time. \sys{} entailing answers the original query with \texttt{\textbackslash set entail on}; \sys{} materialized stores the entailed type triples; the others run the query rewritten with the subclass path. Row counts agree (the column ``no entailment'' is what \sys{} returns without it). Bold marks the best; a blue cell marks \sys{} as the best.}
+\label{tab-entail}
+\small
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Query & rows & no entailment & \sys{} entailing & \sys{} materialized & Ox.\ RocksDB & Ox.\ memory & Jena TDB2 \\
+\midrule
+LUBM 3 & 6 & 6 & \cellcolor{ours}\textbf{10\,$\mu$s} & 12\,$\mu$s & 53\,$\mu$s & 16\,$\mu$s & 933\,$\mu$s \\
+LUBM 4 & 34 & 0 & 181\,$\mu$s & 172\,$\mu$s & 630\,$\mu$s & \textbf{136\,$\mu$s} & 2.0\,ms \\
+LUBM 6 & 75,547 & 0 & 42.3\,ms & 44.6\,ms & 89.6\,ms & \textbf{38.6\,ms} & 85.4\,ms \\
+LUBM 7 & 59 & 0 & 108\,$\mu$s & 96\,$\mu$s & 555\,$\mu$s & \textbf{93\,$\mu$s} & 997.0\,ms \\
+LUBM 8 & 5,916 & 0 & 17.8\,ms & 14.9\,ms & 95.4\,ms & \textbf{14.6\,ms} & 423.8\,ms \\
+LUBM 9 & 1,233 & 0 & 199.0\,ms & 178.9\,ms & 380.5\,ms & \textbf{73.2\,ms} & timeout \\
+LUBM 10 & 0 & 0 & \cellcolor{ours}\textbf{8\,$\mu$s} & 7\,$\mu$s & 54\,$\mu$s & 16\,$\mu$s & 174\,$\mu$s \\
+\bottomrule
+\end{tabular}
+\end{table*}

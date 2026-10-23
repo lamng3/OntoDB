@@ -17,6 +17,7 @@ class Transaction;
 class TransactionManager;
 class LockManager;
 class BufferPoolManager;
+class TypeEntailment;
 
 // Everything an executor is allowed to touch. Transaction, lock, and buffer
 // pointers stay null on the memory backend.
@@ -46,6 +47,9 @@ class ExecutorContext {
   auto GetStats() const -> IoStats* { return stats_; }
   auto GetTrace() const -> TraceSink* { return trace_; }
   auto GetSession() const -> SessionState* { return session_; }
+  // Set when \set entail is on and the entailment index is built; null otherwise.
+  void SetEntailment(TypeEntailment* entailment) { entailment_ = entailment; }
+  auto GetEntailment() const -> TypeEntailment* { return entailment_; }
 
   // An optional wall-clock deadline. Scans call CheckDeadline as they work
   // and on every re-open, so a plan of any shape stops soon after it passes.
@@ -67,6 +71,7 @@ class ExecutorContext {
   IoStats* stats_;
   TraceSink* trace_;
   SessionState* session_;
+  TypeEntailment* entailment_{nullptr};
   std::optional<std::chrono::steady_clock::time_point> deadline_;
 };
 

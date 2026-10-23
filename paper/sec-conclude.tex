@@ -9,7 +9,9 @@ scan that holds no latch between rows, and a bulk loader that fills pages,
 answers selective patterns faster than an LSM store, a Java B+ tree store, and a
 relational store, and is within a factor of two of the best on large results.
 Labelling the class DAG with interval sets turns ``everything under $c$'' into
-a few range scans of the same tree, at 2.0 intervals per class on the Gene
+a few range scans of the same tree, which a plan rewrite uses to answer RDFS
+entailment of type patterns with the answers of materialization and none of its
+storage, at 2.0 intervals per class on the Gene
 Ontology and a fraction of the cost of materializing the closure, and makes
 membership in a class's subtree a binary search, which a filtered vector search
 needs.

@@ -236,3 +236,32 @@ for label, ratios in rows:
 out.append("\\bottomrule\n\\end{tabular}}\n\\end{table}\n")
 write("compare-glance.tex", "\n".join(out))
 print("glance written")
+
+
+# The entailment rewrite on the LUBM queries that need subclass reasoning
+inf = {k: read(f"{k}.tsv") for k in ("ontodb-inf-plain", "ontodb-inf-entail", "ontodb-inf-materialize", "oxigraph-inf", "oxigraph-mem-inf", "jena-inf")}
+names = [("ontodb-inf-entail", "\\sys{} entailing"), ("ontodb-inf-materialize", "\\sys{} materialized"), ("oxigraph-inf", "Ox.\\ RocksDB"), ("oxigraph-mem-inf", "Ox.\\ memory"), ("jena-inf", "Jena TDB2")]
+head = "".join(f" & {n}" for _, n in names)
+out = [f"\\begin{{table*}}[t]\n\\caption{{The LUBM queries that need subclass reasoning, on LUBM(10) with the ontology: median time. \\sys{{}} entailing answers the original query with \\texttt{{\\textbackslash set entail on}}; \\sys{{}} materialized stores the entailed type triples; the others run the query rewritten with the subclass path. Row counts agree (the column ``no entailment'' is what \\sys{{}} returns without it).{LEGEND}}}\n\\label{{tab-entail}}\n\\small\n\\begin{{tabular}}{{@{{}}lrr{'r' * len(names)}@{{}}}}\n\\toprule\nQuery & rows & no entailment{head} \\\\\n\\midrule"]
+for q in ("q03", "q04", "q06", "q07", "q08", "q09", "q10"):
+    cells = []
+    for key, _ in names:
+        v = inf[key][1].get(q)
+        cells.append((float("inf") if v is None or v[1] is None else v[1], "timeout" if v is None or v[1] is None else t(v[1])))
+    # the materialized store is OntoDB's own alternative, shown for reference, not a competitor
+    shown = hl([cells[0]] + cells[2:])
+    shown = [shown[0], cells[1][1]] + shown[1:]
+    plain_rows = inf["ontodb-inf-plain"][1][q][0]
+    out.append(f"LUBM {int(q[1:])} & {thousands(inf['ontodb-inf-entail'][1][q][0])} & {thousands(plain_rows)} & " + " & ".join(shown) + " \\\\")
+out.append("\\bottomrule\n\\end{tabular}\n\\end{table*}\n")
+write("compare-entail.tex", "\n".join(out))
+
+mat = inf["ontodb-inf-materialize"][0]
+ent = inf["ontodb-inf-entail"][0]
+base = inf["ontodb-inf-plain"][0]
+out = ["\\begin{table}[t]\n\\caption{What it costs to answer subclass-entailed type patterns on LUBM(10): time to prepare, type triples added to the store, and bytes added.}\n\\label{tab-entail-cost}\n\\small\n\\begin{tabular}{@{}lrrr@{}}\n\\toprule\nStrategy & prepare (s) & triples added & space added (MiB) \\\\\n\\midrule"]
+out.append(f"materialize the closure & {mat['inference_s']} & {thousands(int(mat['inferred']))} & {float(mat['file_mib']) - float(base['file_mib']):.1f} \\\\")
+out.append(f"\\cellcolor{{ours}}\\textbf{{interval index}} & \\cellcolor{{ours}}\\textbf{{{ent['inference_s']}}} & \\cellcolor{{ours}}\\textbf{{0}} & \\cellcolor{{ours}}\\textbf{{{ent['inference_mib']}}} \\\\")
+out.append("\\bottomrule\n\\end{tabular}\n\\end{table}\n")
+write("compare-entail-cost.tex", "\n".join(out))
+print("entailment tables written")

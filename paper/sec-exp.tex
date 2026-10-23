@@ -9,13 +9,16 @@ We evaluate \sys along five research questions.
 \item \textbf{[RQ2] Hierarchies}: what do interval labels cost, and how do they
   compare with materializing and rewriting, and with other engines'
   subclass-path queries?
-\item \textbf{[RQ3] Vector indexes}: what recall, time, and memory do the
+\item \textbf{[RQ3] Entailment-aware planning}: does the plan rewrite return
+  the answers of materialization, at what cost, and how does it compare with
+  other engines' subclass-path queries?
+\item \textbf{[RQ4] Vector indexes}: what recall, time, and memory do the
   four indexes give on real embeddings?
-\item \textbf{[RQ4] Filtered search}: which strategy answers
+\item \textbf{[RQ5] Filtered search}: which strategy answers
   $\mathrm{near}(q,c,k)$ fastest, and does a single rule choose well?
-\item \textbf{[RQ5] Concurrency}: how do lookups and inserts scale with the
+\item \textbf{[RQ6] Concurrency}: how do lookups and inserts scale with the
   number of threads, and what do readers see while a writer runs?
-\item \textbf{[RQ6] Design choices}: what do three permutations, the bulk
+\item \textbf{[RQ7] Design choices}: what do three permutations, the bulk
   loader, and the decode cache each buy?
 \end{itemize}
 
@@ -237,7 +240,43 @@ join, and by \sys as range scans of one tree that return disjoint answers.
 
 \input{gen/compare-hier}
 
-\subsection{RQ3: Vector Indexes}
+\subsection{RQ3: Entailment-Aware Planning}
+
+We add the LUBM ontology to LUBM(10) and run the seven LUBM queries that need
+only subclass reasoning (3, 4, 6, 7, 8, 9, 10: their classes \emph{Student},
+\emph{Professor}, \emph{Faculty}, \emph{Course}, and \emph{Publication} have
+subclasses).
+Table~\ref{tab-entail} gives the times and Table~\ref{tab-entail-cost} the cost
+of preparing.
+
+\input{gen/compare-entail}
+
+\input{gen/compare-entail-cost}
+
+\stitle{Same answers}.
+Without the rewrite \sys returns no rows for six of the seven queries.
+With it, every query returns exactly the rows of the materialized store and of
+Oxigraph's and Jena's subclass-path queries, as the row counts in the table
+show; a randomized test over ontologies with cycles and over joins of several
+type patterns, on both backends and across updates, compares the rewrite with a
+materialized oracle.
+
+\stitle{Against materialization}.
+Query times are within 20\% of those of the materialized store, from 10\%
+faster to 20\% slower.
+Preparing is 16 times faster (0.06\,s against 0.97\,s), and nothing is added to
+the store: materialization adds 184,628 triples (14\%) and 40.7\,MiB (30\%) to
+the file, where the interval index takes 5.1\,MiB in a file of its own.
+
+\stitle{Against other engines}.
+Oxigraph on RocksDB, evaluating \texttt{?c rdfs:subClassOf* $C$ . ?x a ?c}, is
+1.9 to 6.9 times slower than the rewrite, and Jena TDB2 2 to 9,300 times
+slower, with LUBM 9 timing out after a minute.
+Oxigraph's in-memory store is faster than the rewrite on five of the seven
+queries, by 1.1 to 2.7 times, and slower on two; the rewrite is the fastest of
+the disk-based engines on every query.
+
+\subsection{RQ4: Vector Indexes}
 
 We ran 1,000 query terms (the term itself excluded from its answer) against
 all 38,092 vectors, with exact search as ground truth.
@@ -309,7 +348,7 @@ The queries are terms of the ontology, whose neighbors are also terms of it;
 queries from outside the vocabulary, such as free text, would be harder, and
 we do not measure them.
 
-\subsection{RQ4: Filtered Search}
+\subsection{RQ5: Filtered Search}
 
 For 20 classes in each of five size buckets we ran the ten nearest terms
 under $c$ for a query inside $c$ and one outside it, against the exact answer
@@ -390,7 +429,7 @@ Post-filtering would cost 5.5\,ms for an outside query on the same class, so
 the rule gives up a factor of 3.8 in one cell to avoid a factor of 79 in its
 neighbor.
 
-\subsection{RQ5: Concurrency}
+\subsection{RQ6: Concurrency}
 
 We load LUBM(10) and run, for three seconds each, one to eight threads of
 lookups (the $(s,\cdot,\cdot)$ and $(s,p,\cdot)$ queries, 200 in rotation),
@@ -445,7 +484,7 @@ decodes thousands of terms, so it is bound by memory traffic.
 Splits and merges take the pessimistic path and serialize with each other on
 the pages they share, and inserts into one leaf serialize on its latch.
 
-\subsection{RQ6: Design Choices}
+\subsection{RQ7: Design Choices}
 
 \stitle{Permutations}.
 One tree, SPO, answers a pattern that does not bind the subject by a scan of

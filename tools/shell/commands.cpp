@@ -89,6 +89,7 @@ auto ShowSettings(const Config& config) -> CommandResult {
       << "pool_size " << config.pool_size << '\n'
       << "lru_k " << config.lru_k << '\n'
       << "join " << JoinName(config.join) << '\n'
+      << "entail " << (config.entail ? "on" : "off") << '\n'
       << "isolation " << IsolationName(config.isolation);
   return Text(out.str());
 }
@@ -107,6 +108,11 @@ auto SetKnob(Config& config, const std::string& key, const std::string& value) -
     if (config.lru_k == 0) {
       return "error: lru_k must be positive";
     }
+  } else if (key == "entail") {
+    if (value != "on" && value != "off") {
+      return "error: entail is on or off";
+    }
+    config.entail = value == "on";
   } else if (key == "join") {
     for (const auto join : {JoinMethod::kAuto, JoinMethod::kNestedLoop,
                             JoinMethod::kIndexNestedLoop, JoinMethod::kHash}) {

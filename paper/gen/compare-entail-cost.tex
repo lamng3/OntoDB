@@ -1,0 +1,13 @@
+\begin{table}[t]
+\caption{What it costs to answer subclass-entailed type patterns on LUBM(10): time to prepare, type triples added to the store, and bytes added.}
+\label{tab-entail-cost}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Strategy & prepare (s) & triples added & space added (MiB) \\
+\midrule
+materialize the closure & 0.97 & 184,628 & 40.7 \\
+\cellcolor{ours}\textbf{interval index} & \cellcolor{ours}\textbf{0.06} & \cellcolor{ours}\textbf{0} & \cellcolor{ours}\textbf{5.1} \\
+\bottomrule
+\end{tabular}
+\end{table}

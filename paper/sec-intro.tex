@@ -68,67 +68,33 @@ This paper takes that view of ontologies.
 
 \stitle{Contributions}.
 This paper introduces \sys, an open-source ontology database in C++20
-(Figure~\ref{fig-arch}), and makes the following contributions.
+(Figure~\ref{fig-arch}), with five technical contributions.
 \begin{enumerate}
-\item \textbf{A B+ tree triple store with its algorithms}
-  (Section~\ref{sec-store}).
-  Three permutations of dictionary-encoded triples sit behind a buffer pool
-  with LRU-K eviction.
-  We give the algorithms for search, insert, delete, range scan, and bulk
-  load, the invariants they keep, and a bound on the pages a range scan
-  reads.
-\item \textbf{A concurrency design that scales}
-  (Section~\ref{sec-conc}).
-  An optimistic descent latches only the leaf; a buffer pool of shards
-  serves resident pages with an atomic pin and no latch; a one-word
-  reader-writer latch replaces a mutex-based one; the dictionary decodes
-  under striped locks.
-  With eight threads \sys serves 1.46 million lookups per second, 3.5 times
-  its single-thread rate and 3 to 7 times the rate of Oxigraph, Jena TDB2,
-  and SQLite, and its insert rate grows 3.6 times.
-  The change passes the engine's tests under ThreadSanitizer and
-  AddressSanitizer.
-\item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}).
-  A postorder labelling of the class DAG gives each class a set of
-  intervals, kept in the same B+ tree, so that ``everything under $c$'' is
-  a few range scans.
-  We bound the number of intervals by the number of non-tree edges and
-  store no entailed triple: 8.1 times fewer triples than materialization,
-  48 times fewer page reads than rewriting, and 2 to 48 times faster than
-  other engines' subclass-path queries.
-\item \textbf{Vector indexes in the engine, and how to filter them}
-  (Sections~\ref{sec-order} and~\ref{sec-vectors}).
-  We prove that no linear order keeps neighbors close, add exact, IVF,
-  product-quantized, and HNSW search, store IVF posting lists as key ranges
-  of the triple B+ tree, show that filtering by a class is correlated with
-  similarity, and give the rule that picks between pre-filtering and masked
-  search; exact pre-filtering is $10^2$ to $10^4$ times faster than any
-  index strategy below about 1,000 members.
-\item \textbf{A build for the browser} (Section~\ref{sec-system}).
-  The engine, with its paged B+ trees and its semantic extension, compiles
-  to a 0.85\,MB WebAssembly module.
-\item \textbf{Strong performance} (Section~\ref{sec-exp}).
-  Against Oxigraph~\cite{oxigraph}, Apache Jena TDB2~\cite{jenatdb}, and
-  SQLite on LUBM~\cite{lubm} and the Gene Ontology, \sys answers selective
-  triple patterns 3 to 37 times faster, instance queries 2 to 48 times
-  faster, and sustains 3 to 7 times the lookup throughput under eight
-  threads, with the smallest files of the disk-based stores
-  (Table~\ref{tab-glance}).
+\item \textbf{A concurrent B+ tree triple store} (Sections~\ref{sec-store}
+  and~\ref{sec-conc}). Three permutations behind a buffer pool, with the
+  algorithms for search, insert, and delete, a bound on the pages a range scan
+  reads, and a latch-free hit path and an optimistic writer descent that scale
+  to eight threads.
+\item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}). A
+  postorder labelling of the class DAG kept in the same B+ tree, so that
+  ``everything under $c$'' is a few range scans and no entailed triple is
+  stored.
+\item \textbf{An entailment-aware plan rewrite} (Section~\ref{sec-rewrite}).
+  RDFS subclass entailment of \texttt{rdf:type} patterns as interval scans the
+  optimizer costs and joins like any other, with the answers of
+  materialization, prepared 16 times faster and in 8 times less space.
+\item \textbf{Vector indexes and filtered search}
+  (Sections~\ref{sec-order} and~\ref{sec-vectors}). A proof that no sorted
+  order keeps neighbors close, IVF posting lists stored as key ranges of the
+  triple tree, and the finding that a class filter is correlated with
+  similarity, with the rule that chooses between pre-filtering and masked
+  search.
+\item \textbf{A build for the browser} (Section~\ref{sec-system}). The whole
+  engine, with its paged trees and semantic search, as a 0.85\,MB WebAssembly
+  module.
 \end{enumerate}
-
-\stitle{Novelty}.
-Interval labelling of a hierarchy~\cite{agrawal1989}, the B+ tree, latch
-crabbing~\cite{lehman1981}, and IVF and HNSW indexes~\cite{jegou2011,malkov2020}
-are known.
-What is new is their combination in one engine and what that makes
-possible: the class hierarchy as range scans of the tree that holds the
-triples, so that a class filter is a binary search and not a scan or a
-stored closure; IVF posting lists that page, cache, latch, and update like
-triples; a measured account of why a class filter breaks the independence
-assumption of filtered vector search; a buffer pool whose resident-page hit
-is one compare-and-swap, which no other open ontology store we ran has; and
-the same engine in a browser.
-In the documentation we read, none of the systems we compare with offers
-more than two of these.
+We evaluate \sys against Oxigraph~\cite{oxigraph}, Apache Jena
+TDB2~\cite{jenatdb}, and SQLite on LUBM~\cite{lubm} and the Gene Ontology
+(Section~\ref{sec-exp}, summarized in Table~\ref{tab-glance}).
 The code, data generators, and benchmark programs are available at the
 artifact URL above.

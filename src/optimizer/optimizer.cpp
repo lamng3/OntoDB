@@ -15,6 +15,9 @@ CardinalityEstimator::CardinalityEstimator(const Statistics* stats) : stats_(sta
 
 auto CardinalityEstimator::EstimateTriplePattern(const BoundTriplePattern& pattern) const
     -> double {
+  if (pattern.entailed) {
+    return pattern.entailed_rows;
+  }
   TriplePattern constants;
   for (const auto& [term, out] : {std::pair{&pattern.subject, &constants.subject},
                                   std::pair{&pattern.predicate, &constants.predicate},
@@ -71,6 +74,28 @@ auto CardinalityEstimator::EstimateJoin(double left_rows, double right_rows,
     estimate /= subjects;
   }
   return estimate;
+}
+
+auto Optimizer::RewriteTypeScans(PlanNodeRef plan, const TypeEntailment& entailment) -> PlanNodeRef {
+  auto children = plan->ReleaseChildren();
+  for (auto& child : children) {
+    child = RewriteTypeScans(std::move(child), entailment);
+  }
+  plan->SetChildren(std::move(children));
+  if (plan->GetType() != PlanType::kTripleScan) {
+    return plan;
+  }
+  auto* scan = static_cast<TripleScanPlan*>(plan.get());
+  BoundTriplePattern& pattern = scan->MutablePattern();
+  const term_id_t type = entailment.RdfType();
+  if (type == INVALID_TERM_ID || pattern.predicate.is_variable || pattern.predicate.id != type ||
+      pattern.object.is_variable || pattern.object.id == INVALID_TERM_ID ||
+      !entailment.Covers(pattern.object.id)) {
+    return plan;
+  }
+  pattern.entailed = true;
+  pattern.entailed_rows = entailment.EstimateInstances(pattern.object.id);
+  return plan;
 }
 
 Optimizer::Optimizer(const CardinalityEstimator* estimator, const Config* config)

@@ -24,7 +24,7 @@ A pessimistic insert latches every page on the way down in write mode until
 it reaches a page that cannot split, so every insert latches the root
 exclusively.
 Most inserts split nothing: a leaf holds 169 keys.
-Algorithm~\ref{alg-optimistic} descends with read latches instead, takes the
+Algorithm~\ref{alg-optimistic} (Appendix~\ref{apx-alg}) descends with read latches instead, takes the
 write latch of the leaf alone, and finishes if the leaf has room (for a
 delete, if it would stay at least half full).
 Otherwise nothing has been written, and the pessimistic algorithm of
@@ -34,20 +34,6 @@ is pinned, so the leaf can be write-latched while its parent is still
 read-latched and no thread ever holds a write latch above the leaf unless a
 split or merge needs it.
 
-\begin{algorithm}[t]
-\caption{\textsc{TryLeafOnly}$(x,\mathit{op})$ for an insert or a delete}\label{alg-optimistic}
-\small
-read-latch the header; $P \gets$ the root; \lIf{the tree is empty or $P$ is a leaf}{\Return fail}
-read-latch $P$; release the header\;
-\While{true}{
-  $P' \gets \textsc{ChildFor}(P,x)$; pin $P'$ and read its type\;
-  \lIf{$P'$ is internal}{read-latch $P'$; release $P$; $P \gets P'$; \textbf{continue}}
-  write-latch $P'$ (the leaf); release $P$\;
-  \If{$\mathit{op}$ is insert and $x \in P'$ or $\mathit{op}$ is delete and $x \notin P'$}{\Return done (no change)}
-  \lIf{$\mathit{op}$ is insert and $P'$ is full, or $\mathit{op}$ is delete and $|P'| \le \lfloor B/2\rfloor$}{\Return fail}
-  insert or remove $x$ in $P'$; \Return done\;
-}
-\end{algorithm}
 
 The latch order stays top to bottom, so it cannot deadlock with the
 pessimistic path: a thread that holds a read latch on a parent and waits for
@@ -66,7 +52,7 @@ every thread takes at every query.
 A hit on a resident page therefore takes no latch.
 The shard keeps its page table also as an open-addressing array of atomic
 words (page id and frame), written under the shard latch and read without it
-(Algorithm~\ref{alg-fetch}).
+(Algorithm~\ref{alg-fetch} (Appendix~\ref{apx-alg})).
 A reader finds the frame, adds a pin with a compare-and-swap that fails if the
 frame has been \emph{claimed} (pin count $-1$), and checks that the frame still
 holds the page.
@@ -75,23 +61,6 @@ zero to $-1$; from then on no one can pin it, so a pinned frame is never
 evicted under a reader, and a pin that raced with an eviction lands on a frame
 that now holds another page, sees the mismatch, and lets go.
 
-\begin{algorithm}[t]
-\caption{\textsc{Fetch}$(\mathit{id})$ in a shard, and the claim that guards eviction}\label{alg-fetch}
-\small
-$\varphi \gets \textsc{IndexFind}(\mathit{id})$ \tcp*{atomic array, no latch}
-\If{$\varphi \ne \bot$ and \textsc{TryPin}(frame $\varphi$)}{
-  \lIf{frame $\varphi$ holds page $\mathit{id}$}{mark frame $\varphi$ referenced; \Return frame $\varphi$}
-  unpin frame $\varphi$ \tcp*{the frame was refilled}
-}
-latch the shard\;
-\lIf{page $\mathit{id}$ is in the page table}{pin and return its frame}
-$\varphi \gets$ a free frame, or else a victim:\;
-\quad fold the \emph{referenced} marks into the replacer; mark frames with pin count 0 evictable\;
-\quad \Repeat{a victim is claimed}{ask the replacer for the victim $v$; \textsc{TryClaim}$(v)$: swap pin count $0 \to -1$}\;
-\quad write $v$ back if dirty; \textsc{IndexErase}$(v)$; drop $v$ from the page table\;
-read page $\mathit{id}$ into $\varphi$; set its pin count to 1; \textsc{IndexInsert}$(\mathit{id}, \varphi)$; release the shard\;
-\Return frame $\varphi$\;
-\end{algorithm}
 
 Recording every hit in the LRU-K history would put the shard latch back.
 A hit instead sets a \emph{referenced} bit on the frame (a plain load when
