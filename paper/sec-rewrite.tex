@@ -33,6 +33,21 @@ This matters: from the stored triples alone, \texttt{?x rdf:type Student}
 looks empty, and a plan that starts from it starts from a pattern that in fact
 returns 75,547 rows.
 
+\begin{example}
+Over \texttt{Dog}, \texttt{Cat} $\sqsubseteq$ \texttt{Mammal} $\sqsubseteq$ \texttt{Animal}
+and \texttt{Bird} $\sqsubseteq$ \texttt{Animal}, the query
+\texttt{SELECT ?x ?n WHERE \{ ?x a ex:Animal . ?x ex:name ?n \}} returns one row
+without entailment (the entity typed \texttt{Animal} itself) and four with it.
+\texttt{\textbackslash explain} shows the rewritten plan, in which the optimizer
+has joined the interval scan to the name scan by index nested loops:
+\begin{small}\begin{verbatim}
+Projection [?x, ?n]
+  IndexNestedLoopJoin
+    IntervalTypeScan {?x rdf:type ex:Animal}
+    TripleScan {?x ex:name ?n}
+\end{verbatim}\end{small}
+\end{example}
+
 \begin{algorithm}[t]
 \caption{\textsc{RewriteTypeScans}$(\mathit{plan})$}\label{alg-rewrite}
 \small
@@ -60,6 +75,7 @@ triple set and not the triple.
 For every class $c$ of the hierarchy, the interval type scan of $c$ returns
 $(e,\texttt{rdf:type},c)$ if and only if this triple belongs to $\mathcal{T}^{+}$.
 \end{lemma}
+\iffull
 \begin{proof}
 The triple is in $\mathcal{T}^{+}$ iff $e$ has a stored type $c''$ with
 $c''\in\desc(c)$.
@@ -69,6 +85,7 @@ $\po(c'')$ lies in an interval of $I(c)$ for some stored type $c''$, that is,
 iff $c''\in\desc(c)$.
 A bound subject is tested with the same condition on its stored types.
 \end{proof}
+\fi
 
 \stitle{Freshness}.
 The hierarchy and the label tree are a snapshot, kept on a private file of the

@@ -1,0 +1,18 @@
+\begin{table}[t]
+\caption{Stores for ontologies, as documented (October 2026). We ran \sys, Oxigraph, Jena TDB2, and SQLite.}
+\label{tab-related}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llll@{}}
+\toprule
+System & Triples are kept in & Hierarchy by & In a browser \\
+\midrule
+Oxigraph~\cite{oxigraph} & RocksDB (LSM) & query only & in-memory \\
+Jena TDB2~\cite{jenatdb} & B+ trees & reasoner layer & no \\
+RDF4J native~\cite{rdf4j} & B-trees & materialized & no \\
+RDF-3X~\cite{neumann2010} & 6 compressed B+ trees & query only & no \\
+RDFox~\cite{rdfox} & in memory & materialized & no \\
+\sys & 3 B+ trees & intervals & full engine \\
+\bottomrule
+\end{tabular}}
+\end{table}

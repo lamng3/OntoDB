@@ -1,0 +1,19 @@
+\section{A Build for the Browser}
+\label{sec-system}
+
+The engine compiles with Emscripten to a 0.85\,MB WebAssembly
+module~\cite{haas2017} that runs the same indexed store, optimizer, and semantic
+extension in a web page, after replacing two parts: the raptor C library by a
+Turtle and N-Triples parser of about 500 lines (RDF/XML needs the native build),
+and the threads (a disk scheduler, a deadlock detector, a worker per session) by
+inline execution on one session.
+The buffer pool, the page file in the browser's memory file system, the trees,
+and the plans are unchanged.
+In a desktop browser, for an 834-class slice of the Gene Ontology with its
+embeddings, building the interval labels takes 3\,ms, the instance query for
+\emph{cell death} (97 classes, one range scan) 0.3\,ms, a filtered similarity
+query 0.8\,ms, and the IVF and HNSW indexes 58 and 98\,ms.
+Updates are journalled in local storage and replayed on load, which is not
+durability.
+We did not use WebGPU: a query scores a few hundred vectors, under a millisecond
+with 128-bit SIMD, less than a round trip to a GPU.

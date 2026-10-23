@@ -38,14 +38,17 @@ number the forest $\{(c,\mathit{tp}(c))\}$ in postorder; record $\lo(c)$\;
 \begin{lemma}[Correctness]\label{lem-correct}
 $u\in\desc(c)$ if and only if $\po(u)$ lies in an interval of $I(c)$.
 \end{lemma}
+\iffull
 \begin{proof}
 By induction over the order in which Algorithm~\ref{alg-label} builds $I$: the
 numbers covered by $I(c)$ are exactly those of the classes in $\desc(c)$.
 \end{proof}
+\fi
 
 \begin{lemma}[Size]\label{lem-size}
 For every class $c$, $|I(c)|\le 1+|E'(c)|$, where $E'(c)$ is the set of non-tree edges whose tail is in $\desc(c)$.
 \end{lemma}
+\iffull
 \begin{proof}
 A class $u\in\desc(c)$ is reached from $c$ by a path.
 If the path uses no non-tree edge, $u$ is in the forest subtree of $c$.
@@ -55,6 +58,7 @@ So the covered set is the forest subtree of $c$ together with the forest
 subtrees of the heads of the edges of $E'(c)$, a union of $1+|E'(c)|$
 intervals.
 \end{proof}
+\fi
 
 The labelling takes $O(|\mathcal{C}|+|E|)$ plus the merges, and a tree needs
 one interval per class.
