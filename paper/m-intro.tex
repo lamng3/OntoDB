@@ -1,0 +1,77 @@
+\section{Introduction}
+\label{sec-intro}
+
+Ontologies such as the Gene Ontology~\cite{ashburner2000} and the schemas of
+enterprise knowledge graphs are stored as sets of triples and queried in
+three ways.
+A \emph{pattern} query asks for the triples that match a template and is the
+base case of every RDF store~\cite{weiss2008,neumann2010}.
+A \emph{structural} query asks for the instances at or below a class, and
+needs the class hierarchy.
+A \emph{semantic} query asks for the terms closest in meaning to a given
+term, which needs a similarity measure over embeddings.
+The three meet in ``the terms most similar to \emph{apoptotic process} that
+lie under \emph{cell death}''.
+
+Existing systems leave four problems open.
+\textbf{C1. Hierarchy costs space or time.}
+RDFS entailment is either \emph{materialized}, which stores every inferred
+triple~\cite{rdfox}, or \emph{rewritten} into the query, which scans once per
+subclass.
+On the Gene Ontology with 200,000 typed entities, materializing multiplies
+the triples by 8.1, and rewriting reads 48 times more pages than a store that
+knows the hierarchy.
+\textbf{C2. A sorted index does not hold meaning.}
+It is tempting to believe that neighbors in meaning are neighbors in the
+order; we prove they cannot all be (Section~\ref{sec-sem}), so similarity is
+left to a vector database beside the triple store, with its own storage and
+no view of the hierarchy.
+\textbf{C3. A class filter is correlated with the vectors.}
+Filtered vector search is costed by assuming the filter is independent of the
+similarity; in an ontology the neighbors of a term lie under its own
+ancestors, and a post-filtered index can find 7\% of the right answers.
+\textbf{C4. A paged store must scale across threads.}
+A classic buffer pool serializes every page access on one latch, and a classic
+B+ tree write latches the root.
+In our first version, lookups per second fell from 330 thousand with one
+thread to 180 thousand with eight.
+
+\begin{example}
+\label{exa-motivation}
+Let $q$ be \emph{apoptotic process} in the Gene Ontology and $c$ the class
+\emph{cell death}.
+The query asks for the five terms nearest to $q$ among the 97 classes at or
+below $c$ in an 834-class slice.
+A triple store cannot rank by meaning; a vector index returns neighbors from
+anywhere, and a post-filter keeps those under $c$ only if enough are.
+\sys finds the 97 classes with one range scan of the B+ tree that holds the
+triples, scores them exactly, and returns \emph{apoptotic process involved in
+development} (cosine 0.865) first, in under a millisecond in a web page.
+\end{example}
+
+\stitle{Contributions}.
+This paper introduces \sys, an open-source ontology database in C++20
+(Figure~\ref{fig-arch}), with five technical contributions.
+\begin{enumerate}
+\item \textbf{A concurrent B+ tree triple store} (Sections~\ref{sec-store}
+  and~\ref{sec-conc}): the algorithms for search, insert, and delete, a bound
+  on the pages a range scan reads, and a latch-free hit path and an optimistic
+  writer descent that scale to eight threads.
+\item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}): a postorder
+  labelling of the class DAG kept in the same B+ tree, so that ``everything
+  under $c$'' is a few range scans and no entailed triple is stored.
+\item \textbf{An entailment-aware plan rewrite} (Section~\ref{sec-rewrite}):
+  RDFS subclass entailment of \texttt{rdf:type} patterns as interval scans the
+  optimizer costs like any other, with the answers of materialization, prepared
+  16 times faster and in 8 times less space.
+\item \textbf{Vector indexes and filtered search} (Section~\ref{sec-sem}): a
+  proof that no sorted order keeps neighbors close, IVF posting lists stored as
+  key ranges of the triple tree, and the finding that a class filter is
+  correlated with similarity, with the rule that chooses a strategy.
+\item \textbf{A build for the browser} (Section~\ref{sec-system}): the whole
+  engine as a 0.85\,MB WebAssembly module.
+\end{enumerate}
+We evaluate \sys against Oxigraph~\cite{oxigraph}, Apache Jena
+TDB2~\cite{jenatdb}, and SQLite on LUBM~\cite{lubm} and the Gene Ontology
+(Section~\ref{sec-exp}, Table~\ref{tab-glance}).
+The code, data generators, and benchmarks are at the artifact URL above.

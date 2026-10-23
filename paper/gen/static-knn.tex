@@ -1,0 +1,27 @@
+\begin{table}[t]
+\caption{Vector indexes on GO (recall@10, mean time per query, memory of the structure, build time).}
+\label{tab-knn}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Index & setting & recall & $\mu$s & MiB & build (s) \\
+\midrule
+flat float32 & exact & 1.000 & 2,238 & 55.8 & --- \\
+flat 8-bit & exact over codes & 0.996 & 4,554 & 14.1 & --- \\
+flat PQ $m{=}48$ & codes only & 0.778 & 819 & 1.7 & 10.4 \\
+flat PQ $m{=}48$ & re-rank 100 & 0.998 & 905 & 1.7$^\dagger$ & 10.4 \\
+IVF $\nu{=}512$ & $\rho{=}8$ & 0.892 & 149 & 56.5 & 17.5 \\
+IVF $\nu{=}512$ & $\rho{=}16$ & 0.929 & 255 & 56.5 & 17.5 \\
+IVF $\nu{=}512$ & $\rho{=}64$ & 0.976 & 928 & 56.5 & 17.5 \\
+IVF $\nu{=}512$, 8-bit & $\rho{=}16$ & 0.926 & 263 & 14.8 & 17.5 \\
+IVF $\nu{=}512$, PQ 96 & $\rho{=}16$ & 0.839 & 178 & 4.2 & 38.4 \\
+HNSW $M{=}16$ & $\ef{=}10$ & 0.993 & 44 & 59.7 & 15.0 \\
+HNSW $M{=}16$ & $\ef{=}40$ & 0.997 & 108 & 59.7 & 15.0 \\
+HNSW $M{=}32$ & $\ef{=}160$ & 0.999 & 474 & 63.4 & 28.0 \\
+\bottomrule
+\end{tabular}}
+
+\smallskip
+{\footnotesize $^\dagger$ re-ranking reads the float vectors as well.}
+\end{table}

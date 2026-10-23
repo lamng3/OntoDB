@@ -1,0 +1,34 @@
+\begin{algorithm}[t]
+\caption{\textsc{TryLeafOnly}$(x,\mathit{op})$ for an insert or a delete}\label{alg-optimistic}
+\small
+read-latch the header; $P \gets$ the root; \lIf{the tree is empty or $P$ is a leaf}{\Return fail}
+read-latch $P$; release the header\;
+\While{true}{
+  $P' \gets \textsc{ChildFor}(P,x)$; pin $P'$ and read its type\;
+  \lIf{$P'$ is internal}{read-latch $P'$; release $P$; $P \gets P'$; \textbf{continue}}
+  write-latch $P'$ (the leaf); release $P$\;
+  \If{$\mathit{op}$ is insert and $x \in P'$ or $\mathit{op}$ is delete and $x \notin P'$}{\Return done (no change)}
+  \lIf{$\mathit{op}$ is insert and $P'$ is full, or $\mathit{op}$ is delete and $|P'| \le \lfloor B/2\rfloor$}{\Return fail}
+  insert or remove $x$ in $P'$; \Return done\;
+}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{\textsc{Fetch}$(\mathit{id})$ in a shard, and the claim that guards eviction}\label{alg-fetch}
+\small
+$\varphi \gets \textsc{IndexFind}(\mathit{id})$ \tcp*{atomic array, no latch}
+\If{$\varphi \ne \bot$ and \textsc{TryPin}(frame $\varphi$)}{
+  \lIf{frame $\varphi$ holds page $\mathit{id}$}{mark frame $\varphi$ referenced; \Return frame $\varphi$}
+  unpin frame $\varphi$ \tcp*{the frame was refilled}
+}
+latch the shard\;
+\lIf{page $\mathit{id}$ is in the page table}{pin and return its frame}
+$\varphi \gets$ a free frame, or else a victim:\;
+\quad fold the \emph{referenced} marks into the replacer; mark frames with pin count 0 evictable\;
+\quad \Repeat{a victim is claimed}{ask the replacer for the victim $v$; \textsc{TryClaim}$(v)$: swap pin count $0 \to -1$}\;
+\quad write $v$ back if dirty; \textsc{IndexErase}$(v)$; drop $v$ from the page table\;
+read page $\mathit{id}$ into $\varphi$; set its pin count to 1; \textsc{IndexInsert}$(\mathit{id}, \varphi)$; release the shard\;
+\Return frame $\varphi$\;
+\end{algorithm}
+
+

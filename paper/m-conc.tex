@@ -1,0 +1,54 @@
+\section{Concurrency}
+\label{sec-conc}
+
+Strict two-phase locking isolates transactions; this section is about the
+\emph{latches} that keep pages and trees sound, which decide how many threads the
+engine can use.
+Our first implementation followed the textbook (one latch over the pool's
+tables, a mutex over the dictionary, exclusive latches from the root for every
+insert), and sampling eight reader threads showed that four of five samples were
+threads waiting for a lock.
+We replaced each in turn.
+
+\stitle{An optimistic descent for writers}.
+Most inserts split nothing, so \textsc{TryLeafOnly} descends with read
+latches, write-latches only the leaf, and finishes if the leaf has room (for a
+delete, if it stays at least half full); otherwise nothing has been written and
+the pessimistic algorithm runs.
+The type of a child is read from its pinned page, which cannot change, so the
+leaf is write-latched while its parent is still read-latched
+(Algorithm~\ref{alg-optimistic}); the latch order stays top to bottom.
+
+\stitle{A sharded pool with a latch-free hit}.
+The pool has $S$ shards (16 in our runs); a page belongs to shard $\mathit{id}
+\bmod S$, with its own frames, page table, and LRU-K replacer.
+The pages every query touches, the roots, hash to a few shards, so a hit on a
+resident page takes no latch at all: the shard keeps its page table also as an
+open-addressing array of atomic words, a reader finds the frame and adds a pin
+with a compare-and-swap that fails if the frame has been \emph{claimed} (pin
+count $-1$), and checks that the frame still holds the page.
+A frame is evicted or deleted only after its owner swaps a pin count of zero to
+$-1$, so a frame is never evicted under a reader, and a pin that raced with an
+eviction sees another page and lets go.
+A hit sets a \emph{referenced} bit instead of touching the replacer, and a shard
+folds the bits into LRU-K when it must evict; a pool with one shard, the default,
+keeps the exact textbook behavior (Algorithm~\ref{alg-fetch}).
+
+\input{alg-conc}
+
+\stitle{The latch and the dictionary}.
+The page latch is one atomic word (30 bits of readers, a writer-waiting bit, a
+writer bit), because \texttt{shared\_mutex} keeps its reader count behind a
+mutex that readers of one root page queue on.
+The dictionary serializes only inserts, so a spelling is never interned twice;
+decoding takes no dictionary-wide lock, and its cache is guarded by 64 stripe
+locks.
+
+\stitle{Correctness}.
+A frame's pin count is $-1$ only while a thread holding the shard latch owns the
+frame, a page is in the atomic index iff it is in the page table, a leaf changes
+only under its write latch, and the latch order is the same on every path.
+Two stress tests (eight readers against a pool of 64 frames and 400 pages whose
+bytes name their page; inserters, deleters, and scanners against a tree of tiny
+nodes) and the whole suite pass in release mode and under ThreadSanitizer and
+AddressSanitizer.

@@ -1,7 +1,7 @@
 \section{Further Algorithms}
 \label{apx-alg}
 
-These are the remaining algorithms of Sections~\ref{sec-store} and~\ref{sec-conc}, in the notation of Table~\ref{tab-notation}.
+The algorithms that the text describes without listing, in the notation of Table~\ref{tab-notation}.
 
 \subsection{Choosing a tree for a pattern}
 
@@ -48,40 +48,49 @@ write each run as a leaf and link it to the previous one; $\Lambda \gets$ the li
 set the root in the header to the page of $\Lambda[0]$\;
 \end{algorithm}
 
-\subsection{The optimistic descent for writers}
+\iffull
+\subsection{The concurrent algorithms}
+\input{alg-conc}
+\fi
 
-\begin{algorithm}[h]
-\caption{\textsc{TryLeafOnly}$(x,\mathit{op})$ for an insert or a delete}\label{alg-optimistic}
-\small
-read-latch the header; $P \gets$ the root; \lIf{the tree is empty or $P$ is a leaf}{\Return fail}
-read-latch $P$; release the header\;
-\While{true}{
-  $P' \gets \textsc{ChildFor}(P,x)$; pin $P'$ and read its type\;
-  \lIf{$P'$ is internal}{read-latch $P'$; release $P$; $P \gets P'$; \textbf{continue}}
-  write-latch $P'$ (the leaf); release $P$\;
-  \If{$\mathit{op}$ is insert and $x \in P'$ or $\mathit{op}$ is delete and $x \notin P'$}{\Return done (no change)}
-  \lIf{$\mathit{op}$ is insert and $P'$ is full, or $\mathit{op}$ is delete and $|P'| \le \lfloor B/2\rfloor$}{\Return fail}
-  insert or remove $x$ in $P'$; \Return done\;
-}
-\end{algorithm}
+\iffull\else
+\section{Proofs}
+\label{apx-proofs}
 
-\subsection{The latch-free fetch of a resident page}
+\begin{proof}[Proof of Lemma~\ref{lem-scan}]
+The descent ends at the first leaf, which is one of the $h$ pages.
+Every leaf after it holds at least $\lfloor B/2\rfloor$ keys, all inside the range
+except possibly the last, so at most $\lceil r/\lfloor B/2\rfloor\rceil$ more leaves
+are read.
+A bulk-loaded leaf is full, which replaces $\lfloor B/2\rfloor$ by $B$.
+\end{proof}
 
-\begin{algorithm}[h]
-\caption{\textsc{Fetch}$(\mathit{id})$ in a shard, and the claim that guards eviction}\label{alg-fetch}
-\small
-$\varphi \gets \textsc{IndexFind}(\mathit{id})$ \tcp*{atomic array, no latch}
-\If{$\varphi \ne \bot$ and \textsc{TryPin}(frame $\varphi$)}{
-  \lIf{frame $\varphi$ holds page $\mathit{id}$}{mark frame $\varphi$ referenced; \Return frame $\varphi$}
-  unpin frame $\varphi$ \tcp*{the frame was refilled}
-}
-latch the shard\;
-\lIf{page $\mathit{id}$ is in the page table}{pin and return its frame}
-$\varphi \gets$ a free frame, or else a victim:\;
-\quad fold the \emph{referenced} marks into the replacer; mark frames with pin count 0 evictable\;
-\quad \Repeat{a victim is claimed}{ask the replacer for the victim $v$; \textsc{TryClaim}$(v)$: swap pin count $0 \to -1$}\;
-\quad write $v$ back if dirty; \textsc{IndexErase}$(v)$; drop $v$ from the page table\;
-read page $\mathit{id}$ into $\varphi$; set its pin count to 1; \textsc{IndexInsert}$(\mathit{id}, \varphi)$; release the shard\;
-\Return frame $\varphi$\;
-\end{algorithm}
+\begin{proof}[Proof of Lemma~\ref{lem-correct}]
+By induction over the order in which Algorithm~\ref{alg-label} builds $I$: the
+numbers covered by $I(c)$ are exactly those of the classes in $\desc(c)$.
+\end{proof}
 
+\begin{proof}[Proof of Lemma~\ref{lem-size}]
+A class $u\in\desc(c)$ is reached from $c$ by a path.
+If the path uses no non-tree edge, $u$ is in the forest subtree of $c$.
+Otherwise let $\epsilon$ be the last non-tree edge on it; $u$ is then in the forest
+subtree of the head of $\epsilon$.
+So the covered set is the forest subtree of $c$ together with the forest subtrees
+of the heads of the edges of $E'(c)$, a union of $1+|E'(c)|$ intervals.
+\end{proof}
+
+\begin{proof}[Proof of Lemma~\ref{lem-rewrite}]
+The triple is in $\mathcal{T}^{+}$ iff $e$ has a stored type $c''$ with
+$c''\in\desc(c)$.
+The label tree holds $(\po(c''),e)$ for every stored type of every entity, so by
+Lemma~\ref{lem-correct} $e$ is returned by the range scans of $I(c)$ iff $\po(c'')$
+lies in an interval of $I(c)$ for some stored type $c''$, that is, iff
+$c''\in\desc(c)$.
+A bound subject is tested with the same condition on its stored types.
+\end{proof}
+
+\begin{proof}[Proof of Lemma~\ref{lem-bw}]
+The first and last vertices of the order are $N-1$ apart and joined by a path of at
+most $D$ edges, so some edge of the path covers at least $(N-1)/D$ positions.
+\end{proof}
+\fi

@@ -1,0 +1,46 @@
+\section{Related Work}
+\label{sec-related}
+
+\input{gen/static-related}
+
+\stitle{RDF stores}.
+Hexastore indexes all six permutations~\cite{weiss2008}; RDF-3X keeps six
+compressed B+ trees~\cite{neumann2010}; QLever builds read-mostly permutation
+indexes~\cite{bast2017}; HDT is a compressed read-only format~\cite{fernandez2013};
+Virtuoso stores quads in a relational engine~\cite{erling2010}.
+Apache Jena TDB2 uses B+ trees~\cite{jenatdb}, RDF4J's native store
+B-trees~\cite{rdf4j}, and Oxigraph~\cite{oxigraph} a log-structured merge tree in
+RocksDB.
+\sys follows the B+ tree line~\cite{bayer1972,comer1979} with three permutations;
+its latching and recovery~\cite{lehman1981,graefe2011,mohan1992} are textbook, and
+the contribution is the choice of parts, their measured behavior on ontologies,
+and what is built on top.
+
+\stitle{Inference}.
+RDFS entailment is usually \emph{rewritten} into the query or \emph{materialized}
+with maintenance by counting or delete-and-rederive~\cite{rdfox,gupta1993}.
+Agrawal, Borgida, and Jagadish~\cite{agrawal1989} store a compressed transitive
+closure by numbering a spanning forest in postorder with a set of intervals per
+node, and Grust~\cite{grust2002} numbers XML trees so that axes become regions of
+a plane; we use the former on class DAGs inside a B+ tree store and make it the
+target of a plan rewrite.
+
+\stitle{Vector search}.
+Approximate nearest neighbor search has inverted files and product
+quantization~\cite{jegou2011}, proximity graphs such as HNSW~\cite{malkov2020},
+and disk-oriented graphs such as DiskANN~\cite{subramanya2019}; FAISS packages
+the first two~\cite{johnson2021}, and Pan, Wang, and Li survey the hybrid queries
+that are hard for them~\cite{pan2024}; ACORN makes HNSW traverse only nodes that
+pass a predicate~\cite{patel2024}.
+Neo4j, Neptune Analytics, Fluree, and GraphDB add vector or similarity indexes to
+graph and RDF stores~\cite{neo4jvec,neptunevec,fluree,graphdbsim}; in the
+documentation we read, none restricts the search with range-scannable hierarchy
+intervals in the engine that holds the triples.
+
+\stitle{Adaptive radix trees and browsers}.
+An ART~\cite{leis2013} orders keys by byte, so its range scan is lexical and
+Lemma~\ref{lem-bw} applies; sibling links are awkward there, because lazy
+expansion moves a leaf, and \sys's three fixed-width integers leave an ART little
+to compress.
+WebAssembly~\cite{haas2017} lets a C++ engine run in a page; Oxigraph ships an
+in-memory JavaScript build, and \sys compiles the whole paged engine.

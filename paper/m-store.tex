@@ -1,0 +1,154 @@
+\section{The OntoDB Store}
+\label{sec-store}
+
+\sys is a single-process engine with the layers of a disk-based DBMS
+(Figure~\ref{fig-arch}).
+A \sparql query is parsed, bound against the dictionary, planned as a
+left-deep tree, reordered by the optimizer, and run by volcano-style executors
+that pull rows of term ids.
+The \emph{indexed store} keeps each triple in three B+ trees in one page file,
+behind a buffer pool with LRU-K eviction~\cite{oneil1993}; terms are encoded
+by a dictionary built from the same parts; updates are logged page by page for
+ARIES-style recovery~\cite{mohan1992}.
+The semantic extension (Sections~\ref{sec-labels}--\ref{sec-sem}) reads the
+store through the same interface.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[font=\scriptsize,
+  box/.style={draw,rounded corners=1.5pt,minimum height=0.5cm,inner sep=2.5pt,align=center,fill=white,text width=3.1cm},
+  side/.style={draw,rounded corners=1.5pt,minimum height=0.5cm,inner sep=2.5pt,align=center,fill=orange!12,text width=1.9cm},
+  arr/.style={-{Stealth[length=1.6mm]},thick}]
+\node[box] (q) {\sparql parser, binder, planner};
+\node[box,below=0.16cm of q] (o) {optimizer (statistics), volcano executors};
+\node[box,below=0.16cm of o,fill=blue!8] (s) {indexed store: SPO, POS, OSP};
+\node[box,below=0.16cm of s,fill=blue!8] (t) {B+ tree: latch crabbing, sibling links};
+\node[box,below=0.16cm of t,fill=blue!8] (b) {buffer pool (LRU-K), page guards};
+\node[box,below=0.16cm of b] (d) {disk scheduler, disk manager};
+\node[side,right=0.45cm of s] (dict) {dictionary\\heap + 2 B+ trees};
+\node[side,right=0.45cm of b] (log) {log manager,\\recovery};
+\node[side,left=0.45cm of o,text width=1.5cm] (sem) {semantic\\extension};
+\draw[arr] (q) -- (o); \draw[arr] (o) -- (s); \draw[arr] (s) -- (t); \draw[arr] (t) -- (b); \draw[arr] (b) -- (d);
+\draw[arr] (s) -- (dict); \draw[arr] (b) -- (log);
+\draw[arr] (sem) |- (s);
+\end{tikzpicture}
+\caption{The layers of \sys. Blue boxes are the storage structures of Section~\ref{sec-store}.}
+\label{fig-arch}
+\end{figure}
+
+\stitle{Keys, pages, permutations}.
+A triple is a 24-byte key $x$ of three dictionary ids, stored big-endian so
+that \texttt{memcmp} is the order.
+A page is 4\,KiB; a leaf holds up to $B{=}169$ keys and an internal page up to
+$F{=}144$ separators; leaves are linked to their right sibling only; every page
+but the root keeps at least half its maximum.
+With the permutations SPO, POS, and OSP every triple pattern has one in which
+its bound positions form a prefix, so a pattern is one range scan that returns
+only matching triples (Appendix~\ref{apx-alg}); a fourth to sixth permutation
+would make no pattern cheaper (Section~\ref{sec-exp}).
+
+\stitle{Search}.
+\textsc{ChildFor} picks the child whose range holds $x$: the last separator
+that is $\le x$.
+The descent \emph{crabs}: it latches the child before it releases the parent,
+so a concurrent split cannot move $x$ away~\cite{lehman1981,graefe2011}.
+A lookup reads $h\le 2+\log_{73}(n/84)$ pages (at most four for the 1.3 million
+triples of LUBM(10)).
+
+\begin{algorithm}[t]
+\caption{\textsc{LeafFor}$(x)$ and \textsc{Contains}$(x)$}\label{alg-search}
+\small
+latch the header page (shared); $P \gets$ the root; \lIf{$P$ is nil}{\Return nil}
+latch $P$ (shared); release the header\;
+\While{$P$ is an internal page}{
+  $P' \gets \textsc{ChildFor}(P,x)$ \tcp*{binary search over the separators}
+  latch $P'$ (shared); release $P$; $P \gets P'$\;
+}
+\Return $P$\;
+\textsc{Contains}$(x)$: $P \gets \textsc{LeafFor}(x)$; \Return whether $x$ is in $P$\;
+\end{algorithm}
+
+\stitle{Insert}.
+Insert is \emph{pessimistic} crabbing: it write-latches each page on the way
+down and releases every latched ancestor as soon as the page just latched is
+\emph{safe}, meaning it cannot split.
+What is still latched at the leaf is exactly what a split can reach, and
+latches are taken in one order everywhere (header, top to bottom, siblings
+left to right).
+A leaf split leaves two leaves of $\lfloor (B{+}1)/2\rfloor$ and $\lceil
+(B{+}1)/2\rceil$ keys and copies the right leaf's first key up; an internal
+split moves the middle separator up.
+
+\begin{algorithm}[t]
+\caption{\textsc{Insert}$(x)$}\label{alg-insert}
+\small
+latch the header (exclusive); \lIf{the tree is empty}{make a leaf holding $x$ the root; \Return true}
+$\mathit{path} \gets [\,]$; $P \gets$ the root\;
+\Repeat{$P$ is a leaf}{
+  latch $P$ (exclusive)\;
+  \If{$P$ is not full}{release every latch in $\mathit{path}$ and the header \tcp*{$P$ is safe}}
+  push $P$ on $\mathit{path}$; $P \gets \textsc{ChildFor}(P,x)$\;
+}
+$P \gets \mathit{path}.\text{pop}()$; \lIf{$x \in P$}{\Return false}
+insert $x$ into $P$; \lIf{$|P| \le B$}{\Return true}
+$R \gets$ new leaf with the upper half of $P$; $R.\text{next} \gets P.\text{next}$; $P.\text{next} \gets R$; $\sigma \gets R.\text{keys}[0]$ \tcp*{copied up}
+\While{true}{
+  \If{$\mathit{path}$ is empty}{make a new root over $(P, R)$ with separator $\sigma$; set it in the header; \Return true}
+  $Q \gets \mathit{path}.\text{pop}()$; insert $(\sigma, R)$ into $Q$ after $P$\;
+  \lIf{$Q$ has at most $F$ separators}{\Return true}
+  $P \gets Q$; $R \gets$ new page with the upper half of $Q$; $\sigma \gets$ the middle separator of $Q$ \tcp*{moved up}
+}
+\end{algorithm}
+
+\stitle{Delete}.
+Delete crabs with a different notion of safe: a page above its minimum, because
+only then can it not underflow.
+A leaf below $\lfloor B/2\rfloor$ keys merges with or borrows from a sibling
+under the same parent, preferring the left one; a leaf emptied by a merge is
+kept, empty, with its sibling link, because an iterator may already hold its
+id.
+
+\begin{algorithm}[t]
+\caption{\textsc{Remove}$(x)$}\label{alg-remove}
+\small
+descend as in \textsc{Insert}, releasing ancestors when the page just latched is safe (above its minimum)\;
+$P \gets$ the leaf; \lIf{$x \notin P$}{\Return false}
+remove $x$ from $P$; \lIf{$P$ is the root or $|P| \ge \lfloor B/2\rfloor$}{\Return true}
+\While{the page $P$ on top of $\mathit{path}$ is under its minimum and has a parent $Q$}{
+  $R \gets$ the left sibling of $P$ under $Q$ (the right one if $P$ is first); latch siblings left to right\;
+  \eIf{the entries of $P$ and $R$ fit in one page}{\textbf{merge} into the left page and delete the right entry from $Q$\;}
+  {\textbf{redistribute}: move one entry from $R$ to $P$ and fix the separator in $Q$\;}
+  $P \gets Q$\;
+}
+\lIf{the root has one child left}{make the child the root and free the old root}
+\end{algorithm}
+
+\stitle{Range scan and bulk load}.
+The half-open range $[a,b)$ is what the semantic extension needs.
+The iterator \emph{copies} the keys of a leaf below $b$, remembers the right
+sibling's id, and releases the leaf, so it holds no latch and no pin between
+rows and a stalled consumer blocks no writer (Appendix~\ref{apx-alg}).
+\begin{lemma}[Cost of a range scan]\label{lem-scan}
+A scan returning $r$ keys from an insert-only or bulk-loaded tree of height $h$
+reads at most $h + \lceil r/\lfloor B/2\rfloor\rceil$ pages, and at most
+$h+\lceil r/B\rceil$ if the tree was bulk-loaded.
+\end{lemma}
+Loading sorts the triples once per permutation and builds each tree bottom-up,
+writing every page once and full: LUBM(1) takes 10.8\,MiB by bulk load against
+16.2\,MiB by insertion.
+
+\stitle{Buffer pool, dictionary, planning, recovery}.
+A \emph{page guard} pins a frame and takes its latch for its lifetime, so no path
+leaves a page pinned.
+Terms get dense 64-bit ids in first-seen order, stored in a heap, an
+\emph{id $\to$ record} tree, and a \emph{spelling $\to$ id} tree keyed by a
+64-bit hash; decoding an id costs about $0.7\,\mu$s, so a direct-mapped cache
+of 65,536 decoded spellings serves a warm store.
+The optimizer reorders a left-deep plan greedily by estimated join output
+$a_1a_2/\max(V_1,V_2)$ from exact counts collected at load, and picks a nested
+loop, an index nested loop, or a hash join per node; the \sparql subset has no
+\texttt{OPTIONAL}, \texttt{UNION}, property paths, or aggregates.
+Updates run under strict two-phase locking; recovery is page-oriented: a page
+image is logged when a dirty page is released, the log is forced before the page
+is written, redo copies images, undo of a triple is logical, and a split or
+merge is a \emph{page group} that is logged atomically.

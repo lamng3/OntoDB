@@ -4,6 +4,8 @@
 
 \usepackage{pvldb}
 \input{commands}
+\newif\iffull
+\ifdefined\fullversion\fulltrue\fi
 
 \renewcommand\vldbdoi{XX.XX/XXX.XX}
 \renewcommand\vldbpages{XXX-XXX}
@@ -11,7 +13,11 @@
 
 \begin{document}
 
+\iffull
+\title{OntoDB: A Fast Ontology Database for\\Pattern, Hierarchy, and Semantic Queries\\(Extended Version)}
+\else
 \title{OntoDB: A Fast Ontology Database for\\Pattern, Hierarchy, and Semantic Queries}
+\fi
 
 \author{Lam Nguyen}
 \affiliation{%
@@ -30,6 +36,7 @@
 
 \vldbtopmatter
 
+\iffull
 \input{sec-intro}
 \input{sec-pre}
 \input{sec-store}
@@ -42,6 +49,19 @@
 \input{sec-exp}
 \input{sec-related}
 \input{sec-conclude}
+\else
+\input{m-intro}
+\input{sec-pre}
+\input{m-store}
+\input{m-conc}
+\input{sec-labels}
+\input{sec-rewrite}
+\input{m-sem}
+\input{m-system}
+\input{m-exp}
+\input{m-related}
+\input{m-conclude}
+\fi
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}

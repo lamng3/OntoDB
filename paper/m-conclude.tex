@@ -1,0 +1,20 @@
+\section{Conclusion}
+\label{sec-conclude}
+
+An ontology store is asked for patterns, hierarchies, and meaning.
+\sys answers all three inside one disk-based, multi-threaded engine: a B+ tree
+store of three permutations whose latch-free hits and optimistic writers scale to
+eight threads; interval labels that make ``everything under $c$'' a few range
+scans, which a plan rewrite uses to answer RDFS entailment with the answers of
+materialization and none of its storage; vector indexes whose lists live in the
+same tree; and a 0.85\,MB build for the browser.
+It answers selective patterns and class instances faster than Oxigraph, Jena TDB2,
+and SQLite and serves 3 to 7 times their lookups per second under eight threads.
+
+\stitle{Limitations}.
+\sys implements a \sparql subset without \texttt{OPTIONAL}, \texttt{UNION}, property
+paths, or aggregates, and entails only \texttt{rdfs:subClassOf} over constant
+classes; it is the slowest to load and uses much memory while loading; decoding an
+id costs about $0.7\,\mu$s, which the cache hides on a warm store; labels and the
+entailment snapshot are rebuilt, not maintained, after updates; and the vectors
+come from one ontology and one small model, with synthetic instances.

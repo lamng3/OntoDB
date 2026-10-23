@@ -1,0 +1,206 @@
+\section{Experimental Study}
+\label{sec-exp}
+
+We evaluate \sys along four research questions.
+\begin{itemize}
+\item \textbf{[RQ1] The store}: how does a B+ tree store of three permutations
+  compare with an LSM, a Java B+ tree, and a relational store on triple
+  patterns, queries, and loading?
+\item \textbf{[RQ2] Hierarchies and the plan rewrite}: what do the interval labels
+  and the entailment rewrite cost and buy against materializing, rewriting, and
+  other engines' subclass-path queries?
+\item \textbf{[RQ3] Concurrency}: how do lookups and inserts scale with
+  threads, and what do readers see while a writer runs?
+\item \textbf{[RQ4] Semantic search}: what do the vector indexes and the
+  filtering strategies give on real embeddings?
+\end{itemize}
+Table~\ref{tab-glance} summarizes the answers.
+
+\input{gen/compare-glance}
+
+\stitle{Setup}.
+We compare \sys (release build, B+ tree store with SPO, POS, OSP, a 256\,MiB
+pool, automatic joins) with Oxigraph 0.5.13~\cite{oxigraph} (Rust API; RocksDB
+on disk, and its in-memory store), Apache Jena TDB2 5.2.0~\cite{jenatdb} (Java
+17, 4\,GiB heap), and SQLite 3.51 as a triple table of three string columns with
+three indexes, a basic graph pattern translated into self-joins and
+\texttt{ANALYZE} after loading, all in-process on an Apple M2 Pro with 16\,GiB.
+The data are LUBM~\cite{lubm} at one and ten universities (1.3 million
+statements), with its ontology where entailment is needed, and the Gene
+Ontology~\cite{ashburner2000} (38,092 classes, 57,456 \texttt{is\_a} edges, 384-d
+embeddings~\cite{reimers2019}) with 200,000 synthetic entities of one to three
+types.
+Queries are parsed once and run once to warm the caches (three times for the JVM
+and SQLite), then five to nine times; we report the median, with every answer
+converted to its string and row counts agreeing across engines; times are warm,
+including \sys's decode cache.
+Concurrency uses threads (processes with one connection each for SQLite).
+
+\stitle{What the numbers do not show}.
+Every time is warm, with \sys's decode cache on; cold, the string-level class-instance
+query is 2.0 times slower (Table~\ref{tab-cache}) and still 1.1 times faster than the best
+other engine.
+SQLite runs through Python's driver, whose call overhead is a few microseconds;
+Jena's JVM is warmed; \sys's inserts in RQ3 bypass the write-ahead log while the other
+engines commit with their defaults; and the instances of the Gene Ontology are
+synthetic.
+The machine has 8 performance cores, so eight threads fill it.
+\sys implements a \sparql subset and RDFS subclass entailment only, where Oxigraph
+implements SPARQL 1.1, so the comparison is on basic graph patterns, the part the
+systems share.
+
+\subsection{RQ1: The Store}
+
+\input{gen/compare-queries}
+
+\input{gen/compare-load}
+
+\stitle{Selective patterns}.
+For patterns that bind the subject \sys takes 3 and 2\,$\mu$s and the others 9 to
+117\,$\mu$s: 3.4 to 37$\times$ faster on $(s,\cdot,\cdot)$ and 4.6 to 27$\times$ on
+$(s,p,\cdot)$, and 1.4 to 58$\times$ faster on the selective LUBM queries.
+\stitle{Large results}.
+For patterns returning 16,000 to 71,000 rows \sys takes 10 to 71\,ms: 1.9 to
+3.2$\times$ faster than Oxigraph on RocksDB, 1.5 to 2.4$\times$ faster than Jena,
+and within a factor of two of SQLite, whose string index returns spellings
+without a dictionary, and of Oxigraph's in-memory store.
+On the LUBM triangle query SQLite takes 4.0\,ms, \sys 8.2\,ms, and Oxigraph on
+RocksDB 275\,ms (33$\times$ slower than \sys).
+\stitle{Loading}.
+\sys is the slowest to load LUBM(10), 11.4\,s against 2.0\,s for Oxigraph on
+RocksDB, 6.1\,s for Jena, and 8.1\,s for SQLite, with a peak of 584\,MiB against
+78\,MiB for Oxigraph, because it parses RDF/XML through a C library, interns each
+term through two B+ trees, and builds exact statistics; its file is the smallest,
+134\,MiB against 176 for Oxigraph on RocksDB, 363 for Jena, and 706 for SQLite.
+
+\stitle{Design choices}.
+Three permutations cut the page reads of $(\cdot,p,\cdot)$ by 7.9$\times$ and of
+$(\cdot,\cdot,o)$ and $(\cdot,p,o)$ by 40$\times$ against SPO alone, and the other three
+trees cost 66\% more space and change no pattern (Table~\ref{tab-permstudy}).
+The decode cache makes the subject-bound pattern 4.3$\times$ faster, patterns
+returning thousands of rows 1.5 to 2.3$\times$, and the largest instance queries
+2.0$\times$ (Table~\ref{tab-cache}); a cheaper id-to-spelling path would help
+every cold query.
+
+\input{gen/static-permstudy}
+
+\input{gen/compare-cache}
+
+\subsection{RQ2: Hierarchies and the Plan Rewrite}
+
+\stitle{Interval labels}.
+The Gene Ontology needs 76,570 intervals for 38,092 classes, 2.01 per class (at
+most 741, within Lemma~\ref{lem-size}), built in 15\,ms, against 393,448 ancestor
+pairs for the closure.
+On 200,000 typed entities, materializing the closure turns 495,552 triples into
+4,017,973 (8.1$\times$), the file from 63.6 to 309.5\,MiB, and the load from 5.1 to
+180\,s; the interval index adds 9.3\,MiB (15\%) and 0.17\,s.
+For classes with 1,000 or more descendants it reads 265 pages against 182
+(materialized) and 12,803 (one scan per class).
+
+\input{gen/static-labels}
+
+\input{gen/compare-hier}
+
+\stitle{Against other engines}.
+Table~\ref{tab-hier} gives the instances of a class and its subclasses.
+The interval scan alone returns ids, in 1.9\,ms for the 29,904 answers of the
+largest classes; returning strings takes 11.5\,ms because each id is decoded.
+At the string level \sys is 2.2$\times$ faster than the best other engine on the
+largest classes and 5 to 9$\times$ faster than Oxigraph in memory on classes with
+fewer than 1,000 instances, 3.5$\times$ faster than SQLite's recursive query, and
+5.3 to 5.8$\times$ faster than Jena and Oxigraph on RocksDB.
+
+\stitle{The rewrite}.
+Table~\ref{tab-entail} runs the seven LUBM queries that need only subclass
+reasoning on LUBM(10) with its ontology.
+Without the rewrite \sys returns no rows for six of them; with it, every query
+returns exactly the rows of the materialized store and of the other engines'
+subclass-path queries, in times within 20\% of the materialized store
+(Table~\ref{tab-entail-cost}), with no stored entailed triple, 16 times faster to
+prepare (0.06\,s against 0.97\,s) and 8 times smaller (5.1 against 40.7\,MiB).
+Oxigraph on RocksDB is 1.9 to 6.9 times slower than the rewrite and Jena 2 to
+9,300 times slower, with LUBM 9 timing out; Oxigraph's in-memory store is faster
+on five of the seven queries, by 1.1 to 2.7 times.
+
+\input{gen/compare-entail}
+
+\input{gen/compare-entail-cost}
+
+\subsection{RQ3: Concurrency}
+
+We run one to eight threads of lookups (the $(s,\cdot,\cdot)$ and
+$(s,p,\cdot)$ queries), of inserts of new triples with scattered subjects, and of
+readers beside one writer, for three seconds each on LUBM(10).
+
+\begin{figure}[t]
+\centering
+\input{gen/conc-plot}
+\caption{Lookups per second on LUBM(10) against threads (log-log).}
+\label{fig-conc}
+\end{figure}
+
+\input{gen/compare-conc}
+
+\stitle{Readers}.
+\sys serves 416 thousand lookups per second with one thread and 1.46 million with
+eight, 3.5 times more, and its one thread already beats every other engine at
+eight except Oxigraph in memory (460 thousand); at eight threads it serves 7.0,
+3.2, 6.1, and 3.9 times the lookups of Oxigraph on RocksDB, Oxigraph in memory,
+Jena, and SQLite.
+\stitle{Beside a writer}.
+Its eight readers still serve 1.39 million lookups per second while the writer
+inserts 111 thousand triples per second, 4.3 to 18.8 times the readers of the
+other engines.
+\stitle{Writers}.
+\sys's insert rate grows 3.6 times, from 264 to 950 thousand per second; its
+inserts bypass the write-ahead log here, while the others commit with their
+default durability, and Oxigraph's in-memory store inserts faster with one thread
+(679 thousand).
+Heavy queries scale less: a 16,000-row query goes from 148 to 330 per second
+with eight threads, bound by memory traffic.
+
+\subsection{RQ4: Semantic Search}
+
+\input{gen/static-knn}
+
+\input{gen/static-knnfig}
+
+On 38,092 Gene Ontology terms and 1,000 queries (Table~\ref{tab-knn}, Figure~\ref{fig-knn}), HNSW ($M{=}16$) reaches recall
+0.993 at 44\,$\mu$s, 51 times faster than the 2.2\,ms exact scan, for 3.9\,MiB of
+links; IVF over the B+ tree ($\nu{=}512$) needs 255\,$\mu$s for 0.929 and
+928\,$\mu$s for 0.976, about 2.7$\times$ the cost per scored row of a contiguous
+scan, the price of lists that page, cache, and update with the triples.
+Our first exact baseline used a scalar loop the compiler would not vectorize and
+took 8.3\,ms, which would have doubled every speed-up; we report against the
+vectorized 2.2\,ms.
+
+\begin{table}[t]
+\caption{Ten nearest terms under a class $c$: recall@10 / $\mu$s per query, for a query inside or outside $c$ and classes with at most 10 or more than 5,000 members (Gene Ontology). Bold marks the fastest exact or near-exact strategy.}
+\label{tab-hybrid}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & \multicolumn{2}{c}{query inside $c$} & \multicolumn{2}{c}{query outside $c$} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Strategy & $\le$10 & $>$5,000 & $\le$10 & $>$5,000 \\
+\midrule
+pre-filter, exact & \textbf{1.00 / 3} & 1.00 / 1,404 & \textbf{1.00 / 3} & 1.00 / 1,394 \\
+post-filter, IVF & 0.86 / 903 & 0.99 / 211 & 0.07 / 966 & 0.64 / 591 \\
+masked HNSW & 1.00 / 16,653 & \textbf{1.00 / 105} & 1.00 / 16,802 & \textbf{1.00 / 900} \\
+auto (threshold 4,096) & \textbf{1.00 / 3} & \textbf{1.00 / 95} & \textbf{1.00 / 3} & \textbf{1.00 / 860} \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\stitle{Exact pre-filtering for small classes, masked search for large}.
+Up to about 1,000 members, resolving the members through the intervals and scoring
+them exactly takes 3 to 62\,$\mu$s and is the exact answer, $10^2$ to $10^4$
+times faster than any index strategy.
+Post-filtering fails for outside queries (IVF recall 0.07 on the smallest classes,
+0.64 on the largest); above 5,000 members masked HNSW takes 105 to 900\,$\mu$s,
+exact, against 1.4\,ms for resolving and scoring.
+With a threshold of 4,096 members, auto matches the fastest strategy in every cell
+but one and is never slower than 0.9\,ms; the cell it loses (269\,$\mu$s against
+70\,$\mu$s) avoids a factor of 79 in its neighbor.
