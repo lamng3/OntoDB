@@ -1,21 +1,21 @@
 \begin{table*}[t]
-\caption{Query times on LUBM(10): the mean over 100 sampled constants per pattern shape (all 18 predicates for $(\cdot,p,\cdot)$), and the median of the four LUBM queries that return rows without inference. Row counts agree across engines.}
+\caption{Query times on LUBM(10): the mean over 100 sampled constants per pattern shape (all 18 predicates for $(\cdot,p,\cdot)$), and the median of the four LUBM queries that return rows without inference. Row counts agree across engines. Bold marks the best; a blue cell marks \sys{} as the best.}
 \label{tab-queries}
 \small
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
 Query & rows & \sys{} & Ox.\ RocksDB & Ox.\ memory & Jena TDB2 & SQLite \\
 \midrule
-$(s,\cdot,\cdot)$ & 7 & 3\,$\mu$s & 27\,$\mu$s & 11\,$\mu$s & 117\,$\mu$s & 13\,$\mu$s \\
-$(s,p,\cdot)$ & 2 & 2\,$\mu$s & 14\,$\mu$s & 9\,$\mu$s & 52\,$\mu$s & 11\,$\mu$s \\
-$(\cdot,\cdot,o)$ & 16,233 & 11.0\,ms & 35.7\,ms & 10.4\,ms & 23.7\,ms & 8.4\,ms \\
-$(\cdot,p,o)$ & 16,225 & 10.2\,ms & 19.4\,ms & 7.8\,ms & 24.8\,ms & 6.2\,ms \\
-$(\cdot,p,\cdot)$ & 70,720 & 70.8\,ms & 161.2\,ms & 41.2\,ms & 107.5\,ms & 35.5\,ms \\
+$(s,\cdot,\cdot)$ & 7 & \cellcolor{ours}\textbf{3\,$\mu$s} & 27\,$\mu$s & 11\,$\mu$s & 117\,$\mu$s & 13\,$\mu$s \\
+$(s,p,\cdot)$ & 2 & \cellcolor{ours}\textbf{2\,$\mu$s} & 14\,$\mu$s & 9\,$\mu$s & 52\,$\mu$s & 11\,$\mu$s \\
+$(\cdot,\cdot,o)$ & 16,233 & 11.0\,ms & 35.7\,ms & 10.4\,ms & 23.7\,ms & \textbf{8.4\,ms} \\
+$(\cdot,p,o)$ & 16,225 & 10.2\,ms & 19.4\,ms & 7.8\,ms & 24.8\,ms & \textbf{6.2\,ms} \\
+$(\cdot,p,\cdot)$ & 70,720 & 70.8\,ms & 161.2\,ms & 41.2\,ms & 107.5\,ms & \textbf{35.5\,ms} \\
 \midrule
-LUBM 1 & 4 & 9\,$\mu$s & 32\,$\mu$s & 12\,$\mu$s & 508\,$\mu$s & 18\,$\mu$s \\
-LUBM 3 & 6 & 11\,$\mu$s & 37\,$\mu$s & 13\,$\mu$s & 234\,$\mu$s & 18\,$\mu$s \\
-LUBM 2 (triangle) & 28 & 8.2\,ms & 275.1\,ms & 34.1\,ms & 120.1\,ms & 4.0\,ms \\
-LUBM 14 (scan) & 75,547 & 46.0\,ms & 88.1\,ms & 40.8\,ms & 138.7\,ms & 29.3\,ms \\
+LUBM 1 & 4 & \cellcolor{ours}\textbf{9\,$\mu$s} & 32\,$\mu$s & 12\,$\mu$s & 508\,$\mu$s & 18\,$\mu$s \\
+LUBM 3 & 6 & \cellcolor{ours}\textbf{11\,$\mu$s} & 37\,$\mu$s & 13\,$\mu$s & 234\,$\mu$s & 18\,$\mu$s \\
+LUBM 2 (triangle) & 28 & 8.2\,ms & 275.1\,ms & 34.1\,ms & 120.1\,ms & \textbf{4.0\,ms} \\
+LUBM 14 (scan) & 75,547 & 46.0\,ms & 88.1\,ms & 40.8\,ms & 138.7\,ms & \textbf{29.3\,ms} \\
 \bottomrule
 \end{tabular}
 \end{table*}

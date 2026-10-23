@@ -34,7 +34,26 @@ def thousands(n):
     return f"{n:,}"
 
 
+def hl(cells, higher_is_better=False, ours_index=0):
+    """cells: list of (value, text). The best cell is bold; if it is the first (OntoDB's), it is shaded too."""
+    vals = [v for v, _ in cells]
+    best = max(vals) if higher_is_better else min(vals)
+    out = []
+    for i, (v, text) in enumerate(cells):
+        if v == best:
+            text = f"\\textbf{{{text}}}"
+            if i == ours_index:
+                text = f"\\cellcolor{{ours}}{text}"
+        out.append(text)
+    return out
+
+
+LEGEND = " Bold marks the best; a blue cell marks \\sys{} as the best."
+
+
 def write(name, text):
+    if name in ("compare-queries.tex", "compare-load.tex", "compare-hier.tex", "compare-conc.tex"):
+        text = text.replace("}\n\\label{", LEGEND + "}\n\\label{", 1)
     (gen / name).write_text(text)
 
 
@@ -43,10 +62,23 @@ nocache = read("ontodb-nocache-lubm10.tsv")
 
 # Load and space
 out = ["\\begin{table}[t]\n\\caption{Bulk loading LUBM(10) (1.3 million triples). \\sys{} counts statements read; the others count distinct triples.}\n\\label{tab-load}\n\\small\n\\begin{tabular}{@{}lrrrr@{}}\n\\toprule\nEngine & triples & load (s) & disk (MiB) & RSS (MiB) \\\\\n\\midrule"]
-for k, name in ENGINES:
+load_cols = {}
+for col in ("load_s", "file_mib", "peak_rss_mib"):
+    vals = [float(data[k][0][col]) for k, _ in ENGINES]
+    pool_vals = [v for v in vals if v > 0]
+    load_cols[col] = min(pool_vals)
+for idx, (k, name) in enumerate(ENGINES):
     l = data[k][0]
-    disk = "---" if float(l["file_mib"]) == 0 else l["file_mib"]
-    out.append(f"{name} & {thousands(int(l['triples']))} & {l['load_s']} & {disk} & {l['peak_rss_mib']} \\\\")
+    cells = []
+    for col in ("load_s", "file_mib", "peak_rss_mib"):
+        v = float(l[col])
+        text = "---" if v == 0 else l[col]
+        if v != 0 and v == load_cols[col]:
+            text = f"\\textbf{{{text}}}"
+            if idx == 0:
+                text = f"\\cellcolor{{ours}}{text}"
+        cells.append(text)
+    out.append(f"{name} & {thousands(int(l['triples']))} & " + " & ".join(cells) + " \\\\")
 out.append("\\bottomrule\n\\end{tabular}\n\\end{table}\n")
 write("compare-load.tex", "\n".join(out))
 
@@ -64,11 +96,12 @@ for shape in ("s--", "sp-", "--o", "-po", "-p-"):
     cells = []
     for k, _ in ENGINES:
         ts = [data[k][1][q][1] for q in qs]
-        cells.append(t(sum(ts) / len(ts)))
-    out.append(f"{sym[shape]} & {thousands(round(rows))} & " + " & ".join(cells) + " \\\\")
+        m = sum(ts) / len(ts)
+        cells.append((m, t(m)))
+    out.append(f"{sym[shape]} & {thousands(round(rows))} & " + " & ".join(hl(cells)) + " \\\\")
 out.append("\\midrule")
 for q, label in (("q01", "LUBM 1"), ("q03", "LUBM 3"), ("q02", "LUBM 2 (triangle)"), ("q14", "LUBM 14 (scan)")):
-    out.append(f"{label} & {thousands(data['ontodb'][1][q][0])} & " + " & ".join(t(data[k][1][q][1]) for k, _ in ENGINES) + " \\\\")
+    out.append(f"{label} & {thousands(data['ontodb'][1][q][0])} & " + " & ".join(hl([(data[k][1][q][1], t(data[k][1][q][1])) for k, _ in ENGINES])) + " \\\\")
 out.append("\\bottomrule\n\\end{tabular}\n\\end{table*}\n")
 write("compare-queries.tex", "\n".join(out))
 
@@ -111,8 +144,9 @@ for b in ("1", "2-9", "10-99", "100-999", "1000+"):
     ans = sum(r[1] for r in rows) / n
     ids = sum(cls_on[r[0]][1] for r in rows) / n
     strs = sum(cls_on[r[0]][2] for r in rows) / n
-    cells = [t(sum(r[2] for r in tab[b]) / n) for tab in tabs]
-    out.append(f"{b} & {thousands(round(ans))} & {t(ids)} & {t(strs)} & " + " & ".join(cells) + " \\\\")
+    means = [sum(r[2] for r in tab[b]) / n for tab in tabs]
+    shown = hl([(strs, t(strs))] + [(m, t(m)) for m in means])
+    out.append(f"{b} & {thousands(round(ans))} & \\emph{{{t(ids)}}} & " + " & ".join(shown) + " \\\\")
 out.append("\\bottomrule\n\\end{tabular}\n\\end{table*}\n")
 write("compare-hier.tex", "\n".join(out))
 for old in ("compare-patterns.tex", "compare-lubm.tex"):
@@ -146,9 +180,20 @@ def k(v):
 
 
 rows = ["\\begin{table}[t]\n\\caption{Concurrency on LUBM(10): lookups per second with 1 and 8 reader threads, readers' lookups per second with one writer running, and inserts per second with 1 and 8 writer threads (one triple per transaction; \\sys's inserts are not logged, and Jena's commit forces the journal to disk). The machine has 8 performance cores.}\n\\label{tab-conc}\n\\small\n\\resizebox{\\columnwidth}{!}{%\n\\begin{tabular}{@{}lrrrrrr@{}}\n\\toprule\n & \\multicolumn{2}{c}{lookups/s} & \\multicolumn{2}{c}{readers + 1 writer} & \\multicolumn{2}{c}{inserts/s} \\\\\n\\cmidrule(lr){2-3}\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}\nEngine & 1 & 8 & 1 & 8 & 1 & 8 \\\\\n\\midrule"]
-for key, name, _, _ in conc_engines:
+conc_cols = [("read", 1, 0), ("read", 8, 0), ("mixed", 1, 0), ("mixed", 8, 0), ("insert", 1, 1), ("insert", 8, 1)]
+conc_best = [max(conc[key][w][t_][i] for key, _, _, _ in conc_engines) for w, t_, i in conc_cols]
+for idx, (key, name, _, _) in enumerate(conc_engines):
     d = conc[key]
-    rows.append(f"{name} & {k(d['read'][1][0])} & {k(d['read'][8][0])} & {k(d['mixed'][1][0])} & {k(d['mixed'][8][0])} & {k(d['insert'][1][1])} & {k(d['insert'][8][1])} \\\\")
+    cells = []
+    for (w, t_, i), best in zip(conc_cols, conc_best):
+        v = d[w][t_][i]
+        text = k(v)
+        if v == best:
+            text = f"\\textbf{{{text}}}"
+            if idx == 0:
+                text = f"\\cellcolor{{ours}}{text}"
+        cells.append(text)
+    rows.append(f"{name} & " + " & ".join(cells) + " \\\\")
 rows.append("\\bottomrule\n\\end{tabular}}\n\\end{table}\n")
 write("compare-conc.tex", "\n".join(rows))
 print("concurrency tables written")
@@ -179,7 +224,15 @@ rows.append(("lookups per second, 8 threads", [conc["ontodb"]["read"][8][0] / co
 rows.append(("lookups per second, 8 readers + 1 writer", [conc["ontodb"]["mixed"][8][0] / conc[k_]["mixed"][8][0] for k_ in okeys]))
 out = ["\\begin{table}[t]\n\\caption{Selected results: how many times faster \\sys{} is than each other engine (the time of the other engine divided by \\sys's; for throughput, \\sys's divided by the other's). All tables of this section give every measurement.}\n\\label{tab-glance}\n\\small\n\\resizebox{\\columnwidth}{!}{%\n\\begin{tabular}{@{}lrrrr@{}}\n\\toprule\n & Ox.\\ RocksDB & Ox.\\ memory & Jena TDB2 & SQLite \\\\\n\\midrule"]
 for label, ratios in rows:
-    out.append(label + " & " + " & ".join(f"{r:.1f}$\\times$" for r in ratios) + " \\\\")
+    cells = []
+    for r in ratios:
+        text = f"{r:.1f}$\\times$"
+        if r >= 5:
+            text = f"\\textbf{{{text}}}"
+        if r > 1:
+            text = f"\\cellcolor{{ours!{min(100, 30 + int(r * 3))}}}{text}"
+        cells.append(text)
+    out.append(label + " & " + " & ".join(cells) + " \\\\")
 out.append("\\bottomrule\n\\end{tabular}}\n\\end{table}\n")
 write("compare-glance.tex", "\n".join(out))
 print("glance written")
