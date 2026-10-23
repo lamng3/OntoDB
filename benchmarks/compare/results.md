@@ -95,4 +95,4 @@ Lookups are the `(s,.,.)` and `(s,p,.)` queries. Inserts are one new triple with
 
 ## What it says
 
-See the paper's Section 8 (Experimental Study) and `paper/make-compare.py` for how every number is derived from `raw/`.
+See the paper's Section 9 (Experimental Study) and `paper/make-compare.py` for how every number is derived from `raw/`.
