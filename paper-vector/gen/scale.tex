@@ -1,0 +1,18 @@
+\begin{table}[t]
+\caption{Filtered queries per second on one to eight threads over the whole workload: the auto rule (C++ threads, one shared index) against FAISS's exact scan and HNSW with an ID selector (Python threads; FAISS releases the interpreter lock while it searches).}
+\label{tab-scale}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{auto} & \multicolumn{2}{c}{FAISS exact} & \multicolumn{2}{c}{FAISS HNSW} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Ontology & 1 & 8 & 1 & 8 & 1 & 8 \\
+\midrule
+GO & 6,144 & 31k & 9,106 & 42k & 11k & 43k \\
+HPO & 15k & 88k & 17k & 46k & 15k & 40k \\
+Uberon & 21k & 119k & 21k & 51k & 17k & 40k \\
+ChEBI & 1,327 & 7,576 & 1,085 & 5,091 & 7,001 & 35k \\
+\bottomrule
+\end{tabular}}
+\end{table}

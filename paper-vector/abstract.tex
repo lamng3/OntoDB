@@ -1,0 +1,27 @@
+\begin{abstract}
+Ontologies pair a class hierarchy with names that embeddings can compare, and a
+natural question combines the two: which terms are closest in meaning to a given
+term \emph{and lie under a given class}?
+Vector databases answer it by passing the index a filter, and approximate indexes
+silently lose recall when the filter is selective: on four ontologies, FAISS
+indexes asked for the ten nearest terms under a class return on average 61\% (IVF)
+and 64\% (HNSW) of the right answers, and 2\% (HNSW) for a query that lies outside a
+small class; a 16 times larger beam raises that to only 20\%.
+This paper presents a vector search that lives inside an ontology store and uses
+the hierarchy as the filter.
+(1) We prove that no linear order of points keeps nearest neighbors close, and
+measure how few a sorted index of an ontology puts within a short scan.
+(2) We label the class hierarchy with postorder intervals in the store's own
+B+ tree, so that a class's members are a few range scans and membership is a
+binary search, and we store IVF posting lists as key ranges of the same tree.
+(3) We show that in an ontology the class filter is correlated with the vectors, so
+the independence assumption behind filtered-search costing fails, and give
+four filtering strategies, a cost model for the crossover between resolving the
+class and testing it per row, and a rule that picks between them.
+(4) We evaluate against FAISS, hnswlib, and DuckDB on the Gene Ontology, the Human
+Phenotype Ontology, Uberon, and ChEBI (218,723 terms), with queries that are
+stored terms and queries that are not.
+Across 958 queries our rule returns recall 0.999 and never falls below 0.99, with a
+median of 26\,$\mu$s; for classes of at most ten members it is 33 times faster than
+an exact FAISS scan with an ID selector (2.1 against 70\,$\mu$s).
+\end{abstract}

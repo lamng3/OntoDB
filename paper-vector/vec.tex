@@ -1,0 +1,50 @@
+% Built on the VLDB template (acmart with pvldb.sty), as the Hermes and OntoDB papers are.
+
+\documentclass[sigconf, nonacm]{acmart}
+
+\usepackage{pvldb}
+\input{commands}
+
+\renewcommand\vldbdoi{XX.XX/XXX.XX}
+\renewcommand\vldbpages{XXX-XXX}
+\renewcommand\vldbavailabilityurl{https://github.com/lamng3/OntoDB}
+
+\begin{document}
+
+\title{Meaning Under a Class: Hierarchy-Filtered\\Vector Search Inside an Ontology Store}
+
+\author{Lam Nguyen}
+\affiliation{%
+  \institution{Case Western Reserve University}
+  \city{Cleveland}
+  \state{Ohio}
+  \country{USA}
+}
+\email{ltn18@case.edu}
+
+\input{abstract}
+
+\keywords{ontology, vector search, filtered nearest neighbor search, class hierarchy, B+ tree}
+
+\maketitle
+
+\vldbtopmatter
+
+\input{sec-intro}
+\input{sec-pre}
+\input{sec-order}
+\input{sec-filter}
+\input{sec-index}
+\input{sec-exp}
+\input{sec-related}
+\input{sec-conclude}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\clearpage
+\appendix
+\section*{Appendix}
+\input{sec-apx}
+
+\end{document}

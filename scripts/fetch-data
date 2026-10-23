@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Download Pizza, generate LUBM(1), or fetch the Gene Ontology.
+"""Download Pizza, generate LUBM(1), or fetch the Gene Ontology or another OBO ontology.
 
-Usage: scripts/fetch-data pizza|lubm|lubm-ontology|go
+Usage: scripts/fetch-data pizza|lubm|lubm-ontology|go|hpo|uberon|chebi|mondo
 """
 
 import re
@@ -83,17 +83,19 @@ def lubm():
 GO_URL = "https://purl.obolibrary.org/obo/go/go-basic.obo"
 OBO = "http://purl.obolibrary.org/obo/"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
+# Ontologies of the OBO Foundry that the vector-search benchmarks use besides the Gene Ontology.
+OBO_ONTOLOGIES = {
+    "hpo": ("https://purl.obolibrary.org/obo/hp.obo", "hp.obo"),
+    "uberon": ("https://purl.obolibrary.org/obo/uberon/basic.obo", "uberon-basic.obo"),
+    "chebi": ("https://purl.obolibrary.org/obo/chebi.obo", "chebi.obo"),
+    "mondo": ("https://purl.obolibrary.org/obo/mondo.obo", "mondo.obo"),
+}
 
 
-def go():
-    """Gene Ontology (basic, acyclic) as N-Triples: rdfs:subClassOf for every
-    is_a edge and rdfs:label for every name. Obsolete terms are dropped.
-    Also writes go.terms.tsv (IRI, name) for the embedding script."""
-    out = DOWNLOADS / "go"
-    obo = out / "go-basic.obo"
-    if not obo.exists():
-        fetch(GO_URL, obo)
-    iri = lambda go_id: "<" + OBO + go_id.replace(":", "_") + ">"
+def obo_to_nt(obo, out, stem):
+    """An OBO file as N-Triples: rdfs:subClassOf for every is_a edge and rdfs:label for every name,
+    obsolete terms dropped. Also writes <stem>.terms.tsv (IRI, name) for the embedding script."""
+    iri = lambda term_id: "<" + OBO + term_id.replace(":", "_") + ">"
     terms = {}
     cur = None
     in_term = False
@@ -106,7 +108,7 @@ def go():
             continue
         key, _, value = line.partition(": ")
         if key == "id":
-            cur = {"id": value, "name": "", "is_a": [], "obsolete": False}
+            cur = {"id": value, "name": "", "is_a": [], "obsolete": False, "synonyms": []}
             terms[value] = cur
         elif cur is None:
             continue
@@ -114,19 +116,45 @@ def go():
             cur["name"] = value
         elif key == "is_a":
             cur["is_a"].append(value.split(" ! ")[0].strip())
+        elif key == "synonym":
+            quoted = value.split('"')
+            if len(quoted) >= 3:
+                cur["synonyms"].append(quoted[1])
         elif key == "is_obsolete" and value == "true":
             cur["obsolete"] = True
-    live = {i: t for i, t in terms.items() if not t["obsolete"]}
+    live = {i: t for i, t in terms.items() if not t["obsolete"] and t["name"]}
+    esc = lambda text: text.replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))
     edges = 0
-    with (out / "go.nt").open("w", encoding="utf-8") as nt, (out / "go.terms.tsv").open("w", encoding="utf-8") as tsv:
-        for go_id, term in live.items():
-            nt.write(f'{iri(go_id)} <{RDFS}label> "{term["name"].replace(chr(92), chr(92) * 2).replace(chr(34), chr(92) + chr(34))}" .\n')
-            tsv.write(f"{iri(go_id)}\t{term['name']}\n")
+    with (out / f"{stem}.nt").open("w", encoding="utf-8") as nt, (out / f"{stem}.terms.tsv").open("w", encoding="utf-8") as tsv, (out / f"{stem}.synonyms.tsv").open("w", encoding="utf-8") as syn:
+        for term_id, term in live.items():
+            nt.write(f'{iri(term_id)} <{RDFS}label> "{esc(term["name"])}" .\n')
+            tsv.write(f"{iri(term_id)}\t{term['name']}\n")
+            for text in term["synonyms"]:
+                syn.write(f"{iri(term_id)}\t{text}\n")
             for parent in term["is_a"]:
                 if parent in live:
-                    nt.write(f"{iri(go_id)} <{RDFS}subClassOf> {iri(parent)} .\n")
+                    nt.write(f"{iri(term_id)} <{RDFS}subClassOf> {iri(parent)} .\n")
                     edges += 1
-    print(f"{len(live)} terms, {edges} is_a edges -> {out / 'go.nt'}")
+    print(f"{len(live)} terms, {edges} is_a edges -> {out / (stem + '.nt')}")
+
+
+def go():
+    """Gene Ontology (basic, acyclic) as N-Triples (see obo_to_nt)."""
+    out = DOWNLOADS / "go"
+    obo = out / "go-basic.obo"
+    if not obo.exists():
+        fetch(GO_URL, obo)
+    obo_to_nt(obo, out, "go")
+
+
+def obo(name):
+    """One of OBO_ONTOLOGIES into data/downloads/<name>/<name>.nt and <name>.terms.tsv."""
+    url, filename = OBO_ONTOLOGIES[name]
+    out = DOWNLOADS / name
+    source = out / filename
+    if not source.exists():
+        fetch(url, source)
+    obo_to_nt(source, out, name)
 
 
 def lubm_ontology():
@@ -139,10 +167,12 @@ def lubm_ontology():
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm", "lubm-ontology", "go"):
-        print("usage: scripts/fetch-data pizza|lubm|lubm-ontology|go", file=sys.stderr)
+    if len(sys.argv) != 2 or sys.argv[1] not in ("pizza", "lubm", "lubm-ontology", "go", *OBO_ONTOLOGIES):
+        print("usage: scripts/fetch-data pizza|lubm|lubm-ontology|go|" + "|".join(OBO_ONTOLOGIES), file=sys.stderr)
         return 2
-    if sys.argv[1] == "pizza":
+    if sys.argv[1] in OBO_ONTOLOGIES:
+        obo(sys.argv[1])
+    elif sys.argv[1] == "pizza":
         pizza()
     elif sys.argv[1] == "go":
         go()

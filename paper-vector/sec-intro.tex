@@ -1,0 +1,74 @@
+\section{Introduction}
+\label{sec-intro}
+
+An ontology is a class hierarchy whose classes have names, and names can be
+embedded: the Gene Ontology, the Human Phenotype Ontology, and ChEBI each give tens
+or hundreds of thousands of terms a vector, so that terms close in meaning are close
+in cosine similarity.
+Tasks such as ontology matching, term normalization, and retrieval over annotated
+data then ask for \emph{the terms nearest to a given term that lie under a given
+class}: the nearest phenotype to ``short stature'' under ``abnormality of the
+skeletal system'', the nearest process to ``apoptotic process'' under ``cell
+death''.
+The hierarchy defines the filter, and the vectors rank what passes it.
+
+Vector databases answer such queries by giving the index a predicate, and they leave
+four problems open.
+\textbf{C1. A sorted index does not hold meaning.}
+Triple stores answer patterns with range scans over sorted permutations, and it is
+tempting to believe that terms close in meaning are close in the order, so that a
+scan could serve similarity.
+No linear order can keep all neighbors close (Section~\ref{sec-order}), and on four
+ontologies the best order we tried finds 38\% to 56\% of a term's ten nearest
+neighbors within 100 positions.
+\textbf{C2. Filtered approximate search loses recall without warning.}
+An IVF or graph index with a filter probes the lists or the walk nearest the query;
+when few of the terms there pass the filter, it returns fewer, worse answers and
+reports no error.
+On our workload FAISS indexes with an ID selector return recall 0.61 (IVF) and 0.64
+(HNSW), and 0.02 for HNSW when the query lies outside a small class.
+\textbf{C3. The filter is correlated with the vectors.}
+Filtered search is costed by assuming the filter is independent of the similarity,
+so that $k/f$ candidates suffice for a filter that passes a fraction $f$.
+In an ontology the neighbors of a term lie under the term's own ancestors, so the
+estimate is wrong in both directions (Section~\ref{sec-filter}).
+\textbf{C4. The filter lives in another system.}
+A vector database knows nothing of the hierarchy: the caller must resolve a class to
+its members, keep a table of them, and keep it current.
+
+\begin{example}
+\label{exa-motivation}
+Let $q$ be \emph{apoptotic process} and $c$ the class \emph{cell death} in the Gene
+Ontology.
+A vector index returns neighbors from anywhere in the ontology, and a post-filter
+keeps those under $c$ only if enough of them are.
+For a query from outside a class of at most ten members, an ID-selector IVF returns
+on average 5\% of the right answers.
+Here the engine finds the 97 members of $c$ with one range scan of the B+ tree that
+holds the triples, scores them exactly, and returns \emph{apoptotic process involved
+in development} (cosine 0.865) first, in under a millisecond in a web page.
+\end{example}
+
+\stitle{Contributions}.
+We build the filter into the store.
+\begin{enumerate}
+\item \textbf{A bound and a measurement on order} (Section~\ref{sec-order}): every
+  linear order of a graph's vertices separates some edge by $(N{-}1)/D$ positions,
+  and on four ontologies no order of the terms holds more than 56\% of the ten
+  nearest neighbors within 100 positions.
+\item \textbf{The hierarchy as a membership test} (Section~\ref{sec-filter}):
+  postorder intervals in the engine's B+ tree make a class's members a few range
+  scans and membership a binary search, which lets a vector search test the filter
+  per row without resolving it.
+\item \textbf{A filtering rule that does not lose recall} (Section~\ref{sec-filter}):
+  four strategies, a measurement that the class filter is correlated with the
+  vectors, a cost model for the crossover between resolving the class and testing
+  it, and a rule that picks between them and is exact for the classes where
+  approximate indexes fail.
+\item \textbf{Vector indexes whose lists live in the triple tree}
+  (Section~\ref{sec-index}): IVF posting lists stored as key ranges of the same
+  B+ tree, so that they page, cache, and latch with the triples.
+\end{enumerate}
+We evaluate against FAISS, hnswlib, and DuckDB on four ontologies, with queries that are
+stored terms and queries that are not (Section~\ref{sec-exp}).
+The code, data scripts, and benchmark programs are at the artifact URL above.

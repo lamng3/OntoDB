@@ -1,0 +1,16 @@
+\begin{table}[t]
+\caption{The auto rule at other thresholds: mean microseconds per query over every class size and query kind (all strategies return recall at least 0.99 except as noted).}
+\label{tab-threshold}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Threshold & GO & HPO & Uberon & ChEBI \\
+\midrule
+256 & 609 & 246 & 301 & 6.9\,k \\
+1,024 & 456 & 169 & 71 & 3.2\,k \\
+4,096 & \cellcolor{ours}\textbf{111} & \cellcolor{ours}\textbf{59} & \cellcolor{ours}\textbf{41} & 533 \\
+16,384 & 148 & 62 & 79 & \cellcolor{ours}\textbf{426} \\
+65,536 & 180 & 114 & 79 & 567 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,201 @@
+\section{Experimental Study}
+\label{sec-exp}
+
+We evaluate the filtered search along four research questions.
+\begin{itemize}
+\item \textbf{[RQ1] Order}: how much of a term's neighborhood does a sorted order of an
+  ontology hold? (Table~\ref{tab-order}, Section~\ref{sec-order}.)
+\item \textbf{[RQ2] Filtered search}: what do the strategies return and cost, against
+  FAISS filtering with ID selectors?
+\item \textbf{[RQ3] The rule}: is the class filter correlated with the vectors, does testing
+  it per row beat resolving it, and where is the crossover?
+\item \textbf{[RQ4] The indexes}: what do IVF with lists in the triple tree and HNSW cost
+  against FAISS and hnswlib, and does the design scale to 218,723 terms?
+\end{itemize}
+
+\stitle{Setup}.
+The ontologies are the Gene Ontology~\cite{ashburner2000} (38,092 terms, release
+2026-07-26 without obsolete terms), the Human Phenotype Ontology~\cite{kohler2021}
+(19,894), Uberon~\cite{mungall2012} (15,047), and ChEBI~\cite{hastings2016} (218,723),
+each with the \texttt{is\_a} edges as the hierarchy and the term names embedded by
+\texttt{all-MiniLM-L6-v2}~\cite{reimers2019} into 384 dimensions on a CPU.
+For each ontology and each of five sizes of $|\desc(c)|$ ($\le$10, 11--100, 101--1,000,
+1,001--5,000, $>$5,000) we draw up to 20 classes that have subclasses, and for each class
+three queries: a stored term inside the class, one outside it, and the embedding of a
+synonym of a stored member (5,000 synonyms sampled per ontology), which is not a stored
+vector.
+Answers are scored against exact search over the class's members, with the query term
+excluded; there are 958 queries per strategy.
+OntoDB uses IVF with $\nu=2.6\sqrt N$ lists and $\rho=16$, HNSW with $M{=}16$,
+construction beam 200, and $\ef{=}64$, and the auto rule with $\theta=4{,}096$; FAISS
+1.15.1 uses \texttt{IndexFlatIP}, \texttt{IndexIVFFlat} (same $\nu$, nprobe 16), and
+\texttt{IndexHNSWFlat} (same $M$, efSearch 64), each searched with an
+\texttt{IDSelectorBitmap} of the class's members; hnswlib 0.8.0 appears in the unfiltered
+comparison.
+The members of a class for FAISS come from a descendant table built outside the timer,
+which favors FAISS.
+Every time is the mean of three runs after one warm-up, on one thread of an Apple M2 Pro
+with 16\,GiB; FAISS is called once per query from Python, and its call overhead (about
+10\,$\mu$s) is included.
+
+\subsection{RQ2: Filtered Search}
+
+\input{gen/filtered}
+
+\stitle{Approximate indexes lose recall silently}.
+Table~\ref{tab-filtered} and Figure~\ref{fig-recall} give the result.
+Over the 958 queries FAISS's IVF and HNSW with an ID selector return recall 0.61 and 0.64,
+and 59\% and 52\% of their queries are below 0.99.
+The loss is worst where the filter is most selective and the query is far from it: for
+a query outside a class of at most ten members they return 0.05 and 0.02.
+A larger budget does not repair it (Table~\ref{tab-wide}): with half of all lists probed,
+IVF reaches 0.52 for those queries at three times the time, and HNSW with a beam of 1,024
+reaches 0.20 at 26 times the time, because the walk and the probed lists are the ones
+near the query, where no member lives.
+Over all queries the wide IVF reaches recall 0.91 in 204\,$\mu$s on average, the same time as
+the rule, and 19\% of its queries are still below 0.99; the wide HNSW reaches 0.81 in 1.2\,ms.
+
+\begin{figure}[t]
+\centering
+\input{gen/recall-plot}
+\caption{Recall@10 for queries outside the class, by number of classes below it (pooled over the four ontologies).}
+\label{fig-recall}
+\end{figure}
+
+\input{gen/wide}
+
+\stitle{Why}.
+Table~\ref{tab-mechanism} shows the mechanism for IVF.
+The lists an IVF index probes are the ones nearest the query, and the members of a small
+class are somewhere else: for a query outside a class of at most ten members (four on
+average), the 16 probed lists hold 0.2 of them, and outside a class of 11 to 100 (31 on
+average) 1.1, where the answer needs ten.
+For a query inside, they hold 3.5 of four and 19 of 31.
+An index that cannot find allowed rows in the region it searches returns what it has,
+and a filtered HNSW walk behaves the same way: it fills its beam with near nodes that are
+not members.
+
+\input{gen/mechanism}
+
+\begin{figure}[t]
+\centering
+\input{gen/budget-plot}
+\caption{What more search effort buys FAISS on queries outside classes of up to 1,000 members: recall@10 against mean microseconds, pooled over the ontologies, for four IVF and four HNSW budgets, and the two strategies of the rule.}
+\label{fig-budget}
+\end{figure}
+
+\stitle{A relational baseline}.
+DuckDB with a closure table of (class, member) pairs and one SQL statement per query, which
+joins the class's members to their vectors and orders by inner product, is exact like
+pre-filtering and has nothing to lose recall: its mean is 4.0\,ms and its median 0.97\,ms,
+0.7\,ms for classes of at most ten members, where the rule takes 2.1\,$\mu$s, and 28\,ms
+for classes above 5,000.
+The hierarchy is the same in both; the difference is that a range scan of a B+ tree that
+already holds the labels replaces a join, and a dot-product loop replaces a query plan.
+\begin{figure}[t]
+\centering
+\input{gen/latency-plot}
+\caption{Mean microseconds per query by number of classes below $c$, pooled over the ontologies and query kinds (log scale).}
+\label{fig-latency}
+\end{figure}
+
+\stitle{Interval filtering is exact and fast where it matters}.
+The auto rule returns recall 0.999, and none of its 958 queries is below 0.99; its median
+is 26\,$\mu$s and its mean 206\,$\mu$s.
+An exact FAISS scan with the same selector has median 60\,$\mu$s and mean 300\,$\mu$s, so
+the rule is 2.3 times faster at the median and 1.5 times on average, while the approximate
+indexes, which are 4 to 6 times faster than the rule on average (50 and 36\,$\mu$s), are
+wrong more often than right.
+The gain is largest for small classes: with at most ten members, pre-filtering takes
+2.1\,$\mu$s, 33 times less than the 70\,$\mu$s of the FAISS scan, which must test a
+bitmap against all $N$ rows.
+From 1,001 to 5,000 members the FAISS scan is faster than pre-filtering (214 against
+244\,$\mu$s inside) and than the rule (396\,$\mu$s inside, 652 outside);
+above 5,000 members the rule's masked HNSW beats the exact scan for queries inside the
+class (456 against 2,000\,$\mu$s) and matches it for queries outside (1.9 against 2.0\,ms).
+Synonym queries, whose vectors are not stored, behave like inside queries.
+
+\subsection{RQ3: The Rule}
+
+Table~\ref{tab-correlation} shows the correlation: for a query inside a class of 101 to
+1,000 members, 31\% of the unfiltered top 100 lie under the class, where an independent
+filter would pass 1.2\% of the terms, and for a query outside it 1\%; for the largest
+classes 59\% inside against 33\% expected, and 24\% outside.
+The independence estimate $k/f(c)$ of the candidates a post-filter needs is therefore too
+high inside and too low outside, and the post-filtering strategies show it: post-filtered
+HNSW takes 34.5\,ms on average because it must widen until it finds $k$ allowed rows, and
+post-filtered IVF has recall 0.61 because it stops widening too soon.
+
+\input{gen/resolve}
+
+\noindent
+Testing the filter per row costs the same as resolving it into a bitmap up to 5,000
+members (Table~\ref{tab-resolve}) and 2.7 times less above, where resolving takes more
+time than the walk it serves.
+The cost model of Section~\ref{sec-filter} predicts the crossover: the mean pre-filter
+cost per member is $\gamma_m=0.15\,\mu$s (median 0.11), and the masked walk over classes of
+more than 5,000 members takes $\gamma_h=506\,\mu$s for queries inside, 615 for synonyms, and
+1,942 for outside queries, so $\theta=\gamma_h/\gamma_m$ is about 3,400 to 13,000.
+
+\input{gen/threshold}
+
+\input{gen/model}
+
+\noindent
+Table~\ref{tab-threshold} confirms it: a threshold of 4,096 is best on the Gene Ontology,
+the Human Phenotype Ontology, and Uberon, and 16,384 on ChEBI, whose walks are costlier;
+256 and 1,024 are 1.7 to 7 times slower than the best, and 65,536 is 1.3 to 1.9 times
+slower.
+A single threshold of 4,096 is within 25\% of the best on all four.
+
+\stitle{The number of neighbors}.
+Table~\ref{tab-k} varies $k$ on the Gene Ontology: asking for one neighbor or fifty changes
+the approximate indexes' recall by at most 0.1 (0.70 to 0.55 for IVF), and the rule stays
+exact, at a mean of 107 to 115\,$\mu$s.
+
+\input{gen/k}
+
+\stitle{Another embedding model}.
+Table~\ref{tab-model} repeats the study on the Gene Ontology and the Human Phenotype
+Ontology with \texttt{all-mpnet-base-v2}, a larger model with 768 dimensions, and the picture
+holds: FAISS's IVF and HNSW return recall 0.64 to 0.71, the rule returns 1.00, and the
+correlation is as strong (0.30 and 0.37 of the unfiltered top 100 under the class for inside
+queries, 0.02 and 0.05 for outside).
+
+\stitle{Threats to validity}.
+The members FAISS filters with come from a table built outside the timer, which favors it;
+FAISS and DuckDB are called from Python, whose per-call overhead (about 10\,$\mu$s) matters
+for the 2\,$\mu$s queries; each index is built once, so HNSW's randomness is one draw;
+the ontologies are four of the OBO Foundry's, with names embedded by two sentence models,
+and the queries are sampled by class size, not by use.
+The comparison with FAISS's approximate indexes is one of default-style settings and of a
+wide budget, not of tuned ones.
+
+\subsection{RQ4: The Indexes}
+
+\input{gen/index}
+
+\noindent
+Table~\ref{tab-index} compares the indexes unfiltered.
+Called one query at a time, \sys's exact scan is 2.0 times slower than FAISS's, its IVF
+2.8 to 4.4 times slower, and its HNSW 2.0 to 4.2 times slower on the three smaller
+ontologies and 0.8 times (faster) on ChEBI; recalls match to within 0.01.
+The IVF gap is the price of the design: each list entry is a decoded 24-byte key and a
+random read of the vector, about 2.7 times the cost per scored row of a contiguous list,
+bought in exchange for lists that page, cache, and latch with the triples and need no
+second copy of the data.
+Building is slower too (IVF 115\,s and HNSW 142\,s on ChEBI against 5 and 83\,s).
+Batching favors FAISS further, since its flat scan becomes a matrix product (Appendix,
+Table~\ref{tab-index-batched}).
+On ChEBI, 218,723 terms and 320\,MiB of vectors, the rule still returns recall 0.99 or
+more on every query, with a mean of 543\,$\mu$s (FAISS's exact scan: 846\,$\mu$s).
+
+\input{gen/scale}
+
+\noindent
+On eight threads (Table~\ref{tab-scale}) the rule scales 5.0 to 5.9 times on every ontology,
+because its search shares only the read-only index and the engine's latch-free buffer pool;
+FAISS's exact scan scales 2.4 to 4.7 times through Python threads.
+At eight threads the rule serves 1.9, 2.3, and 1.5 times the queries of FAISS's exact
+scan on HPO, Uberon, and ChEBI, and 0.7 times on the Gene Ontology, where the exact
+scan is faster at one thread as well.

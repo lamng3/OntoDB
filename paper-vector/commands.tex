@@ -1,0 +1,41 @@
+% Packages and macros, following the conventions of the KROMA, MOIRA, and Hermes papers.
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\definecolor{ours}{HTML}{DCEBFA}  % light blue: where OntoDB is best
+\usepackage{xspace}
+\usepackage{balance}
+\usepackage{pgfplots}
+\usepackage[ruled,linesnumbered,noend]{algorithm2e}
+\pgfplotsset{compat=1.17}
+\usetikzlibrary{positioning,arrows.meta}
+
+% Long identifiers must not overflow the narrow columns.
+\setlength{\emergencystretch}{2em}
+
+% Tight layout, as in the MOIRA and Hermes papers: no stretched columns, small caption gaps,
+% compact lists and floats. (acmart forbids titlesec.)
+\raggedbottom
+\usepackage[skip=0.5ex]{caption}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{3pt}
+\usepackage{enumitem}
+\setlist{nosep, leftmargin=*}
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{6pt plus 2pt minus 2pt}
+\setlength{\dbltextfloatsep}{8pt plus 2pt minus 2pt}
+
+\newcommand{\sys}{\textsc{OntoDB}\xspace}
+\newcommand{\sparql}{SPARQL\xspace}
+\newcommand{\kw}[1]{{\ensuremath{\mathsf{#1}}}\xspace}
+\newcommand{\stitle}[1]{\vspace{1.2ex}\noindent{\bf #1}}
+\newcommand{\ie}{\emph{i.e.,}\xspace}
+\newcommand{\eg}{\emph{e.g.,}\xspace}
+\newcommand{\desc}{\mathrm{desc}}
+\newcommand{\po}{\mathit{po}}
+\newcommand{\lo}{\mathit{lo}}
+\newcommand{\ef}{\mathit{ef}}

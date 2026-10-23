@@ -1,0 +1,59 @@
+\section{Preliminaries}
+\label{sec-pre}
+
+\begin{table}[t]
+\caption{Notation.}
+\label{tab-notation}
+\small
+\begin{tabular}{@{}p{2.1cm}p{5.65cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$H=(\mathcal{C},E)$ & the class hierarchy, a DAG of classes and subclass edges \\
+$\desc(c)$ & the classes at or below $c$, including $c$ \\
+$\po(c)$, $\lo(c)$ & postorder number of $c$; smallest number in its subtree of the spanning forest \\
+$I(c)$ & the set of intervals that covers the numbers of $\desc(c)$ \\
+$f(c)$ & fraction of terms below $c$: $|\desc(c)|/N$ \\
+$N$, $d$ & number of terms with vectors; vector dimension \\
+$\mathbf{v}(t)$, $\mathrm{sim}$ & unit vector of term $t$; cosine similarity \\
+$q$, $k$ & the query vector; the number of neighbors asked for \\
+$\mathrm{near}(q,c,k)$ & the $k$ terms of $\desc(c)$ nearest to $q$ \\
+$\nu$, $\rho$ & IVF: number of lists; lists probed per query \\
+$M$, $\ef$ & HNSW: links per node; search beam width \\
+$G$, $D$ & a graph and its diameter \\
+$\gamma_m$, $\gamma_h$ & cost per member of resolving a class; cost of a masked walk \\
+$\theta$ & the auto rule's threshold on $|\desc(c)|$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\stitle{Terms, classes, vectors}.
+An ontology has classes $\mathcal{C}$ related by \texttt{rdfs:subClassOf} edges $E$,
+forming a directed graph $H$ in which cycles are collapsed (classes on a cycle are
+equivalent).
+We write $\desc(c)$ for the classes at or below $c$, including $c$.
+Each of $N$ terms, here the classes of the ontology, has a name, and an embedding model
+maps the name to a unit vector $\mathbf{v}(t)\in\mathbb{R}^d$; the similarity of two
+terms is the cosine $\mathbf{v}(t)\cdot\mathbf{v}(u)$.
+
+\begin{definition}[Hierarchy-filtered nearest neighbors]
+\label{def-near}
+For a query vector $q$, a class $c$, and $k\ge 1$, $\mathrm{near}(q,c,k)$ is the
+set of $k$ terms $t\in\desc(c)$ with the largest $q\cdot\mathbf{v}(t)$.
+\end{definition}
+
+\noindent
+The query vector is the embedding of a stored term, as in ontology matching between
+two parts of one ontology, or of text that is not a term, such as a synonym or a word
+from a document.
+A term used as the query is never its own neighbor.
+An answer $A$ is judged by its \emph{recall}, $|A\cap\mathrm{near}(q,c,k)|/k$, against
+exact search over $\desc(c)$.
+A system that returns fewer than $k$ answers has a recall below one.
+
+\stitle{The store}.
+The vectors live in an ontology store, OntoDB~\cite{ontodb}, that keeps triples in three
+B+ trees behind a buffer pool and keeps the hierarchy as labels in the same engine.
+This paper uses three of its parts: the B+ tree and its range scan, the postorder
+labelling of the hierarchy (Section~\ref{sec-filter}), and the buffer pool that pages
+all of it.

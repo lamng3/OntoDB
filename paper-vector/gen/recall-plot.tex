@@ -1,0 +1,10 @@
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=4.8cm,symbolic x coords={<=10,11-100,101-1000,1001-5000,>5000},xtick=data,xticklabels={$\le$10,11--100,101--1k,1--5k,$>$5k},xlabel={classes below $c$},ylabel={recall@10},ymin=0,ymax=1.05,grid=both,legend pos=south east,legend style={font=\scriptsize},tick label style={font=\scriptsize},label style={font=\small}]
+\addplot+[mark=square*,color=red!70!black,thick] coordinates {(<=10,0.051) (11-100,0.058) (101-1000,0.230) (1001-5000,0.398) (>5000,0.579)};
+\addlegendentry{FAISS IVF}
+\addplot+[mark=triangle*,color=orange!80!black,thick] coordinates {(<=10,0.024) (11-100,0.045) (101-1000,0.245) (1001-5000,0.392) (>5000,0.733)};
+\addlegendentry{FAISS HNSW}
+\addplot+[mark=*,color=blue!70!black,thick] coordinates {(<=10,1.000) (11-100,1.000) (101-1000,1.000) (1001-5000,1.000) (>5000,0.994)};
+\addlegendentry{\sys{} auto}
+\end{axis}
+\end{tikzpicture}

@@ -1,0 +1,129 @@
+\section{Filtering by a Class}
+\label{sec-filter}
+
+\stitle{The hierarchy as a membership test}.
+Collapse each cycle of $H$ into one class, pick for every class with several parents the
+parent with the longest path from a root, and number the classes in postorder of the
+resulting spanning forest.
+In a forest the classes below $c$ are those whose number lies in one interval
+$[\lo(c),\po(c)]$; in a DAG each class carries a \emph{set} of intervals $I(c)$, built
+children first by merging its own interval with the sets of its children
+(Agrawal et al.~\cite{agrawal1989}), and $|I(c)|\le 1+|E'(c)|$ for the $|E'(c)|$
+non-tree edges below $c$.
+The numbers are keys of the engine's B+ tree, $(\po(c),c,0)$ for each class, so
+\begin{itemize}
+\item the \emph{members} of $c$ are one range scan per interval of $I(c)$, in
+  $O(|I(c)|)$ descents plus the members, and
+\item whether a class $u$ lies below $c$ is a binary search of $\po(u)$ in $I(c)$, with
+  no scan and no memory beyond the intervals.
+\end{itemize}
+On the four ontologies the mean class needs 1.3 to 2.0 intervals (at most 4,329, within the
+bound), against 5.3 million ancestor pairs for ChEBI's closure and 402,305 intervals.
+The labels are built in 4 to 69\,ms for 13,850 to 218,723 classes and rebuilt when the
+hierarchy changes; term ids are untouched.
+
+\stitle{Four strategies}.
+A query $\mathrm{near}(q,c,k)$ can be answered in four ways, all returning terms of
+$\desc(c)$ only.
+\begin{description}
+\item[Pre-filter] resolves $c$ to its members by range scans and scores them exactly:
+  about $\gamma_m\,|\desc(c)|$ time, where $\gamma_m$ covers a scan step, a lookup from
+  term to row, and one dot product.
+\item[Post-filter] asks an index for $k'>k$ answers, keeps those below $c$ (a binary
+  search each), and multiplies $k'$ by four until $k$ remain or the index is exhausted.
+\item[Masked search] hands the index the predicate ``the row's number lies in an
+  interval of $I(c)$'', so a list scan or a graph walk skips rows outside $c$ and
+  nothing is resolved in advance; each row touched costs one binary search.
+  Masked IVF keeps probing lists, nearest first, until it holds $k$ allowed rows or
+  has probed all (Algorithm~\ref{alg-ivf}); masked HNSW still crosses rows it may not
+  return, to keep the graph connected, and keeps a beam of $\ef$ allowed candidates.
+\item[Auto] pre-filters when $|\desc(c)|\le\theta$ and otherwise runs masked HNSW.
+\end{description}
+
+\begin{algorithm}[t]
+\caption{\textsc{Near}$(q,c,k)$: the auto rule}\label{alg-auto}
+\small
+\lIf{$c$ is not a class of $H$}{\Return $\emptyset$}
+\eIf{$|\desc(c)|\le\theta$}{
+  $R \gets$ the rows of the keys in the range scans $[(a,0,0),(b{+}1,0,0))$ for each $[a,b]\in I(c)$\;
+  \Return the $k$ rows of $R$ with the largest $q\cdot\mathbf{v}$ \tcp*{pre-filter: exact}
+}{
+  \Return \textsc{MaskedHnsw}$(q,k,\ef,\;r\mapsto \po(r)\in I(c))$\;
+}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{\textsc{MaskedHnsw}$(q,k,\ef,\mathit{allowed})$}\label{alg-hnsw}
+\small
+descend the upper layers greedily from the entry point to the node nearest $q$ (the filter is not applied)\;
+$\mathit{frontier} \gets \{$that node$\}$; $W \gets \emptyset$ \tcp*{$W$ holds allowed rows only}
+\While{$\mathit{frontier}\ne\emptyset$}{
+  $x \gets$ the frontier node nearest $q$\;
+  \lIf{$|W|\ge\ef$ and $x$ is farther than the worst row of $W$}{\textbf{break}}
+  \For{each unvisited neighbor $y$ of $x$ on layer 0}{
+    add $y$ to $\mathit{frontier}$ whether or not it is allowed\;
+    \lIf{$\mathit{allowed}(y)$}{add $y$ to $W$; drop the worst row if $|W|>\ef$}
+  }
+}
+\Return the $k$ best rows of $W$\;
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{Masked IVF: the $k$ best rows allowed by the class}\label{alg-ivf}
+\small
+sort the $\nu$ lists by the similarity of their centroids to $q$\;
+$\mathit{best} \gets \emptyset$; $\mathit{seen} \gets 0$\;
+\For{each list $\ell$ in that order}{
+  \For{each key $(\ell,r,0)$ of the prefix scan of $\ell$ in the B+ tree}{
+    \lIf{the number of row $r$ lies in an interval of $I(c)$}{score $r$; keep it among the $k$ best}
+  }
+  $\mathit{seen} \gets \mathit{seen}+1$\;
+  \lIf{$\mathit{seen}\ge\rho$ and $|\mathit{best}|=k$}{\textbf{break}}
+}
+\Return $\mathit{best}$\;
+\end{algorithm}
+
+\begin{lemma}[Exactness and completeness]\label{lem-exact}
+Pre-filter returns exactly $\mathrm{near}(q,c,k)$. Masked IVF returns
+$\min(k,|\desc(c)|)$ answers, and exactly $\mathrm{near}(q,c,k)$ when $\rho=\nu$.
+\end{lemma}
+
+\noindent
+Pre-filter scores every member; masked IVF stops only with $k$ allowed rows or after
+all lists, and with all lists probed it has scored every allowed row
+(Appendix~\ref{apx-proofs}).
+Masked HNSW (Algorithm~\ref{alg-hnsw}) crosses disallowed nodes to keep the graph
+connected and keeps a beam of $\ef$ \emph{allowed} rows, so it does not stop early for
+lack of allowed neighbors, which is also why it is slow for a small class: it walks until
+it has found $\ef$ of them.
+An index asked for $k$ answers and filtered afterwards has neither property.
+
+\stitle{The filter is correlated with the vectors}.
+Costing a filtered search by the filter's selectivity assumes independence: a filter
+that passes a fraction $f(c)$ of the terms needs about $k/f(c)$ candidates.
+In an ontology the names of a class's descendants resemble the class and one
+another, so the neighbors of a term concentrate under the term's own ancestors.
+Table~\ref{tab-correlation} measures it: for a query that is a member of $c$, or a synonym
+of one, the share of the unfiltered top 100 under $c$ is 0.03 to 0.59, which is 10 to 100
+times the fraction of terms below $c$ for classes of up to 1,000 members, and for a
+query outside it falls to 0.00 to 0.24, below that fraction for the largest classes.
+The estimate $k/f(c)$ is therefore too large for an inside query, which a post-filter
+answers cheaply, and too small for an outside one, for which a post-filter's
+candidates run out before $k$ allowed rows are seen.
+
+\input{gen/correlation}
+
+\stitle{Resolve or test}.
+Masked search can test the filter per row (one binary search over $I(c)$) or resolve it
+first into a bitmap by range scans.
+Resolving costs $\gamma_m|\desc(c)|$ whether or not the search ever looks at those
+rows; testing costs only for rows the walk touches.
+Pre-filtering resolves and scores, so it is the right plan exactly when
+$\gamma_m|\desc(c)|$ is less than the masked walk's cost $\gamma_h$:
+\[
+\mathrm{pre\text{-}filter\ wins} \iff |\desc(c)| < \theta = \gamma_h/\gamma_m .
+\]
+The walk's cost depends on where the query is: for a query inside $c$ the walk finds
+allowed rows at once, and for one outside it must cross rows it cannot return, so
+$\gamma_h$ and $\theta$ differ, and a single threshold has to sit between them
+(Section~\ref{sec-exp}).

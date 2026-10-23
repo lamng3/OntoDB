@@ -1,0 +1,15 @@
+\begin{table*}[t]
+\caption{Unfiltered ten-nearest-neighbor search, 1,000 queries: recall@10 / microseconds per query. FAISS is called once per query from Python, like \sys{} (its call overhead, about 10\,$\mu$s, is included); batched numbers are in the appendix. IVF: nprobe 16; HNSW: $M{=}16$, $\mathit{ef}{=}40$. Build seconds in parentheses.}
+\label{tab-index}
+\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Ontology & terms & flat (\sys{}) & flat (FAISS) & IVF (\sys{}) & IVF (FAISS) & HNSW (\sys{}) & HNSW (FAISS) \\
+\midrule
+GO & 38,092 & 1.00 / 2.2\,k & 1.00 / 1.1\,k & 0.93 / 289 (18\,s) & 0.93 / 71 & 1.00 / 123 (16\,s) & 1.00 / 58 \\
+HPO & 19,894 & 1.00 / 1.2\,k & 1.00 / 610 & 0.93 / 222 (8\,s) & 0.92 / 50 & 1.00 / 190 (9\,s) & 1.00 / 45 \\
+Uberon & 15,047 & 1.00 / 907 & 1.00 / 432 & 0.91 / 142 (5\,s) & 0.91 / 50 & 1.00 / 77 (6\,s) & 1.00 / 39 \\
+ChEBI & 218,723 & 1.00 / 13.1\,k & 1.00 / 6.6\,k & 0.93 / 1.1\,k (115\,s) & 0.92 / 295 & 0.99 / 169 (142\,s) & 0.98 / 201 \\
+\bottomrule
+\end{tabular}
+\end{table*}

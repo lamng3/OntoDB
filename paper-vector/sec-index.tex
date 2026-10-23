@@ -1,0 +1,56 @@
+\section{Vector Indexes in the Store}
+\label{sec-index}
+
+The engine keeps one unit vector per term in memory, loaded from a checksummed file
+whose records name terms by spelling, so a file survives a dictionary that numbers
+terms differently.
+Embeddings come from outside; the engine stores and searches them with four index
+families, each a different trade between exactness, memory, and build time.
+
+\stitle{Flat}.
+Score every vector with eight independent accumulators (a plain loop is not
+vectorized by the compiler without fast-math and made our first exact baseline four
+times too slow): $O(Nd)$ and exact.
+
+\stitle{IVF with lists in the triple tree}.
+Spherical $k$-means with $k$-means++ seeding~\cite{arthur2007} gives $\nu=2.6\sqrt{N}$
+centroids, each vector goes to its nearest, and a query scores the centroids and
+reads the $\rho$ nearest lists, for a cost $\nu d+\rho (N/\nu) d$.
+The design choice is where the lists live: as key ranges of the B+ tree that holds the
+triples.
+The pair (list, row) is a key $(\mathrm{list},\mathrm{row},0)$, so a list is a prefix
+scan, and the lists page, cache, and latch like every other index of the engine, with
+the buffer pool, the page latches, and the checksums already there; a separate vector
+library would add its own memory and its own copy of the data.
+The price is a 24-byte key per row and a random read of the vector per entry, which
+Section~\ref{sec-exp} measures against a contiguous list.
+
+\stitle{HNSW}.
+The layered proximity graph of Malkov and Yashunin~\cite{malkov2020} with the paper's
+neighbor-selection heuristic, $M{=}16$ links (32 on layer 0), and construction beam
+200; search takes an optional row filter and still crosses rows it may not return.
+
+\stitle{In the engine}.
+The indexes are driven from the shell and from the browser build.
+After loading the ontology and its vectors and building the labels and the indexes,
+\begin{small}\begin{verbatim}
+\hindex build
+\vload go.ovec
+\vindex build all
+\similar "apoptotic process" 4 under "cell death"
+\end{verbatim}\end{small}
+prints the neighbors with their cosine, the strategy the rule chose, and the time
+(here for an 834-class slice of the Gene Ontology in a browser):
+\begin{small}\begin{verbatim}
+0.865  apoptotic process involved in development
+0.802  apoptotic process involved in morphogenesis
+0.786  epithelial cell apoptotic process
+0.779  neuron apoptotic process     [pre-filter, 0.8 ms]
+\end{verbatim}\end{small}
+Forcing a strategy (\texttt{using post-ivf}, \texttt{using mask-hnsw}) runs the others.
+
+\stitle{Product quantization}.
+Cutting a vector into $m$ pieces and replacing each by its nearest of 256 learned
+centers~\cite{jegou2011} gives $m$ bytes per vector, scored through $m$ tables of 256
+dot products; it is for memory, not speed, at this size, and we do not use it in the
+filtered experiments.

@@ -1,0 +1,16 @@
+\begin{table}[t]
+\caption{Per ontology, over every class size and query kind: recall@10, and mean / median microseconds per query.}
+\label{tab-per-ontology}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Ontology & queries & auto & FAISS flat & FAISS IVF & FAISS HNSW \\
+\midrule
+GO & 247 & 1.00 / 110 / 26 & 1.00 / 117 / 46 & 0.63 / 31 / 27 & 0.67 / 47 / 47 \\
+HPO & 237 & 1.00 / 59 / 18 & 1.00 / 66 / 29 & 0.67 / 27 / 23 & 0.72 / 45 / 46 \\
+Uberon & 201 & 1.00 / 41 / 8.3 & 1.00 / 57 / 22 & 0.62 / 23 / 20 & 0.67 / 43 / 43 \\
+ChEBI & 273 & 1.00 / 543 / 59 & 1.00 / 846 / 224 & 0.55 / 59 / 50 & 0.54 / 63 / 65 \\
+\bottomrule
+\end{tabular}}
+\end{table}

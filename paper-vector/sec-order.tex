@@ -1,0 +1,44 @@
+\section{Order Is Not Similarity}
+\label{sec-order}
+
+A triple store answers a bound prefix with one range scan over a sorted index, and it
+is tempting to hope that terms close in meaning are close in the order, so that a scan
+of a window could serve a similarity query.
+
+\begin{lemma}[Bandwidth]\label{lem-bw}
+Let $G$ be a graph with $N$ vertices and diameter $D$.
+In every linear order of the vertices some edge joins vertices at least $(N-1)/D$
+positions apart.
+\end{lemma}
+
+\noindent
+The first and last vertices of an order are $N-1$ apart and joined by a path of at
+most $D$ edges, so some edge of the path covers at least $(N-1)/D$ positions
+(Appendix~\ref{apx-proofs}).
+For the neighbor graph of a $d$-dimensional grid of $N=g^d$ points (diameter
+$d(g-1)$) that is at least $g^{d-1}/d$ positions in any order, so a scan of width $w$
+cannot hold all neighbors unless $w$ is that large.
+Space-filling curves keep neighbors close on average and need several scans to cover
+a query ball; they do not escape the lemma.
+
+\stitle{What real orders give}.
+We embedded the term names of four ontologies (Section~\ref{sec-exp}) and, for 2,000
+random terms, took the ten nearest by cosine.
+Table~\ref{tab-order} gives the share of those neighbors found within $\pm100$
+positions of the term in each order: the hierarchy's postorder, the dictionary's
+first-seen ids (an engine's default order), the alphabetical order of the names, and a
+random order.
+
+\input{gen/order}
+
+\noindent
+Three things follow.
+First, no order is enough: the best finds 38\% to 56\% of the neighbors in a window
+of 200 positions, a window that is 0.1\% to 1.3\% of the ontology.
+Second, which order is best depends on the ontology: the hierarchy's postorder wins on
+three, and alphabetical order wins on ChEBI, whose names share prefixes
+(``\emph{N}-acetyl-\ldots''); what the hierarchy supplies is \emph{structure}, not
+similarity.
+Third, first-seen ids carry some locality (0.13 to 0.23) that comes from the file the
+ontology was loaded from and not from the engine.
+The order is therefore useful for the hierarchy and is no substitute for a vector index.

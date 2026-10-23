@@ -1,0 +1,14 @@
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=5.2cm,ymode=log,symbolic x coords={<=10,11-100,101-1000,1001-5000,>5000},xtick=data,xticklabels={$\le$10,11--100,101--1k,1--5k,$>$5k},xlabel={classes below $c$},ylabel={$\mu$s per query},grid=both,legend style={font=\scriptsize,at={(0.5,1.02)},anchor=south,legend columns=2},tick label style={font=\scriptsize},label style={font=\small}]
+\addplot+[mark=pentagon*,color=black!60,thick] coordinates {(<=10,66.0) (11-100,66.8) (101-1000,88.2) (1001-5000,207.0) (>5000,2011.9)};
+\addlegendentry{FAISS exact + selector}
+\addplot+[mark=triangle*,color=orange!80!black,thick] coordinates {(<=10,50.0) (11-100,48.5) (101-1000,50.2) (1001-5000,48.7) (>5000,58.9)};
+\addlegendentry{FAISS HNSW + selector}
+\addplot+[mark=diamond*,color=green!50!black,thick] coordinates {(<=10,2.1) (11-100,7.8) (101-1000,47.0) (1001-5000,244.9) (>5000,4987.1)};
+\addlegendentry{pre-filter}
+\addplot+[mark=square*,color=red!70!black,thick] coordinates {(<=10,38996.8) (11-100,34846.6) (101-1000,10971.5) (1001-5000,4747.7) (>5000,1025.3)};
+\addlegendentry{masked HNSW}
+\addplot+[mark=*,color=blue!70!black,thick] coordinates {(<=10,2.2) (11-100,8.2) (101-1000,50.0) (1001-5000,436.9) (>5000,997.7)};
+\addlegendentry{auto}
+\end{axis}
+\end{tikzpicture}
