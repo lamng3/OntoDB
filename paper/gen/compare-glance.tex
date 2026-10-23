@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{Selected results: how many times faster \sys{} is than each other engine (the time of the other engine divided by \sys's; for throughput, \sys's divided by the other's). All tables of this section give every measurement.}
+\label{tab-glance}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & Ox.\ RocksDB & Ox.\ memory & Jena TDB2 & SQLite \\
+\midrule
+pattern $(s,\cdot,\cdot)$ & 8.4$\times$ & 3.4$\times$ & 36.7$\times$ & 4.2$\times$ \\
+pattern $(s,p,\cdot)$ & 7.2$\times$ & 4.6$\times$ & 27.3$\times$ & 5.5$\times$ \\
+LUBM query 1 & 3.7$\times$ & 1.4$\times$ & 58.4$\times$ & 2.0$\times$ \\
+instances of a class, 10--99 below & 39.1$\times$ & 7.7$\times$ & 47.9$\times$ & 14.9$\times$ \\
+instances of a class, 1000+ below & 5.8$\times$ & 2.2$\times$ & 5.3$\times$ & 3.5$\times$ \\
+lookups per second, 8 threads & 7.0$\times$ & 3.2$\times$ & 6.1$\times$ & 3.9$\times$ \\
+lookups per second, 8 readers + 1 writer & 10.2$\times$ & 4.8$\times$ & 18.8$\times$ & 4.3$\times$ \\
+\bottomrule
+\end{tabular}}
+\end{table}

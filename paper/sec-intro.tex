@@ -1,8 +1,8 @@
 \section{Introduction}
 \label{sec-intro}
 
-Ontologies such as the Gene Ontology~\cite{ashburner2000} and the schemas
-of enterprise knowledge graphs are stored as sets of triples and queried in
+Ontologies such as the Gene Ontology~\cite{ashburner2000} and the schemas of
+enterprise knowledge graphs are stored as sets of triples and queried in
 three ways.
 A \emph{pattern} query asks for the triples that match a template, such as
 the resources of one type, and is the base case of every RDF
@@ -15,7 +15,7 @@ embeddings.
 The three meet in queries such as ``the terms most similar to
 \emph{apoptotic process} that lie under \emph{cell death}''.
 
-Existing systems leave three problems open.
+Existing systems leave four problems open.
 \textbf{C1. Hierarchy costs space or time.}
 RDFS entailment is either \emph{materialized} at write time, which stores
 every inferred triple~\cite{rdfox}, or \emph{rewritten} into the query,
@@ -38,6 +38,13 @@ ancestors.
 A post-filtered index can then find 7\% of the right answers, and the
 independence estimate of the work it must do is wrong in both directions
 (Section~\ref{sec-vectors}).
+\textbf{C4. A paged store must scale across threads.}
+A classic buffer pool serializes every page access on one latch, and a
+classic B+ tree write latches the root.
+In our first version, lookups per second fell from 330 thousand with one
+thread to 180 thousand with eight, and inserts from 184 thousand to 23
+thousand: a store embedded in a service or a notebook that answers many
+queries at once spent its time waiting for itself.
 
 \begin{example}
 \label{exa-motivation}
@@ -61,7 +68,7 @@ This paper takes that view of ontologies.
 
 \stitle{Contributions}.
 This paper introduces \sys, an open-source ontology database in C++20
-(Figure~\ref{fig-arch}).
+(Figure~\ref{fig-arch}), and makes the following contributions.
 \begin{enumerate}
 \item \textbf{A B+ tree triple store with its algorithms}
   (Section~\ref{sec-store}).
@@ -70,30 +77,58 @@ This paper introduces \sys, an open-source ontology database in C++20
   We give the algorithms for search, insert, delete, range scan, and bulk
   load, the invariants they keep, and a bound on the pages a range scan
   reads.
+\item \textbf{A concurrency design that scales}
+  (Section~\ref{sec-conc}).
+  An optimistic descent latches only the leaf; a buffer pool of shards
+  serves resident pages with an atomic pin and no latch; a one-word
+  reader-writer latch replaces a mutex-based one; the dictionary decodes
+  under striped locks.
+  With eight threads \sys serves 1.46 million lookups per second, 3.5 times
+  its single-thread rate and 3 to 7 times the rate of Oxigraph, Jena TDB2,
+  and SQLite, and its insert rate grows 3.6 times.
+  The change passes the engine's tests under ThreadSanitizer and
+  AddressSanitizer.
 \item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}).
   A postorder labelling of the class DAG gives each class a set of
   intervals, kept in the same B+ tree, so that ``everything under $c$'' is
   a few range scans.
   We bound the number of intervals by the number of non-tree edges and
-  store no entailed triple.
-\item \textbf{Vector indexes in the engine}
+  store no entailed triple: 8.1 times fewer triples than materialization,
+  48 times fewer page reads than rewriting, and 2 to 48 times faster than
+  other engines' subclass-path queries.
+\item \textbf{Vector indexes in the engine, and how to filter them}
   (Sections~\ref{sec-order} and~\ref{sec-vectors}).
   We prove that no linear order keeps neighbors close, add exact, IVF,
-  product-quantized, and HNSW search, and store IVF posting lists as key
-  ranges of the triple B+ tree.
-  We show that filtering by a class is correlated with similarity, and give
-  the rule that picks between pre-filtering and masked search.
+  product-quantized, and HNSW search, store IVF posting lists as key ranges
+  of the triple B+ tree, show that filtering by a class is correlated with
+  similarity, and give the rule that picks between pre-filtering and masked
+  search; exact pre-filtering is $10^2$ to $10^4$ times faster than any
+  index strategy below about 1,000 members.
 \item \textbf{A build for the browser} (Section~\ref{sec-system}).
   The engine, with its paged B+ trees and its semantic extension, compiles
   to a 0.85\,MB WebAssembly module.
-\item \textbf{An evaluation against three other stores}
-  (Section~\ref{sec-exp}).
-  We compare \sys with Oxigraph~\cite{oxigraph}, Apache Jena
-  TDB2~\cite{jenatdb}, and SQLite on LUBM~\cite{lubm} and the Gene Ontology.
-  \sys is fastest on selective patterns and on class instances, within a
-  factor of two of the best on large scans, and slowest to load; the
-  dictionary decode that dominates its large results is a cost we measure
-  and reduce with a cache.
+\item \textbf{Strong performance} (Section~\ref{sec-exp}).
+  Against Oxigraph~\cite{oxigraph}, Apache Jena TDB2~\cite{jenatdb}, and
+  SQLite on LUBM~\cite{lubm} and the Gene Ontology, \sys answers selective
+  triple patterns 3 to 37 times faster, instance queries 2 to 48 times
+  faster, and sustains 3 to 7 times the lookup throughput under eight
+  threads, with the smallest files of the disk-based stores
+  (Table~\ref{tab-glance}).
 \end{enumerate}
+
+\stitle{Novelty}.
+Interval labelling of a hierarchy~\cite{agrawal1989}, the B+ tree, latch
+crabbing~\cite{lehman1981}, and IVF and HNSW indexes~\cite{jegou2011,malkov2020}
+are known.
+What is new is their combination in one engine and what that makes
+possible: the class hierarchy as range scans of the tree that holds the
+triples, so that a class filter is a binary search and not a scan or a
+stored closure; IVF posting lists that page, cache, latch, and update like
+triples; a measured account of why a class filter breaks the independence
+assumption of filtered vector search; a buffer pool whose resident-page hit
+is one compare-and-swap, which no other open ontology store we ran has; and
+the same engine in a browser.
+In the documentation we read, none of the systems we compare with offers
+more than two of these.
 The code, data generators, and benchmark programs are available at the
 artifact URL above.

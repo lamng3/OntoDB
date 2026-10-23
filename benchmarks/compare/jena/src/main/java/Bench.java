@@ -75,9 +75,78 @@ public class Bench {
         return String.format("%.1f", times[n / 2]);
     }
 
+    // Threads against one store: lookup readers, insert writers, or one writer beside readers.
+    // Queries are the (s,.,.) and (s,p,.) shapes; a writer inserts one triple per write
+    // transaction with a scattered new subject.
+    static void concurrency(Dataset ds, String queries, double seconds) throws Exception {
+        List<Query> prepared = new ArrayList<>();
+        for (String line : Files.readAllLines(Paths.get(queries))) {
+            String[] c = line.split("\t");
+            if (c.length >= 2 && (c[0].startsWith("s--") || c[0].startsWith("sp-"))) prepared.add(QueryFactory.create(c[1]));
+        }
+        java.util.concurrent.atomic.AtomicLong next = new java.util.concurrent.atomic.AtomicLong();
+        org.apache.jena.rdf.model.Property p = org.apache.jena.rdf.model.ResourceFactory.createProperty("http://example.org/new/p");
+        org.apache.jena.rdf.model.Resource o = org.apache.jena.rdf.model.ResourceFactory.createResource("http://example.org/new/o");
+        for (String workload : new String[] {"warm", "read", "insert", "mixed"}) {
+            for (int t : (workload.equals("warm") ? new int[] {4} : new int[] {1, 2, 4, 8})) {
+                int readers = workload.equals("insert") ? 0 : t;
+                int writers = workload.equals("read") || workload.equals("warm") ? 0 : (workload.equals("insert") ? t : 1);
+                java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+                java.util.concurrent.atomic.AtomicLong reads = new java.util.concurrent.atomic.AtomicLong();
+                java.util.concurrent.atomic.AtomicLong inserts = new java.util.concurrent.atomic.AtomicLong();
+                List<Thread> threads = new ArrayList<>();
+                for (int r = 0; r < readers; r++) {
+                    final int start = r * 7;
+                    threads.add(new Thread(() -> {
+                        long mine = 0;
+                        int at = start;
+                        double[] sink = new double[1];
+                        while (!stop.get()) {
+                            runOnce(ds, prepared.get(at % prepared.size()), sink, 0);
+                            at++;
+                            mine++;
+                        }
+                        reads.addAndGet(mine);
+                    }));
+                }
+                for (int w = 0; w < writers; w++) {
+                    threads.add(new Thread(() -> {
+                        long mine = 0;
+                        while (!stop.get()) {
+                            long id = (next.getAndIncrement() * 2654435761L) & ((1L << 26) - 1);
+                            org.apache.jena.rdf.model.Resource sub = org.apache.jena.rdf.model.ResourceFactory.createResource("http://example.org/new/s" + id);
+                            Txn.executeWrite(ds, () -> ds.getDefaultModel().add(sub, p, o));
+                            mine++;
+                        }
+                        inserts.addAndGet(mine);
+                    }));
+                }
+                long t0 = System.nanoTime();
+                for (Thread th : threads) th.start();
+                Thread.sleep((long) (seconds * 1000));
+                stop.set(true);
+                for (Thread th : threads) th.join();
+                double elapsed = (System.nanoTime() - t0) / 1e9;
+                if (!workload.equals("warm")) System.out.printf("%s\t%s\t%d\t%.0f\t%.0f%n", workload, workload.equals("insert") ? "-" : "lookup", t, reads.get() / elapsed, inserts.get() / elapsed);
+            }
+        }
+    }
+
     public static void main(String[] a) throws Exception {
         Path work = Paths.get(a[0]);
+        boolean conc = a[1].equals("conc");
         boolean types = a[1].equals("types");
+        if (conc) {
+            Path d = work.resolve("tdb2");
+            if (Files.exists(d)) try (Stream<Path> w = Files.walk(d)) { w.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete()); }
+            Files.createDirectories(d);
+            List<String> la = new ArrayList<>(List.of("--loc", d.toString()));
+            la.addAll(Arrays.asList(a).subList(4, a.length));
+            tdb2.tdbloader.main(la.toArray(new String[0]));
+            Dataset dsc = TDB2Factory.connectDataset(d.toString());
+            concurrency(dsc, a[2], Double.parseDouble(a[3]));
+            System.exit(0);
+        }
         String queries = a[types ? 2 : 1];
         int runs = Integer.parseInt(a[types ? 3 : 2]);
         List<String> files = Arrays.asList(a).subList(types ? 4 : 3, a.length);

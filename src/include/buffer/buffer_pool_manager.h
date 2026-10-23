@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -42,8 +43,21 @@ class LogManager;
 // stats: BufferHit on a fetch served from memory, BufferMiss when a frame is
 // read from disk. Trace component "bpm".
 //
-// One latch (mu_) covers the page table, the free list, pins, and dirty bits,
-// and is held across the disk I/O of a miss or a write-back. All I/O goes
+// One latch per shard covers that shard's page table, free list, pins, and dirty bits, and is
+// held across the disk I/O of a miss or a write-back there. A pool has `shards` shards (default
+// 1, the behavior every test relies on); a page belongs to shard page_id mod shards, and each
+// shard owns an equal share of the frames and its own LRU-K replacer, so threads that touch
+// pages of different shards do not wait on one another. With more than one shard NewPage
+// allocates the page id before it looks for a frame, so a pool that cannot give a frame leaves
+// that id unused.
+//
+// With several shards a hit does not take the shard latch. The page index is read without it, the
+// pin is a compare-and-swap on the frame's pin count, and the hit is only marked on the frame;
+// the replacer learns of marked frames when the shard must evict. Eviction first claims a frame
+// whose pin count is zero by swapping it to -1, which keeps every later pinner out, so a frame is
+// never evicted under a reader. A pin that raced with an eviction finds the frame holding another
+// page and lets go. Eviction order is then the LRU-K order of the accesses the replacer has seen
+// (every miss and every marked frame once), not of every access. All I/O goes
 // through a DiskScheduler. NewPage and FetchPage return nullptr when every
 // frame is pinned, or every unpinned frame is dirty with a pageLSN an open
 // page group still holds back in the log (see PageGroup below). The destructor does not flush:
@@ -52,7 +66,7 @@ class BufferPoolManager {
  public:
   BufferPoolManager(size_t pool_size, DiskManager* disk_manager, size_t replacer_k,
                     LogManager* log_manager = nullptr, IoStats* stats = nullptr,
-                    TraceSink* trace = nullptr);
+                    TraceSink* trace = nullptr, size_t shards = 1);
   ~BufferPoolManager();
 
   BufferPoolManager(const BufferPoolManager&) = delete;
@@ -82,9 +96,29 @@ class BufferPoolManager {
   auto NewPageGuarded(page_id_t* page_id) -> WritePageGuard;
 
  private:
-  auto TakeFrame(frame_id_t* frame_id) -> bool;  // requires mu_
-  void WriteBack(Page* page);                    // requires mu_
-  void RunIo(bool is_write, Page* page);         // requires mu_
+  // The frames, page table, free list, and replacer of one shard, under one latch.
+  struct Shard {
+    Shard(size_t frame_count, size_t k, TraceSink* trace);
+    mutable std::mutex mu;
+    std::vector<Page> frames;
+    std::unordered_map<page_id_t, frame_id_t> page_table;
+    std::deque<frame_id_t> free_list;
+    std::unordered_set<page_id_t> deleted;
+    LRUKReplacer replacer;
+    // The resident pages again, as an open-addressing table that is written under mu and read
+    // without it: entry = ((page id + 1) << 24) | frame, 0 empty, 1 deleted. Used only when the
+    // pool has several shards.
+    std::vector<std::atomic<uint64_t>> index;
+    size_t deleted_entries{0};
+    void IndexInsert(page_id_t page_id, frame_id_t frame);
+    void IndexErase(page_id_t page_id);
+    auto IndexFind(page_id_t page_id) const -> frame_id_t;  // -1 when absent
+  };
+
+  auto ShardOf(page_id_t page_id) const -> Shard&;
+  auto TakeFrame(Shard& shard, frame_id_t* frame_id) -> bool;  // requires shard.mu
+  void WriteBack(Page* page);                                  // requires the page's shard latch
+  void RunIo(bool is_write, Page* page);                       // requires the page's shard latch
   void Trace(const std::string& message) const;
   auto NullReason(page_id_t page_id) const -> std::string;
 
@@ -95,12 +129,7 @@ class BufferPoolManager {
   IoStats* stats_;
   TraceSink* trace_;
 
-  mutable std::mutex mu_;
-  std::vector<Page> frames_;
-  std::unordered_map<page_id_t, frame_id_t> page_table_;
-  std::deque<frame_id_t> free_list_;
-  std::unordered_set<page_id_t> deleted_;
-  LRUKReplacer replacer_;
+  std::vector<std::unique_ptr<Shard>> shards_;
   std::unique_ptr<DiskScheduler> scheduler_;
 };
 

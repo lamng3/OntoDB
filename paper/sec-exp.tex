@@ -13,9 +13,16 @@ We evaluate \sys along five research questions.
   four indexes give on real embeddings?
 \item \textbf{[RQ4] Filtered search}: which strategy answers
   $\mathrm{near}(q,c,k)$ fastest, and does a single rule choose well?
-\item \textbf{[RQ5] Design choices}: what do three permutations, the bulk
+\item \textbf{[RQ5] Concurrency}: how do lookups and inserts scale with the
+  number of threads, and what do readers see while a writer runs?
+\item \textbf{[RQ6] Design choices}: what do three permutations, the bulk
   loader, and the decode cache each buy?
 \end{itemize}
+
+Table~\ref{tab-glance} summarizes the answers; the subsections give every
+measurement.
+
+\input{gen/compare-glance}
 
 \subsection{Experimental Setup}
 
@@ -33,6 +40,9 @@ graph pattern translated into a join of the table with itself, and
 SQLite stores terms as strings and \sys as ids; we include it as the
 relational baseline.
 RDF4J, QLever, and RDFox are discussed in Section~\ref{sec-related} but not run.
+Concurrency is measured in-process: threads for \sys, Oxigraph, and Jena, and
+processes with one connection each for SQLite, whose Python driver would
+otherwise share one interpreter lock.
 
 \stitle{Data}.
 LUBM~\cite{lubm} at one and ten universities (103,104 and 1,316,700
@@ -75,8 +85,9 @@ Table~\ref{tab-queries} the query times.
 
 \stitle{Selective patterns}.
 For patterns that bind the subject, \sys takes 3\,$\mu$s and 2\,$\mu$s and the
-others 11 to 117\,$\mu$s and 9 to 52\,$\mu$s, so \sys is about 4 to 40$\times$
-faster.
+others 11 to 117\,$\mu$s and 9 to 52\,$\mu$s: \sys is 3.4 to 37$\times$ faster
+on $(s,\cdot,\cdot)$ and 4.6 to 27$\times$ on $(s,p,\cdot)$, and 1.4 to
+58$\times$ faster on the selective LUBM queries.
 Every answer is one descent of a B+ tree that fits the pool and a few keys.
 
 \stitle{Large results}.
@@ -379,7 +390,62 @@ Post-filtering would cost 5.5\,ms for an outside query on the same class, so
 the rule gives up a factor of 3.8 in one cell to avoid a factor of 79 in its
 neighbor.
 
-\subsection{RQ5: Design Choices}
+\subsection{RQ5: Concurrency}
+
+We load LUBM(10) and run, for three seconds each, one to eight threads of
+lookups (the $(s,\cdot,\cdot)$ and $(s,p,\cdot)$ queries, 200 in rotation),
+one to eight threads of inserts of new triples with scattered subjects, and
+one writer beside one to eight readers.
+Figure~\ref{fig-conc} plots the lookups and Table~\ref{tab-conc} the rest.
+
+\begin{figure}[t]
+\centering
+\input{gen/conc-plot}
+\caption{Lookups per second on LUBM(10) against the number of threads (both axes logarithmic).}
+\label{fig-conc}
+\end{figure}
+
+\input{gen/compare-conc}
+
+\stitle{Readers}.
+\sys serves 416 thousand lookups per second with one thread and 1.46 million
+with eight, 3.5 times more, and its single thread already beats every other
+engine at eight threads except Oxigraph's in-memory store, which reaches 460
+thousand.
+At eight threads \sys serves 7.0, 3.2, 6.1, and 3.9 times the lookups of
+Oxigraph on RocksDB, Oxigraph in memory, Jena TDB2, and SQLite.
+Every engine scales with threads here; \sys's lead is its per-lookup cost, 2.4
+microseconds, kept as threads are added.
+
+\stitle{Readers beside a writer}.
+With a writer inserting continuously, \sys's eight readers still serve 1.39
+million lookups per second, 3.5 times its one-reader rate, while the writer
+keeps inserting 111 thousand triples per second.
+Beside a writer, eight readers reach 74 thousand lookups per second on Jena
+TDB2, 136 thousand on Oxigraph on RocksDB, 288 thousand on Oxigraph in memory,
+and 322 thousand on SQLite, so \sys's eight readers do 18.8, 10.2, 4.8, and 4.3
+times as many.
+
+\stitle{Writers}.
+\sys's insert rate grows from 264 thousand per second with one thread to 950
+thousand with eight, 3.6 times; Oxigraph on RocksDB gains 16\%, Oxigraph in
+memory loses nearly three quarters, SQLite loses 4\%, and Jena TDB2's rate is bounded by
+its commit.
+The comparison favors \sys in one respect: its inserts here go through the
+store without the write-ahead log, while the other engines commit each insert
+with their default durability.
+The scaling of \sys's own curve is the result; Oxigraph's in-memory store, which
+is not durable either, inserts faster with one thread (679 thousand per
+second).
+
+\stitle{What limits it}.
+Heavy queries scale less: the 16,000-row $(\cdot,p,o)$ query goes from 148 to 330
+queries per second with eight threads, because it copies leaf after leaf and
+decodes thousands of terms, so it is bound by memory traffic.
+Splits and merges take the pessimistic path and serialize with each other on
+the pages they share, and inserts into one leaf serialize on its latch.
+
+\subsection{RQ6: Design Choices}
 
 \stitle{Permutations}.
 One tree, SPO, answers a pattern that does not bind the subject by a scan of

@@ -51,7 +51,7 @@ auto NewTreeHeader(BufferPoolManager* bpm) -> page_id_t {
 }  // namespace
 
 DiskDictionary::DiskDictionary(BufferPoolManager* bpm, Catalog* catalog, size_t cache_slots)
-    : bpm_(bpm), catalog_(catalog), cache_slots_(cache_slots) {
+    : bpm_(bpm), catalog_(catalog), cache_slots_(cache_slots), cache_(cache_slots) {
   page_id_t heap_page = INVALID_PAGE_ID;
   page_id_t by_id = INVALID_PAGE_ID;
   page_id_t by_hash = INVALID_PAGE_ID;
@@ -88,7 +88,7 @@ DiskDictionary::DiskDictionary(BufferPoolManager* bpm, Catalog* catalog, size_t 
 }
 
 auto DiskDictionary::Insert(std::string_view term) -> term_id_t {
-  std::lock_guard<std::mutex> guard(mu_);
+  std::lock_guard<std::mutex> guard(insert_mu_);
   if (const auto existing = LookupLocked(term)) {
     return *existing;
   }
@@ -103,30 +103,28 @@ auto DiskDictionary::Insert(std::string_view term) -> term_id_t {
 }
 
 auto DiskDictionary::Lookup(std::string_view term) const -> std::optional<term_id_t> {
-  std::lock_guard<std::mutex> guard(mu_);
   return LookupLocked(term);
 }
 
 auto DiskDictionary::Lookup(term_id_t id) const -> std::optional<std::string> {
-  std::lock_guard<std::mutex> guard(mu_);
-  if (cache_slots_ == 0) {
-    const auto rid = RidOf(id);
-    return rid.has_value() ? std::optional<std::string>(heap_->Get(*rid)) : std::nullopt;
-  }
-  if (cache_.empty()) {
-    cache_.resize(cache_slots_);
-  }
-  CacheSlot& slot = cache_[id % cache_slots_];
-  if (slot.id == id && id != 0) {
-    return slot.spelling;
+  const bool cached = cache_slots_ != 0 && id != 0;
+  const size_t slot = cached ? id % cache_slots_ : 0;
+  if (cached) {
+    std::lock_guard<std::mutex> stripe(cache_mu_[slot % kCacheStripes]);
+    if (!cache_.empty() && cache_[slot].id == id) {
+      return cache_[slot].spelling;
+    }
   }
   const auto rid = RidOf(id);
   if (!rid.has_value()) {
     return std::nullopt;
   }
   std::string spelling = heap_->Get(*rid);
-  slot.id = id;
-  slot.spelling = spelling;
+  if (cached) {
+    std::lock_guard<std::mutex> stripe(cache_mu_[slot % kCacheStripes]);
+    cache_[slot].id = id;
+    cache_[slot].spelling = spelling;
+  }
   return spelling;
 }
 

@@ -118,3 +118,68 @@ write("compare-hier.tex", "\n".join(out))
 for old in ("compare-patterns.tex", "compare-lubm.tex"):
     (gen / old).unlink(missing_ok=True)
 print("wrote", ", ".join(sorted(p.name for p in gen.glob("compare-*.tex"))))
+
+# Concurrency: lookups per second against threads, and what writers do
+conc_engines = [("ontodb", SYS, "blue!70!black", "mark=*"), ("oxigraph-rocksdb", "Ox.\\ RocksDB", "red!70!black", "mark=square*"),
+                ("oxigraph-memory", "Ox.\\ memory", "orange!80!black", "mark=triangle*"), ("jena", "Jena TDB2", "green!50!black", "mark=diamond*"),
+                ("sqlite", "SQLite", "black!60", "mark=pentagon*")]
+conc = {}
+for key, _, _, _ in conc_engines:
+    d = defaultdict(dict)
+    for line in (raw / f"{key.replace('oxigraph-rocksdb', 'oxigraph-rocksdb')}-conc.tsv").read_text().splitlines():
+        c = line.split("\t")
+        if len(c) == 5 and c[0] in ("read", "insert", "mixed") and c[1] != "range":
+            d[c[0]][int(c[2])] = (float(c[3]), float(c[4]))
+    conc[key] = d
+plot = ["\\begin{tikzpicture}\n\\begin{axis}[width=\\columnwidth,height=5.6cm,xmode=log,ymode=log,log basis x=2,xtick={1,2,4,8},xticklabels={1,2,4,8},xlabel={threads},ylabel={lookups per second},grid=both,legend pos=south east,legend style={font=\\scriptsize},tick label style={font=\\scriptsize},label style={font=\\small}]"]
+for key, name, color, mark in conc_engines:
+    pts = " ".join(f"({t},{conc[key]['read'][t][0]:.0f})" for t in (1, 2, 4, 8))
+    plot.append(f"\\addplot+[{mark},color={color},thick] coordinates {{{pts}}};\n\\addlegendentry{{{name}}}")
+plot.append("\\end{axis}\n\\end{tikzpicture}")
+write("conc-plot.tex", "\n".join(plot) + "\n")
+
+
+def k(v):
+    if v >= 1e6:
+        return f"{v / 1e6:.2f}M"
+    return f"{v / 1000:.0f}k" if v >= 10000 else f"{v:,.0f}"
+
+
+rows = ["\\begin{table}[t]\n\\caption{Concurrency on LUBM(10): lookups per second with 1 and 8 reader threads, readers' lookups per second with one writer running, and inserts per second with 1 and 8 writer threads (one triple per transaction; \\sys's inserts are not logged, and Jena's commit forces the journal to disk). The machine has 8 performance cores.}\n\\label{tab-conc}\n\\small\n\\resizebox{\\columnwidth}{!}{%\n\\begin{tabular}{@{}lrrrrrr@{}}\n\\toprule\n & \\multicolumn{2}{c}{lookups/s} & \\multicolumn{2}{c}{readers + 1 writer} & \\multicolumn{2}{c}{inserts/s} \\\\\n\\cmidrule(lr){2-3}\\cmidrule(lr){4-5}\\cmidrule(lr){6-7}\nEngine & 1 & 8 & 1 & 8 & 1 & 8 \\\\\n\\midrule"]
+for key, name, _, _ in conc_engines:
+    d = conc[key]
+    rows.append(f"{name} & {k(d['read'][1][0])} & {k(d['read'][8][0])} & {k(d['mixed'][1][0])} & {k(d['mixed'][8][0])} & {k(d['insert'][1][1])} & {k(d['insert'][8][1])} \\\\")
+rows.append("\\bottomrule\n\\end{tabular}}\n\\end{table}\n")
+write("compare-conc.tex", "\n".join(rows))
+print("concurrency tables written")
+
+
+# Results at a glance: the speedup of OntoDB over each other engine on selected workloads
+def mean_shape(key, shape):
+    qs = shapes[shape]
+    return sum(data[key][1][q][1] for q in qs) / len(qs)
+
+
+others = [("oxigraph", "Ox.\\ RocksDB"), ("oxigraph-mem", "Ox.\\ memory"), ("jena", "Jena TDB2"), ("sqlite", "SQLite")]
+rows = []
+for shape, label in (("s--", "pattern $(s,\\cdot,\\cdot)$"), ("sp-", "pattern $(s,p,\\cdot)$")):
+    base = mean_shape("ontodb", shape)
+    rows.append((label, [mean_shape(k_, shape) / base for k_, _ in others]))
+base = data["ontodb"][1]["q01"][1]
+rows.append(("LUBM query 1", [data[k_][1]["q01"][1] / base for k_, _ in others]))
+type_keys = ["oxigraph-rocksdb", "oxigraph-memory", "jena", "sqlite"]
+for b, label in (("10-99", "instances of a class, 10--99 below"), ("1000+", "instances of a class, 1000+ below")):
+    own = sum(cls_on[r[0]][2] for r in tabs[0][b]) / len(tabs[0][b])
+    ratios = []
+    for tab in tabs:
+        ratios.append((sum(r[2] for r in tab[b]) / len(tab[b])) / own)
+    rows.append((label, ratios))
+okeys = ["oxigraph-rocksdb", "oxigraph-memory", "jena", "sqlite"]
+rows.append(("lookups per second, 8 threads", [conc["ontodb"]["read"][8][0] / conc[k_]["read"][8][0] for k_ in okeys]))
+rows.append(("lookups per second, 8 readers + 1 writer", [conc["ontodb"]["mixed"][8][0] / conc[k_]["mixed"][8][0] for k_ in okeys]))
+out = ["\\begin{table}[t]\n\\caption{Selected results: how many times faster \\sys{} is than each other engine (the time of the other engine divided by \\sys's; for throughput, \\sys's divided by the other's). All tables of this section give every measurement.}\n\\label{tab-glance}\n\\small\n\\resizebox{\\columnwidth}{!}{%\n\\begin{tabular}{@{}lrrrr@{}}\n\\toprule\n & Ox.\\ RocksDB & Ox.\\ memory & Jena TDB2 & SQLite \\\\\n\\midrule"]
+for label, ratios in rows:
+    out.append(label + " & " + " & ".join(f"{r:.1f}$\\times$" for r in ratios) + " \\\\")
+out.append("\\bottomrule\n\\end{tabular}}\n\\end{table}\n")
+write("compare-glance.tex", "\n".join(out))
+print("glance written")

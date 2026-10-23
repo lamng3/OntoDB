@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{Concurrency on LUBM(10): lookups per second with 1 and 8 reader threads, readers' lookups per second with one writer running, and inserts per second with 1 and 8 writer threads (one triple per transaction; \sys's inserts are not logged, and Jena's commit forces the journal to disk). The machine has 8 performance cores.}
+\label{tab-conc}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{lookups/s} & \multicolumn{2}{c}{readers + 1 writer} & \multicolumn{2}{c}{inserts/s} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+Engine & 1 & 8 & 1 & 8 & 1 & 8 \\
+\midrule
+\sys{} & 416k & 1.46M & 398k & 1.39M & 264k & 950k \\
+Ox.\ RocksDB & 44k & 209k & 38k & 136k & 91k & 105k \\
+Ox.\ memory & 96k & 460k & 69k & 288k & 679k & 186k \\
+Jena TDB2 & 78k & 242k & 22k & 74k & 16 & 15 \\
+SQLite & 141k & 375k & 111k & 322k & 15k & 14k \\
+\bottomrule
+\end{tabular}}
+\end{table}

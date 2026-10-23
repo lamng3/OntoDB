@@ -36,7 +36,9 @@ namespace ontodb {
 // keys. Every node but the root keeps at least half its maximum: a leaf at
 // least leaf_max / 2 keys, an internal page at least internal_max / 2 keys.
 //
-// Thread-safe by latch crabbing (PLAN 7.1). Readers latch each child before
+// Thread-safe by latch crabbing (PLAN 7.1). Insert and Remove first try an optimistic descent that
+// latches only the leaf for writing (TryLeafOnly) and fall back to the pessimistic path below when
+// the leaf would split or underflow. Readers latch each child before
 // releasing its parent. Insert and Remove latch the header and then the path
 // in write mode, releasing every latched ancestor once the newest page is
 // safe (cannot split, or cannot underflow), so they hold only what a
@@ -69,6 +71,10 @@ class BPlusTree {
   auto CheckInvariants() const -> std::optional<std::string>;
 
  private:
+  // The common case of Insert and Remove: descend with read latches, take the write latch on the
+  // leaf alone, and finish if the leaf can take the change without a split or a merge. Returns
+  // false, having changed nothing, when the full pessimistic descent is needed.
+  auto TryLeafOnly(const TripleKey& key, bool insert, bool* result) -> bool;
   auto GetRoot() const -> page_id_t;
   auto LeafFor(const TripleKey* key) const -> ReadPageGuard;
   auto CheckNode(page_id_t page_id, const std::optional<TripleKey>& lower,

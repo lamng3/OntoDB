@@ -99,8 +99,81 @@ def _timed(con, sql, params, runs):
     return n, f"{statistics.median(times):.1f}"
 
 
+def _worker(db, role, queries, seconds, start_at, out, seed):
+    con = sqlite3.connect(db, timeout=30)
+    con.execute("PRAGMA synchronous = NORMAL")
+    n = 0
+    while time.time() < start_at:
+        pass
+    end = start_at + seconds
+    if role == "read":
+        at = seed * 7
+        while time.time() < end:
+            sql, params = queries[at % len(queries)]
+            for row in con.execute(sql, params):
+                for v in row:
+                    len(v)
+            at += 1
+            n += 1
+    else:
+        k = seed * 100000000
+        while time.time() < end:
+            ident = (k * 2654435761) & ((1 << 26) - 1)
+            k += 1
+            con.execute("INSERT OR IGNORE INTO t VALUES (?, ?, ?)", (f"<http://example.org/new/s{ident}>", "<http://example.org/new/p>", "<http://example.org/new/o>"))
+            con.commit()
+            n += 1
+    out.put((role, n))
+
+
+def concurrency(db, queries_path, seconds):
+    """Processes, one connection each (Python threads would share one interpreter lock), against
+    one WAL-mode database: lookup readers, insert writers, or one writer beside readers. A writer
+    inserts one triple per transaction."""
+    import multiprocessing as mp
+    ctx = mp.get_context("fork")
+    queries = []
+    for line in open(queries_path):
+        c = line.rstrip("\n").split("\t")
+        if len(c) >= 2 and (c[0].startswith("s--") or c[0].startswith("sp-")):
+            queries.append(translate(c[1]))
+    con = sqlite3.connect(db)
+    con.execute("PRAGMA journal_mode = WAL")
+    con.commit()
+    con.close()
+
+    def run(readers, writers):
+        out = ctx.Queue()
+        start_at = time.time() + 1.0
+        procs = [ctx.Process(target=_worker, args=(db, "read", queries, seconds, start_at, out, i)) for i in range(readers)]
+        procs += [ctx.Process(target=_worker, args=(db, "write", queries, seconds, start_at, out, 100 + i)) for i in range(writers)]
+        for p in procs:
+            p.start()
+        results = [out.get() for _ in procs]
+        for p in procs:
+            p.join()
+        return (sum(n for r, n in results if r == "read") / seconds, sum(n for r, n in results if r == "write") / seconds)
+
+    run(2, 0)  # warm the caches
+    for t in (1, 2, 4, 8):
+        r, _ = run(t, 0)
+        print(f"read\tlookup\t{t}\t{r:.0f}\t0")
+        sys.stdout.flush()
+    for t in (1, 2, 4, 8):
+        _, w = run(0, t)
+        print(f"insert\t-\t{t}\t0\t{w:.0f}")
+        sys.stdout.flush()
+    for t in (1, 2, 4, 8):
+        r, w = run(t, 1)
+        print(f"mixed\tlookup\t{t}\t{r:.0f}\t{w:.0f}")
+        sys.stdout.flush()
+
+
 def main():
     a = sys.argv[1:]
+    if a[1] == "conc":
+        build_and_conc(a)
+        return
     work = Path(a[0])
     types = a[1] == "types"
     queries = a[2] if types else a[1]
@@ -147,6 +220,30 @@ def main():
             n, us = timed(con, sql, params, runs)
             print(f"{c[0]}\t{n}\t{us}")
         sys.stdout.flush()
+
+
+def build_and_conc(a):
+    work = Path(a[0])
+    queries, seconds, files = a[2], float(a[3]), a[4:]
+    work.mkdir(parents=True, exist_ok=True)
+    db = work / "triples.sqlite"
+    if db.exists():
+        db.unlink()
+    con = sqlite3.connect(db)
+    con.execute("PRAGMA journal_mode = OFF")
+    con.execute("PRAGMA synchronous = OFF")
+    con.execute("CREATE TABLE t (s TEXT NOT NULL, p TEXT NOT NULL, o TEXT NOT NULL, PRIMARY KEY (s, p, o)) WITHOUT ROWID")
+    for f in files:
+        batch = []
+        for q in parse(path=f, format=RdfFormat.RDF_XML, base_iri=Path(f).resolve().as_uri()):
+            batch.append((str(q.subject), str(q.predicate), str(q.object)))
+        con.executemany("INSERT OR IGNORE INTO t VALUES (?, ?, ?)", batch)
+    con.execute("CREATE INDEX t_pos ON t (p, o, s)")
+    con.execute("CREATE INDEX t_osp ON t (o, s, p)")
+    con.execute("ANALYZE")
+    con.commit()
+    con.close()
+    concurrency(str(db), queries, seconds)
 
 
 if __name__ == "__main__":
