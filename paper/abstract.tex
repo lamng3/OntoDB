@@ -1,0 +1,29 @@
+\begin{abstract}
+Ontologies are queried in three ways: for the triples that match a pattern,
+for the instances at or below a class, and for the terms closest in meaning
+to a given term.
+Triple stores answer the first well, handle the second by rewriting queries
+or by materializing entailed triples, and leave the third to a separate
+vector database.
+This paper introduces \sys, an ontology database that answers all three
+inside one disk-based engine.
+(1) We describe a B+ tree triple store of three permutations behind a buffer
+pool, with algorithms for search, insert, delete, range scan, and bulk
+load, and bound the pages a range scan reads.
+(2) We label the class hierarchy with postorder intervals kept in the same
+B+ tree, so that ``everything under a class'' is a few range scans and no
+entailed triple is stored.
+(3) We add exact, IVF, product-quantized, and HNSW vector indexes, prove that
+no linear order of points keeps neighbors close, and show that in an
+ontology a class filter is correlated with the vectors, so the usual
+independence assumption fails.
+(4) We compile the engine to a 0.85\,MB WebAssembly module that runs in a
+browser.
+On the Gene Ontology, the mean class needs 2.0 intervals; the store holds
+8.1$\times$ fewer triples than materialization and reads 48$\times$ fewer
+pages than query rewriting.
+Against Oxigraph, Apache Jena TDB2, and SQLite on LUBM and the Gene
+Ontology, \sys answers selective triple patterns 4 to 40$\times$ faster and
+returns the instances of a class 2 to 6$\times$ faster, but loads 1.4 to
+5.6$\times$ slower.
+\end{abstract}

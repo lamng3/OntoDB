@@ -1,0 +1,428 @@
+\section{Experimental Study}
+\label{sec-exp}
+
+We evaluate \sys along five research questions.
+\begin{itemize}
+\item \textbf{[RQ1] The store}: how does a B+ tree store with three
+  permutations compare with an LSM-based, a Java B+ tree, and a relational
+  store on triple patterns, queries, and loading?
+\item \textbf{[RQ2] Hierarchies}: what do interval labels cost, and how do they
+  compare with materializing and rewriting, and with other engines'
+  subclass-path queries?
+\item \textbf{[RQ3] Vector indexes}: what recall, time, and memory do the
+  four indexes give on real embeddings?
+\item \textbf{[RQ4] Filtered search}: which strategy answers
+  $\mathrm{near}(q,c,k)$ fastest, and does a single rule choose well?
+\item \textbf{[RQ5] Design choices}: what do three permutations, the bulk
+  loader, and the decode cache each buy?
+\end{itemize}
+
+\subsection{Experimental Setup}
+
+\stitle{Systems}.
+We compare \sys, built in release mode with the B+ tree store (SPO, POS, OSP),
+a 256\,MiB buffer pool, and automatic join selection, with four configurations
+of three other systems, all run in-process on one thread of the same
+machine: Oxigraph 0.5.13~\cite{oxigraph} through its Rust interface, with
+RocksDB on disk and with its in-memory store; Apache Jena TDB2
+5.2.0~\cite{jenatdb} on Java 17 with a 4\,GiB heap and its own bulk loader;
+and SQLite 3.51 with one table of three string columns, a primary key on
+$(s,p,o)$ and two more indexes on $(p,o,s)$ and $(o,s,p)$, a SPARQL basic
+graph pattern translated into a join of the table with itself, and
+\texttt{ANALYZE} after loading.
+SQLite stores terms as strings and \sys as ids; we include it as the
+relational baseline.
+RDF4J, QLever, and RDFox are discussed in Section~\ref{sec-related} but not run.
+
+\stitle{Data}.
+LUBM~\cite{lubm} at one and ten universities (103,104 and 1,316,700
+statements) and the Gene Ontology~\cite{ashburner2000} (release 2026-07-26
+without obsolete terms: 38,092 classes, 57,456 \texttt{is\_a} edges) with
+$d=384$ embeddings of the term names by
+\texttt{all-MiniLM-L6-v2}~\cite{reimers2019}.
+Because the Gene Ontology has no instances, we add 200,000 synthetic
+entities of one to three types drawn uniformly from its classes (495,552
+triples in all).
+
+\stitle{Workloads and method}.
+The pattern workload samples, from each dataset, 100 constants for every
+bound position of each shape of Table~\ref{tab-perms}, so that every shape is
+measured; the LUBM workload is the 14 queries of the benchmark.
+The instance workload asks for $\mathrm{inst}(c)$ for 30 classes in each of
+five size buckets, answered by \sys through interval scans and by the others
+through the subclass path \texttt{?c rdfs:subClassOf* c . ?x a ?c} (SQLite: a
+recursive query).
+Each query is parsed once, run to warm the caches (three times for the JVM and SQLite), and then five to nine times; we report the median, and the mean of
+medians over a workload.
+Every engine converts each answer to its string, and the row counts of all
+engines agree on every query.
+Queries that run for a minute are reported as timeouts; none did.
+Times are warm: they include \sys's decode cache and the other engines' own
+caches.
+The machine is an Apple M2 Pro with 16\,GiB.
+Counts of page reads use a cold 64-frame pool.
+The code, data generators, and every number in this section are available
+at the artifact URL.
+
+\subsection{RQ1: The Store}
+
+Table~\ref{tab-load} gives the cost of loading LUBM(10), and
+Table~\ref{tab-queries} the query times.
+
+\input{gen/compare-load}
+
+\input{gen/compare-queries}
+
+\stitle{Selective patterns}.
+For patterns that bind the subject, \sys takes 3\,$\mu$s and 2\,$\mu$s and the
+others 11 to 117\,$\mu$s and 9 to 52\,$\mu$s, so \sys is about 4 to 40$\times$
+faster.
+Every answer is one descent of a B+ tree that fits the pool and a few keys.
+
+\stitle{Large results}.
+For patterns that return 16,000 to 71,000 rows, \sys takes 10 to 71\,ms: 1.9 to
+3.2$\times$ faster than Oxigraph on RocksDB, 1.5 to 2.4$\times$ faster than
+Jena, equal to Oxigraph's in-memory store on $(\cdot,\cdot,o)$ and 1.3 to
+1.7$\times$ slower on the other two, and 1.3 to 2.0$\times$ slower than SQLite,
+whose string index returns spellings without a dictionary.
+
+\stitle{LUBM queries}.
+Ten of the fourteen LUBM queries return no rows without inference; every
+engine answers them in microseconds and the ratios of two tiny times mean
+nothing, so Table~\ref{tab-queries} lists the four that return rows.
+On the triangle query SQLite takes 4.0\,ms, \sys 8.2\,ms, Oxigraph in memory
+34\,ms, Jena 120\,ms, and Oxigraph on RocksDB 275\,ms: \sys is 33$\times$
+faster than the last, and twice as slow as SQLite; we did not inspect the
+other engines' plans.
+On the large scan (LUBM 14) the order is SQLite, Oxigraph in memory, \sys,
+Oxigraph on RocksDB, Jena.
+
+\stitle{Loading}.
+\sys is the slowest to load, 11.4\,s against 2.0\,s for Oxigraph on RocksDB
+(5.6$\times$), 6.1\,s for Jena, and 8.1\,s for SQLite, and its peak
+memory is 584\,MiB against 78\,MiB for Oxigraph on RocksDB, because it
+parses RDF/XML through a C library, interns each term through two B+ trees,
+and builds exact statistics.
+Its file is the smallest, 134\,MiB against 176 for Oxigraph on RocksDB, 363
+for Jena, and 706 for SQLite.
+In sum, a B+ tree store of three permutations is competitive with the
+other designs on basic graph patterns: fastest on selective ones, within a
+factor of two of the best on large ones, and slowest to load.
+
+\subsection{RQ2: Hierarchies}
+
+\stitle{Interval labels}.
+Table~\ref{tab-labels} shows that the Gene Ontology needs 76,570 intervals for
+38,092 classes, 2.01 per class and 598\,KiB in all, where the closure it
+replaces has 393,448 ancestor pairs (9\,MiB as 24-byte keys in one
+permutation).
+The choice of spanning forest matters little: taking the deepest parent saves
+13\%.
+The tail is long, one class needing 741 intervals, within the bound of
+Lemma~\ref{lem-size}.
+Labels build in 15\,ms, and asking whether a class is below another takes
+27\,ns against 775\,ns for a search up the parents.
+
+\begin{table}[t]
+\caption{Interval labels for the Gene Ontology.}
+\label{tab-labels}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Spanning-forest rule & non-tree edges & intervals & mean / p99 / max & build \\
+\midrule
+deepest parent & 19,367 & 76,570 & 2.01 / 17 / 741 & 14.9 ms \\
+first parent & 19,367 & 87,769 & 2.30 / 22 / 740 & 14.4 ms \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\stitle{Against materializing and rewriting}.
+Table~\ref{tab-desc} compares interval scans with a search that scans POS once
+per class.
+For a class with a thousand or more descendants the intervals need 101
+scans instead of 3,304, 40 page reads instead of 694, and 0.5\,ms instead of
+9\,ms.
+Table~\ref{tab-types} compares the three strategies for instance queries on
+the synthetic instances.
+Materializing the closure turns 495,552 triples into 4,017,973 (8.1$\times$),
+the file from 63.6 to 309.5\,MiB, and the load from 5.1 to 180\,s.
+The interval index adds 9.3\,MiB (15\%) and 0.17\,s.
+On queries the interval index is close to the materialized store and far from
+rewriting: for a class with a thousand or more descendants it reads 265 pages
+against 182 (materialized) and 12,803 (rewrite).
+All three return identical answers on every sampled class.
+On LUBM(1) the hierarchy is shallow (43 classes) and the three are within a
+factor of about two on every query, and materialization adds 15\% to the
+triples: the benefit of intervals grows with the depth and breadth of the
+hierarchy.
+
+\begin{table}[t]
+\caption{Descendants of a class in GO, cold 64-frame pool, mean over up to 40 classes per row.}
+\label{tab-desc}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Below $c$ & method & scans & page reads & $\mu$s \\
+\midrule
+10--99 & intervals & 5.9 & 5.8 & 59 \\
+ & one scan per class & 30.6 & 16.3 & 149 \\
+100--999 & intervals & 29.1 & 13.2 & 147 \\
+ & one scan per class & 268.2 & 65.7 & 803 \\
+1000+ & intervals & 101.3 & 40.1 & 528 \\
+ & one scan per class & 3303.6 & 694.1 & 8998 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{Instances of $c$ on 200,000 synthetic entities over GO, mean over 30 classes per row (cold 64-frame pool). Top: cost of the store.}
+\label{tab-types}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Strategy & triples & file (MiB) & load (s) \\
+\midrule
+rewrite & 495,552 & 63.6 & 5.09 \\
+intervals & 495,552 & 72.9 & 5.26 \\
+materialize & 4,017,973 & 309.5 & 180.31 \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Below $c$ & strategy & answers & page reads & $\mu$s \\
+\midrule
+10--99 & intervals & 278 & 8.4 & 90 \\
+ & rewrite & 278 & 87.5 & 571 \\
+ & materialized & 278 & 6.6 & 444 \\
+100--999 & intervals & 2,954 & 40.9 & 1,461 \\
+ & rewrite & 2,954 & 1,153 & 7,280 \\
+ & materialized & 2,954 & 22.5 & 987 \\
+1000+ & intervals & 29,904 & 264.8 & 4,555 \\
+ & rewrite & 29,904 & 12,803 & 82,441 \\
+ & materialized & 29,904 & 182.0 & 3,776 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\stitle{Against other engines}.
+Table~\ref{tab-hier} compares \sys with the other engines on instance
+queries.
+The interval scan alone returns term ids, in 1.9\,ms for the 29,904 answers of
+the largest classes (about 60\,ns each); returning strings, as the others do, takes
+11.5\,ms because each id is decoded.
+At the string level \sys is 2.2$\times$ faster than the best other engine
+(Oxigraph in memory) on the largest classes, 3.5$\times$ faster than SQLite's
+recursive query, and 5.4 to 5.8$\times$ faster than Jena and Oxigraph on
+RocksDB, and 5 to 9$\times$ faster than Oxigraph in memory on classes with
+fewer than 1,000 instances.
+With the decode cache off (Table~\ref{tab-cache}) \sys takes 22.6\,ms for the
+largest classes, still 1.1$\times$ faster than the best other engine.
+A subclass path is evaluated by the others as a graph traversal followed by a
+join, and by \sys as range scans of one tree that return disjoint answers.
+
+\input{gen/compare-hier}
+
+\subsection{RQ3: Vector Indexes}
+
+We ran 1,000 query terms (the term itself excluded from its answer) against
+all 38,092 vectors, with exact search as ground truth.
+Table~\ref{tab-knn} gives selected points and Figure~\ref{fig-knn} the
+recall--latency curves.
+
+\begin{table}[t]
+\caption{Vector indexes on GO (recall@10, mean time per query, memory of the structure, build time).}
+\label{tab-knn}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Index & setting & recall & $\mu$s & MiB & build (s) \\
+\midrule
+flat float32 & exact & 1.000 & 2,238 & 55.8 & --- \\
+flat 8-bit & exact over codes & 0.996 & 4,554 & 14.1 & --- \\
+flat PQ $m{=}48$ & codes only & 0.778 & 819 & 1.7 & 10.4 \\
+flat PQ $m{=}48$ & re-rank 100 & 0.998 & 905 & 1.7$^\dagger$ & 10.4 \\
+IVF $\nu{=}512$ & $\rho{=}8$ & 0.892 & 149 & 56.5 & 17.5 \\
+IVF $\nu{=}512$ & $\rho{=}16$ & 0.929 & 255 & 56.5 & 17.5 \\
+IVF $\nu{=}512$ & $\rho{=}64$ & 0.976 & 928 & 56.5 & 17.5 \\
+IVF $\nu{=}512$, 8-bit & $\rho{=}16$ & 0.926 & 263 & 14.8 & 17.5 \\
+IVF $\nu{=}512$, PQ 96 & $\rho{=}16$ & 0.839 & 178 & 4.2 & 38.4 \\
+HNSW $M{=}16$ & $\ef{=}10$ & 0.993 & 44 & 59.7 & 15.0 \\
+HNSW $M{=}16$ & $\ef{=}40$ & 0.997 & 108 & 59.7 & 15.0 \\
+HNSW $M{=}32$ & $\ef{=}160$ & 0.999 & 474 & 63.4 & 28.0 \\
+\bottomrule
+\end{tabular}}
+
+\smallskip
+{\footnotesize $^\dagger$ re-ranking reads the float vectors as well.}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\input{gen/knn-plot}
+\caption{Recall@10 against time per query on GO (38,092 vectors, 384 dimensions).}
+\label{fig-knn}
+\end{figure}
+
+\stitle{A baseline that is not slow by accident}.
+Our first run scored with a plain dot-product loop.
+A compiler may not vectorize it without \texttt{-ffast-math}, and the exact
+scan took 8.3\,ms, which would have made the speed-ups look about twice as
+large: HNSW at $\ef{=}10$ is 103 times faster than that baseline and 51 times
+faster than the vectorized one.
+With eight independent accumulators the exact scan takes 2.2\,ms (13
+Gflop/s), and every number here uses that.
+A speed-up over ``exact'' depends entirely on how fast exact is.
+
+\stitle{What the numbers say}.
+HNSW dominates on this data: recall 0.993 at 44\,$\mu$s, 51$\times$ faster
+than the exact scan, for 3.9\,MiB of links on top of the vectors.
+IVF needs 255\,$\mu$s for 0.929 and 928\,$\mu$s for 0.976.
+IVF over the B+ tree is about 2.7$\times$ more expensive per scored row than a
+contiguous scan (157\,ns against 59\,ns): each entry is a decoded 24-byte key
+and a random read of the vector.
+That is the price of lists that page, cache, and update with the triples.
+The cost model holds in shape: more lists make a query cheaper until the
+centroid scan dominates ($\nu{=}2048$ pays 124\,$\mu$s at $\rho{=}1$).
+Product quantization is for memory, not speed, at this size: codes alone
+reach 0.78 or 0.88 recall in 1.7 or 3.5\,MiB, and re-ranking the best 100
+exactly recovers 0.998 and 1.000 but needs the float vectors.
+8-bit codes keep 0.996 recall in a quarter of the memory and are slower than
+float32, because converting bytes to floats costs more than the cache misses
+they avoid at 56\,MiB.
+The queries are terms of the ontology, whose neighbors are also terms of it;
+queries from outside the vocabulary, such as free text, would be harder, and
+we do not measure them.
+
+\subsection{RQ4: Filtered Search}
+
+For 20 classes in each of five size buckets we ran the ten nearest terms
+under $c$ for a query inside $c$ and one outside it, against the exact answer
+over the members.
+IVF uses 512 lists and 16 probes, HNSW $M{=}16$ and $\ef{=}64$.
+Table~\ref{tab-hybrid} gives recall and time.
+
+\begin{table*}[t]
+\caption{Ten nearest terms under a class $c$, by subtree size, query inside or outside $c$: recall@10 / $\mu$s per query. GO, 38,092 terms. Masked and post-filtered searches use the index; pre-filter resolves the members and scores them exactly.}
+\label{tab-hybrid}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Strategy & $\le$10 & 11--100 & 101--1000 & 1001--5000 & $>$5000 \\
+\midrule
+\multicolumn{6}{@{}l}{\emph{query inside $c$}} \\
+pre-filter & 1.00 / 3 & 1.00 / 9 & 1.00 / 62 & 1.00 / 292 & 1.00 / 1,404 \\
+post-filter, HNSW & 1.00 / 37,553 & 1.00 / 1,739 & 1.00 / 427 & 1.00 / 70 & 1.00 / 68 \\
+post-filter, IVF & 0.86 / 903 & 0.87 / 558 & 0.93 / 293 & 0.98 / 198 & 0.99 / 211 \\
+masked HNSW & 1.00 / 16,653 & 1.00 / 15,846 & 1.00 / 1,150 & 1.00 / 183 & 1.00 / 105 \\
+masked IVF & 1.00 / 1,253 & 0.95 / 111 & 0.96 / 104 & 0.98 / 124 & 0.99 / 161 \\
+auto & 1.00 / 3 & 1.00 / 9 & 1.00 / 59 & 1.00 / 269 & 1.00 / 95 \\
+\midrule
+\multicolumn{6}{@{}l}{\emph{query outside $c$}} \\
+pre-filter & 1.00 / 3 & 1.00 / 9 & 1.00 / 62 & 1.00 / 291 & 1.00 / 1,394 \\
+post-filter, HNSW & 1.00 / 36,654 & 1.00 / 27,669 & 0.99 / 13,607 & 1.00 / 5,513 & 1.00 / 836 \\
+post-filter, IVF & 0.07 / 966 & 0.02 / 1,009 & 0.17 / 902 & 0.33 / 811 & 0.64 / 591 \\
+masked HNSW & 1.00 / 16,802 & 1.00 / 16,611 & 1.00 / 8,697 & 1.00 / 4,424 & 1.00 / 900 \\
+masked IVF & 1.00 / 1,255 & 0.79 / 698 & 0.45 / 286 & 0.37 / 147 & 0.66 / 107 \\
+auto & 1.00 / 3 & 1.00 / 9 & 1.00 / 62 & 1.00 / 295 & 1.00 / 860 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\stitle{Exact pre-filtering wins for small classes}.
+Up to about 1,000 members, resolving the members through the interval index
+and scoring them exactly takes 3 to 62\,$\mu$s and is the exact answer.
+Every index-based strategy is slower, from 1.7$\times$ (masked IVF at 101 to
+1,000 members, at recall 0.96) to over 10,000$\times$ (post-filtered HNSW on
+the smallest classes), because few of the vectors an index touches belong to
+the class.
+A graph search for a rare filter crosses most of the graph: masked HNSW reads
+16\,ms for a class of at most 100 members, the failure ACORN is designed to
+remove.
+
+\stitle{Post-filtering fails for outside queries}.
+IVF post-filter recall falls to 0.07 on the smallest classes and 0.64 on the
+largest; HNSW reaches full recall only by searching again and again (37\,ms
+for a class of at most ten members, in six rounds).
+
+\stitle{Masked HNSW wins for large classes}.
+Above 5,000 members it takes 105\,$\mu$s inside and 900\,$\mu$s outside,
+exact, against 1.4\,ms for resolving and scoring the members.
+
+\stitle{A cost model for the crossover}.
+Let $\gamma_m$ be the cost of pre-filtering per member (an interval scan, a hash
+lookup from term to row, and one dot product); from Table~\ref{tab-hybrid},
+$\gamma_m\approx 0.13$ to $0.20\,\mu$s for classes of a few hundred members or
+more.
+Pre-filtering beats a masked graph search when $|\desc(c)|<\theta=\gamma_h/\gamma_m$, where
+$\gamma_h$ is the masked search's time.
+For a query inside $c$, $\gamma_h\approx 105$ to $183\,\mu$s, so $\theta\approx 800$ to
+1,000, which matches the observed crossing between the 101--1,000 and
+1,001--5,000 columns.
+For a query outside $c$ the masked walk costs 0.9 to 4.4\,ms on classes of
+1,000 or more members, so $\theta$ is 7,000 to 25,000.
+A single threshold has to sit between the two; 4,096 stays below the
+outside-query crossing and loses at most a factor of 3.8 at the inside-query
+one.
+
+\stitle{The auto rule}.
+With a threshold of 4,096 members, auto matches the fastest strategy in every
+cell but one and is never slower than 0.9\,ms.
+The exception is a class of 1,001 to 5,000 members with an inside query:
+269\,$\mu$s, against 70\,$\mu$s for post-filtered HNSW and 183\,$\mu$s for
+masked HNSW.
+Post-filtering would cost 5.5\,ms for an outside query on the same class, so
+the rule gives up a factor of 3.8 in one cell to avoid a factor of 79 in its
+neighbor.
+
+\subsection{RQ5: Design Choices}
+
+\stitle{Permutations}.
+One tree, SPO, answers a pattern that does not bind the subject by a scan of
+the whole tree.
+Table~\ref{tab-permstudy} counts, on LUBM(1) with a cold 64-frame pool, the
+page reads of a pattern for one, three, and all six permutations (averages
+over 20 sampled patterns per shape).
+Three permutations cut the pages of $(\cdot,p,\cdot)$ by 7.9$\times$ and those
+of $(\cdot,\cdot,o)$ and $(\cdot,p,o)$ by 40$\times$; the other three trees
+cost 66\% more space and change no pattern, because every shape already has
+a prefix scan in the first three.
+
+\begin{table}[t]
+\caption{Page reads per pattern on LUBM(1) (cold 64-frame pool, bulk-loaded) and file size, by set of permutations.}
+\label{tab-permstudy}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Permutations & $(\cdot,p,\cdot)$ & $(\cdot,\cdot,o)$ & $(\cdot,p,o)$ & file (MiB) \\
+\midrule
+SPO & 599 & 599 & 599 & 6.1 \\
+SPO, POS, OSP & 76 & 15 & 15 & 10.8 \\
+all six & 76 & 15 & 15 & 17.9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\stitle{Bulk loading}.
+Loading the 15 files of LUBM(1) one triple at a time takes 1.74\,s and 16.2\,MiB
+for three permutations; the bulk loader takes 1.08\,s and 10.8\,MiB, a third
+less space, and a full scan reads 599 pages instead of 1,131 because
+inserted leaves are about half full and bulk-loaded leaves are full.
+With the loader, the time that remains is the dictionary's.
+
+\stitle{Decode cache}.
+Table~\ref{tab-cache} shows what the dictionary's decode cache buys:
+the subject-bound pattern gets 4.3$\times$ faster, patterns that return
+thousands of rows get 1.5 to 2.3$\times$ faster, and the largest instance
+queries 2.0$\times$.
+The cache does nothing for ids, which is why the
+interval scan alone is 6$\times$ faster than the same query returning
+strings.
+A cache is the remedy Jena uses for the same cost; a cheaper id-to-spelling
+access path would help every cold query and is future work.
+
+\input{gen/compare-cache}

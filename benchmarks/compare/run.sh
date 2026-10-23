@@ -14,12 +14,14 @@ cd "$root"
 cmake --preset release >/dev/null
 cmake --build --preset release --target ontodb_bench_compare >/dev/null
 (cd benchmarks/compare/oxigraph && cargo build --release 2>&1 | tail -1)
+(cd benchmarks/compare/jena && mvn -q -DskipTests package dependency:build-classpath -Dmdep.outputFile=cp.txt)
 cd benchmarks/compare
 raw=raw
 mkdir -p "$raw"
 py=.venv/bin/python
 ox=oxigraph/target/release/oxigraph-bench
 od=../../build/release/ontodb_bench_compare
+jena() { java -Xmx4g -cp "jena/target/jena-bench-0.1.0.jar:$(cat jena/cp.txt)" Bench "$@"; }
 for set in lubm1:lubm:9 lubm10:lubm10:5; do
   IFS=: read -r name dir runs <<<"$set"
   files=(../../data/downloads/$dir/University*.owl)
@@ -27,12 +29,16 @@ for set in lubm1:lubm:9 lubm10:lubm10:5; do
   $od $raw/work-ontodb-$name $raw/queries-$name.tsv $runs "${files[@]}" > $raw/ontodb-$name.tsv
   $ox rocksdb $raw/work-oxi-$name $raw/queries-$name.tsv $runs "${files[@]}" > $raw/oxigraph-$name.tsv
   $ox memory $raw/work-oxi-$name $raw/queries-$name.tsv $runs "${files[@]}" > $raw/oxigraph-mem-$name.tsv
+  jena $raw/work-jena-$name $raw/queries-$name.tsv $runs "${files[@]}" > $raw/jena-$name.tsv 2>/dev/null
+  $py sqlite_bench.py $raw/work-sql-$name $raw/queries-$name.tsv $runs "${files[@]}" > $raw/sqlite-$name.tsv
 done
 cp ../semantic/raw/work-gotypes/classes.tsv $raw/classes.tsv
 for mode in rocksdb memory; do
   $ox $mode $raw/work-oxi-go types $raw/classes.tsv 5 ../../data/downloads/go/go.nt ../semantic/raw/work-gotypes/entities.nt > $raw/oxigraph-$mode-types.tsv
 done
-python3 summarize.py $raw/ontodb-lubm10.tsv $raw/oxigraph-lubm10.tsv $raw/oxigraph-mem-lubm10.tsv > $raw/summary-lubm10.md
-python3 summarize.py $raw/ontodb-lubm1.tsv $raw/oxigraph-lubm1.tsv $raw/oxigraph-mem-lubm1.tsv > $raw/summary-lubm1.md
-python3 summarize_types.py $raw/oxigraph-rocksdb-types.tsv $raw/oxigraph-memory-types.tsv > $raw/summary-types.md
+jena $raw/work-jena-go types $raw/classes.tsv 5 ../../data/downloads/go/go.nt ../semantic/raw/work-gotypes/entities.nt > $raw/jena-types.tsv 2>/dev/null
+$py sqlite_bench.py $raw/work-sql-go types $raw/classes.tsv 5 ../../data/downloads/go/go.nt ../semantic/raw/work-gotypes/entities.nt > $raw/sqlite-types.tsv
+python3 summarize.py $raw/ontodb-lubm10.tsv $raw/oxigraph-lubm10.tsv $raw/oxigraph-mem-lubm10.tsv $raw/jena-lubm10.tsv $raw/sqlite-lubm10.tsv > $raw/summary-lubm10.md
+python3 summarize.py $raw/ontodb-lubm1.tsv $raw/oxigraph-lubm1.tsv $raw/oxigraph-mem-lubm1.tsv $raw/jena-lubm1.tsv $raw/sqlite-lubm1.tsv > $raw/summary-lubm1.md
+python3 summarize_types.py $raw/oxigraph-rocksdb-types.tsv $raw/oxigraph-memory-types.tsv $raw/jena-types.tsv $raw/sqlite-types.tsv > $raw/summary-types.md
 cat $raw/summary-*.md

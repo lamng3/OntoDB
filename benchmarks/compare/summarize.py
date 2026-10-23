@@ -28,9 +28,12 @@ def fmt(us):
     return f"{us:.0f} µs" if us < 1000 else f"{us / 1000:.1f} ms"
 
 
+NAMES = ["OntoDB", "Oxigraph (RocksDB)", "Oxigraph (memory)", "Jena TDB2", "SQLite"]
+
+
 def main():
     paths = sys.argv[1:]
-    names = ["OntoDB", "Oxigraph (RocksDB)", "Oxigraph (memory)"][: len(paths)]
+    names = NAMES[: len(paths)]
     data = [read(p) for p in paths]
     loads = [d[0] for d in data]
     rows = [d[1] for d in data]
@@ -38,17 +41,14 @@ def main():
     for n, l in zip(names, loads):
         print(f"| {n} | {int(l['triples']):,} | {l['load_s']} | {l['file_mib']} | {l['peak_rss_mib']} |")
     print()
-    bad = [q for q in rows[0] if any(q in r and r[q][0] != rows[0][q][0] for r in rows[1:])]
+    bad = [q for q in rows[0] if any(q in r and r[q][0] != rows[0][q][0] and r[q][0] >= 0 and rows[0][q][0] >= 0 for r in rows[1:])]
     if bad:
         print("ROW COUNTS DISAGREE:", ", ".join(bad), "\n")
-    print("| Query | rows | " + " | ".join(names) + " | " + " | ".join(f"{n.split()[0]}/OntoDB" if i else "" for i, n in enumerate(names)).strip(" |") + " |")
-    print("|---|---|" + "---|" * (len(names) * 2 - 1))
+    print("| Query | rows | " + " | ".join(names) + " |")
+    print("|---|---|" + "---|" * len(names))
     for q in rows[0]:
-        if not re.match(r"q\d+", q):
-            continue
-        cells = [fmt(r[q][1]) if q in r else "-" for r in rows]
-        ratios = [f"{r[q][1] / rows[0][q][1]:.1f}x" if q in r and r[q][1] and rows[0][q][1] else "-" for r in rows[1:]]
-        print(f"| {q} | {rows[0][q][0]} | " + " | ".join(cells) + " | " + " | ".join(ratios) + " |")
+        if re.match(r"q\d+", q):
+            print(f"| {q} | {rows[0][q][0]} | " + " | ".join(fmt(r[q][1]) if q in r else "timeout" for r in rows) + " |")
     print()
     print("| Pattern | queries | mean rows | " + " | ".join(f"{n} mean / p99" for n in names) + " |")
     print("|---|---|---|" + "---|" * len(names))
@@ -60,9 +60,8 @@ def main():
         cells = []
         for r in rows:
             ts = sorted(r[q][1] for q in qs if q in r and r[q][1] is not None)
-            cells.append(f"{sum(ts) / len(ts):.0f} / {ts[int(0.99 * (len(ts) - 1))]:.0f} µs")
-        mean_rows = sum(rows[0][q][0] for q in qs) / len(qs)
-        print(f"| {shape} | {len(qs)} | {mean_rows:.1f} | " + " | ".join(cells) + " |")
+            cells.append(f"{sum(ts) / len(ts):.0f} / {ts[int(0.99 * (len(ts) - 1))]:.0f} µs" if ts else "-")
+        print(f"| {shape} | {len(qs)} | {sum(rows[0][q][0] for q in qs) / len(qs):.1f} | " + " | ".join(cells) + " |")
 
 
 if __name__ == "__main__":

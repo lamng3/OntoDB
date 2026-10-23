@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{The effect of \sys's decode cache (65\,536 entries) on the time to return strings: mean time per query on LUBM(10), and the instances of a class on the Gene Ontology (30 classes per row).}
+\label{tab-cache}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Workload & answers & cache off & cache on \\
+\midrule
+$(s,\cdot,\cdot)$ & 7 & 13\,$\mu$s & 3\,$\mu$s \\
+$(s,p,\cdot)$ & 2 & 3\,$\mu$s & 2\,$\mu$s \\
+$(\cdot,\cdot,o)$ & 16,233 & 24.9\,ms & 11.0\,ms \\
+$(\cdot,p,o)$ & 16,225 & 14.9\,ms & 10.2\,ms \\
+$(\cdot,p,\cdot)$ & 70,720 & 113.1\,ms & 70.8\,ms \\
+\midrule
+instances, 100-999 below & 2,954 & 2.4\,ms & 258\,$\mu$s \\
+instances, 1000+ below & 29,904 & 22.6\,ms & 11.5\,ms \\
+\bottomrule
+\end{tabular}
+\end{table}

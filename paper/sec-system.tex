@@ -1,0 +1,49 @@
+\section{A Build for the Browser}
+\label{sec-system}
+
+The engine compiles with Emscripten to a 0.85\,MB WebAssembly
+module~\cite{haas2017} that runs the same indexed store, planner, optimizer,
+and semantic extension in a web page.
+Two parts of the native build do not carry over, and replacing them is the
+whole port.
+
+\stitle{No raptor}.
+The native loader parses RDF/XML, Turtle, and N-Triples with the raptor C
+library.
+The web build uses a Turtle and N-Triples parser of about 500 lines of our own
+(prefixes, \texttt{a}, \texttt{;} and \texttt{,}, blank-node property lists,
+collections, long strings, escapes, language tags, datatypes, and numeric and
+boolean literals), and a test checks that it yields the same triples as
+raptor on the shipped data.
+RDF/XML needs the native build.
+
+\stitle{No threads}.
+The native engine has a disk-scheduler thread, a deadlock detector, and a
+worker per session.
+In the module the scheduler executes each request inline, the detector is not
+started, and a statement runs on the calling thread; there is one session, so
+there is nothing to deadlock.
+The buffer pool, the page file (held in the browser's memory file system), the
+B+ trees, and the plans are unchanged, so the page counts of
+Section~\ref{sec-exp} and the plans the engine prints are the native ones.
+
+\stitle{Using it}.
+The module exports three functions: execute a statement, run a query and
+return JSON, and reset.
+The playground page built on them offers the memory store and the B+ tree
+store on a buffer pool, shows the buffer-pool hits and misses of each query,
+and loads an 834-class slice of the Gene Ontology with its embeddings.
+In a desktop browser, building the interval labels for the slice takes 3\,ms,
+the instance query for \emph{cell death} (97 classes, one range scan) 0.3\,ms,
+a filtered similarity query 0.8\,ms, and building the IVF and HNSW indexes
+58 and 98\,ms.
+Updates are saved as a journal in the page's local storage and replayed when
+the page loads, which keeps a session across reloads but is not durability:
+there is no write-ahead log or recovery in the web build.
+
+\stitle{No GPU}.
+We considered WebGPU for the dot products and did not use it.
+A similarity query scores a few hundred vectors with HNSW, or at most a few
+thousand exactly; in the module that is under a millisecond with 128-bit SIMD,
+which the build enables, and moving the query to a GPU and back costs more
+than that.

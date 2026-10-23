@@ -1,19 +1,16 @@
 \begin{table}[t]
-\caption{Loading LUBM in each engine (bulk loader, one thread of the loader, files on a local SSD). Oxigraph's count is distinct triples; \sys's is statements read.}
-\label{tab:load}
+\caption{Bulk loading LUBM(10) (1.3 million triples). \sys{} counts statements read; the others count distinct triples.}
+\label{tab-load}
 \small
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}llrrrr@{}}
+\begin{tabular}{@{}lrrrr@{}}
 \toprule
-Data & Engine & triples & load (s) & disk (MiB) & RSS (MiB) \\
+Engine & triples & load (s) & disk (MiB) & RSS (MiB) \\
 \midrule
-LUBM(1) & \sys{} & 103\,104 & 1.02 & 10.8 & 322 \\
- & Oxigraph, RocksDB & 100\,573 & 0.13 & 17.8 & 60 \\
- & Oxigraph, memory & 100\,573 & 0.18 & --- & 53 \\
-\midrule
-LUBM(10) & \sys{} & 1\,316\,700 & 13.83 & 133.7 & 637 \\
- & Oxigraph, RocksDB & 1\,272\,953 & 1.95 & 176.3 & 87 \\
- & Oxigraph, memory & 1\,272\,953 & 2.32 & --- & 546 \\
+\sys{} & 1,316,700 & 11.41 & 133.7 & 584 \\
+Ox.\ RocksDB & 1,272,953 & 2.04 & 176.3 & 78 \\
+Ox.\ memory & 1,272,953 & 2.44 & --- & 563 \\
+Jena TDB2 & 1,272,953 & 6.13 & 363.0 & 1447 \\
+SQLite & 1,272,953 & 8.08 & 706.1 & 32 \\
 \bottomrule
-\end{tabular}}
+\end{tabular}
 \end{table}

@@ -173,6 +173,38 @@ auto BPlusTree::GetValue(const TripleKey& key) const -> bool {
   return std::binary_search(keys.begin(), keys.end(), key, Less);
 }
 
+auto BPlusTree::FindFirst(const TripleKey& key, int prefix_len) const -> std::optional<TripleKey> {
+  const TripleKey lower = TripleKey::PrefixLower(key, prefix_len);
+  const TripleKey upper = TripleKey::PrefixUpper(key, prefix_len);
+  {
+    const ReadPageGuard guard = LeafFor(&lower);
+    if (!guard.IsValid()) {
+      return std::nullopt;
+    }
+    const BPlusTreeLeafPage leaf = ReadLeaf(guard);
+    int lo = 0;
+    int hi = leaf.GetSize();
+    while (lo < hi) {  // first position with a key >= lower
+      const int mid = (lo + hi) / 2;
+      if (leaf.KeyAt(mid).Compare(lower) < 0) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    if (lo < leaf.GetSize()) {
+      const TripleKey found = leaf.KeyAt(lo);
+      return found.Compare(upper) < 0 ? std::optional<TripleKey>(found) : std::nullopt;
+    }
+  }
+  // Every key of this leaf is below the prefix: the answer, if any, starts the next leaf.
+  auto it = const_cast<BPlusTree*>(this)->Begin(key, prefix_len);
+  if (it.IsEnd()) {
+    return std::nullopt;
+  }
+  return *it;
+}
+
 // ---------------------------------------------------------------- insert ---
 
 // Pessimistic crabbing: latch the header, then each page on the way down in

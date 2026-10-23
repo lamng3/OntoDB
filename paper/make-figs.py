@@ -13,9 +13,9 @@ for line in (root / "benchmarks/semantic/raw/knn.md").read_text().splitlines():
 
 series = [
     ("HNSW $M{=}16$", "hnsw M=16", "mark=*,color=blue!70!black"),
-    ("IVF $L{=}512$", "ivf L=512 float32", "mark=square*,color=red!70!black"),
-    ("IVF $L{=}512$, sq8", "ivf L=512 sq8", "mark=triangle*,color=orange!80!black"),
-    ("IVF $L{=}512$, pq96", "ivf L=512 pq96", "mark=diamond*,color=green!50!black"),
+    ("IVF $\nu{=}512$", "ivf L=512 float32", "mark=square*,color=red!70!black"),
+    ("IVF $\nu{=}512$, sq8", "ivf L=512 sq8", "mark=triangle*,color=orange!80!black"),
+    ("IVF $\nu{=}512$, pq96", "ivf L=512 pq96", "mark=diamond*,color=green!50!black"),
 ]
 out = []
 out.append("\\begin{tikzpicture}\n\\begin{axis}[width=\\columnwidth,height=6.2cm,xmode=log,xlabel={$\\mu$s per query (log)},ylabel={recall@10},ymin=0.6,ymax=1.005,grid=both,legend pos=south east,legend style={font=\\scriptsize},tick label style={font=\\scriptsize},label style={font=\\small}]")

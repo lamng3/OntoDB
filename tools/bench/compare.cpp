@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -68,7 +69,10 @@ auto main(int argc, char** argv) -> int {
   DiskManager disk(file.string());
   BufferPoolManager pool(kPool, &disk, 2);
   Catalog catalog(&pool);
-  DiskDictionary dictionary(&pool, &catalog);
+  // ONTODB_TERM_CACHE sets the dictionary's decode cache in entries; 0 turns it off.
+  const char* cache_env = std::getenv("ONTODB_TERM_CACHE");
+  DiskDictionary dictionary(&pool, &catalog,
+                            cache_env != nullptr ? std::stoul(cache_env) : DiskDictionary::kDefaultCacheSlots);
   IndexedStore store(&catalog, &pool, &dictionary);
   std::vector<fs::path> paths;
   for (int i = 4; i < argc; i++) {
