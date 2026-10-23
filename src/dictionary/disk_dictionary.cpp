@@ -50,8 +50,8 @@ auto NewTreeHeader(BufferPoolManager* bpm) -> page_id_t {
 
 }  // namespace
 
-DiskDictionary::DiskDictionary(BufferPoolManager* bpm, Catalog* catalog)
-    : bpm_(bpm), catalog_(catalog) {
+DiskDictionary::DiskDictionary(BufferPoolManager* bpm, Catalog* catalog, size_t cache_slots)
+    : bpm_(bpm), catalog_(catalog), cache_slots_(cache_slots) {
   page_id_t heap_page = INVALID_PAGE_ID;
   page_id_t by_id = INVALID_PAGE_ID;
   page_id_t by_hash = INVALID_PAGE_ID;
@@ -109,11 +109,25 @@ auto DiskDictionary::Lookup(std::string_view term) const -> std::optional<term_i
 
 auto DiskDictionary::Lookup(term_id_t id) const -> std::optional<std::string> {
   std::lock_guard<std::mutex> guard(mu_);
+  if (cache_slots_ == 0) {
+    const auto rid = RidOf(id);
+    return rid.has_value() ? std::optional<std::string>(heap_->Get(*rid)) : std::nullopt;
+  }
+  if (cache_.empty()) {
+    cache_.resize(cache_slots_);
+  }
+  CacheSlot& slot = cache_[id % cache_slots_];
+  if (slot.id == id && id != 0) {
+    return slot.spelling;
+  }
   const auto rid = RidOf(id);
   if (!rid.has_value()) {
     return std::nullopt;
   }
-  return heap_->Get(*rid);
+  std::string spelling = heap_->Get(*rid);
+  slot.id = id;
+  slot.spelling = spelling;
+  return spelling;
 }
 
 auto DiskDictionary::Size() const -> size_t {
@@ -141,14 +155,14 @@ auto DiskDictionary::LookupLocked(std::string_view term) const -> std::optional<
 }
 
 auto DiskDictionary::RidOf(term_id_t id) const -> std::optional<RID> {
-  auto it = by_id_->Begin(TripleKey::Encode(id, 0, 0), 1);
-  if (it.IsEnd()) {
+  const auto key = by_id_->FindFirst(TripleKey::Encode(id, 0, 0), 1);
+  if (!key.has_value()) {
     return std::nullopt;
   }
   term_id_t found = 0;
   term_id_t page = 0;
   term_id_t slot = 0;
-  (*it).Decode(&found, &page, &slot);
+  key->Decode(&found, &page, &slot);
   return RID(static_cast<page_id_t>(static_cast<uint32_t>(page)), static_cast<slot_offset_t>(slot));
 }
 

@@ -1,17 +1,16 @@
-\begin{table}[t]
-\caption{Instances of a class and its subclasses, 200\,000 entities over the Gene Ontology, 30 classes per row, warm: mean time. \sys{} answers by interval scans; Oxigraph by \texttt{?x a ?c . ?c rdfs:subClassOf* <C>}. \sys{} ``ids'' stops before the dictionary; ``strings'' decodes every answer, as Oxigraph does.}
-\label{tab:hier}
+\begin{table*}[t]
+\caption{Instances of a class and its subclasses on the Gene Ontology with 200\,000 entities: mean time over 30 classes per row. \sys{} answers by interval scans: ``ids'' stops before the dictionary, ``strings'' decodes every answer as the other engines do. The others evaluate the subclass path \texttt{rdfs:subClassOf*} (SQLite: a recursive query). Answer counts agree on every class.}
+\label{tab-hier}
 \small
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lrrrrr@{}}
+\begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
-Below $C$ & answers & \sys{} ids & \sys{} strings & Ox., RocksDB & Ox., memory \\
+Subclasses below $c$ & answers & \sys{} ids & \sys{} strings & Ox.\ RocksDB & Ox.\ memory & Jena TDB2 & SQLite \\
 \midrule
-1 & 10 & 1\,$\mu$s & 11\,$\mu$s & 37\,$\mu$s & 13\,$\mu$s \\
-2-9 & 40 & 3\,$\mu$s & 42\,$\mu$s & 91\,$\mu$s & 23\,$\mu$s \\
-10-99 & 278 & 10\,$\mu$s & 275\,$\mu$s & 539\,$\mu$s & 110\,$\mu$s \\
-100-999 & 2,954 & 127\,$\mu$s & 2.9\,ms & 5.4\,ms & 1.1\,ms \\
-1000+ & 29,904 & 1.7\,ms & 29.1\,ms & 60.6\,ms & 21.8\,ms \\
+1 & 10 & 1\,$\mu$s & 2\,$\mu$s & 38\,$\mu$s & 15\,$\mu$s & 281\,$\mu$s & 27\,$\mu$s \\
+2-9 & 40 & 3\,$\mu$s & 3\,$\mu$s & 94\,$\mu$s & 26\,$\mu$s & 249\,$\mu$s & 44\,$\mu$s \\
+10-99 & 278 & 11\,$\mu$s & 15\,$\mu$s & 588\,$\mu$s & 115\,$\mu$s & 722\,$\mu$s & 225\,$\mu$s \\
+100-999 & 2,954 & 131\,$\mu$s & 258\,$\mu$s & 6.3\,ms & 1.3\,ms & 4.3\,ms & 3.1\,ms \\
+1000+ & 29,904 & 1.9\,ms & 11.5\,ms & 66.8\,ms & 25.6\,ms & 61.6\,ms & 40.7\,ms \\
 \bottomrule
-\end{tabular}}
-\end{table}
+\end{tabular}
+\end{table*}

@@ -2,6 +2,8 @@
 
 #include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #include "buffer/buffer_pool_manager.h"
 #include "catalog/catalog.h"
@@ -26,10 +28,15 @@ namespace ontodb {
 //       offset 8 magic "ODIC", 12 term count (u64), 20 heap first page,
 //       24 by-id tree header page, 28 by-hash tree header page.
 // The hash is 64-bit FNV-1a, fixed so that files are portable between builds.
+// Decoding an id costs a tree descent and a heap read, so the most recently decoded
+// spellings sit in a direct-mapped cache of `cache_slots` entries (slot = id mod size). Ids are dense and a spelling never
+// changes or moves, so an entry is never stale; ids that are consecutive never share a slot.
 // Thread-safe: one mutex serializes every call.
 class DiskDictionary : public Dictionary {
  public:
-  DiskDictionary(BufferPoolManager* bpm, Catalog* catalog);
+  // `cache_slots` is the size of the decode cache described above; 0 turns it off.
+  DiskDictionary(BufferPoolManager* bpm, Catalog* catalog, size_t cache_slots = kDefaultCacheSlots);
+  static constexpr size_t kDefaultCacheSlots = 1 << 16;
   auto Insert(std::string_view term) -> term_id_t override;
   auto Lookup(std::string_view term) const -> std::optional<term_id_t> override;
   auto Lookup(term_id_t id) const -> std::optional<std::string> override;
@@ -42,7 +49,13 @@ class DiskDictionary : public Dictionary {
   BufferPoolManager* bpm_;
   Catalog* catalog_;
   page_id_t header_page_{INVALID_PAGE_ID};
+  size_t cache_slots_;
+  struct CacheSlot {
+    term_id_t id{0};
+    std::string spelling;
+  };
   mutable std::mutex mu_;
+  mutable std::vector<CacheSlot> cache_;
   std::unique_ptr<TermHeap> heap_;
   std::unique_ptr<BPlusTree> by_id_;
   std::unique_ptr<BPlusTree> by_hash_;

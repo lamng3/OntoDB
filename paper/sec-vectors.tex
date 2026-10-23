@@ -1,0 +1,90 @@
+\section{Vector Indexes and Filtered Search}
+\label{sec-vectors}
+
+\sys keeps one unit-length float vector $\mathbf{v}(t)$ per term in memory,
+loaded from a checksummed file whose records name terms by spelling, so a
+file survives a dictionary that numbers terms differently.
+Embeddings come from outside; \sys stores and searches them.
+Four index families are available, each a different trade between
+exactness, memory, and build time.
+
+\stitle{Flat}.
+Score every vector: $O(Nd)$ and exact.
+With 8-bit scalar quantization (one scale $\delta=\max_i|v_i|/127$ per vector, for coordinates $v_i$) each
+coordinate is off by at most $\delta/2$, so for a unit query a score is off by at
+most $(\delta/2)\sqrt d$, in a quarter of the memory.
+
+\stitle{IVF}.
+Spherical $k$-means with $k$-means++ seeding~\cite{arthur2007} gives $\nu$
+centroids and each vector goes to its nearest.
+A query scores the centroids and reads the $\rho$ nearest lists.
+The cost is $\nu d+\rho (N/\nu) d$, minimal at $\nu=\sqrt{\rho N}$.
+The design choice is where the lists live: \emph{as key ranges of the B+ tree
+that holds the triples}.
+The pair (list, row) is a key $(\mathrm{list},\mathrm{row},0)$, so a list is a
+prefix scan, an insert is a tree insert, and the lists page, cache, and latch
+like every other index of the engine.
+Under a filter the search keeps probing the nearest remaining lists until it
+holds $k$ allowed rows, so a filter that excludes everything near the query
+costs more instead of returning nothing.
+
+\stitle{Product quantization (PQ)}.
+Cut a vector into $m$ pieces and replace each by the index of its nearest of
+256 learned centers~\cite{jegou2011}: $m$ bytes per vector.
+A query builds $m$ tables of 256 dot products and scores a code as the sum of
+$m$ lookups, which equals the dot product with the decoded vector, so all the
+error is on the stored side.
+
+\stitle{HNSW}.
+The layered proximity graph of Malkov and Yashunin~\cite{malkov2020} with the
+paper's neighbor-selection heuristic: a candidate is kept only if it is
+nearer the new node than to every neighbor already kept.
+Layer 0 allows $2M$ links, and the search beam is $\ef$.
+Search takes an optional predicate and still crosses nodes it may not return.
+
+\subsection{Filtering a Similarity Query by a Class}
+\label{sec-hybrid}
+
+A filtered similarity query $\mathrm{near}(q,c,k)$ asks for the $k$ terms of
+$\desc(c)$ nearest to $q$.
+Let $f(c)=|\desc(c)|/N$.
+We compare four ways to answer it, all returning terms of $\desc(c)$ only.
+\begin{description}
+\item[Pre-filter.] Resolve $c$ to its members first (one range scan per
+  interval of $I(c)$), then score only those, exactly. About $f(c)\,N\,d$ work.
+\item[Post-filter.] Ask the index for $k'>k$ terms, keep those below $c$ (a
+  membership test is a binary search over $I(c)$), and multiply $k'$ by four
+  until $k$ remain or the index is exhausted.
+  If the filter were independent of the similarity, about $k/f(c)$
+  candidates would be needed.
+\item[Masked search.] Give the index a predicate, ``the row's number lies in
+  an interval of $I(c)$'', so a list scan or a graph walk skips rows outside
+  $c$.
+  Nothing is resolved in advance: each row the search touches costs one
+  binary search.
+  HNSW still crosses rows it may not return, to keep the graph connected, in
+  the spirit of ACORN~\cite{patel2024}; IVF keeps probing lists until it has
+  $k$ allowed rows.
+\item[Auto.] Pre-filter when $|\desc(c)|$ is at most 4,096, otherwise masked
+  HNSW.
+\end{description}
+
+\stitle{The filter is correlated with the vectors}.
+In an ontology the names of a class's descendants are close to the class and
+to each other, so the neighbors of a term tend to lie under the term's own
+ancestors.
+On the Gene Ontology, of the unfiltered top 100 neighbors of a query from
+\emph{inside} $c$, 4\% to 72\% lie under $c$, rising with the size of $c$; for
+a query from \emph{outside} $c$ the share is 0\% to 12\%.
+The independence estimate $k/f(c)$ is therefore wrong in both directions:
+post-filtering is cheap for an inside query and does not terminate usefully
+for an outside one.
+
+\stitle{Do not resolve the filter}.
+A masked search that first resolved $c$ by interval scans and built a bitmap
+per query spent most of its time resolving: for a class of over 5,000 members
+that was 560 of 669 $\mu$s.
+Testing the number of each row the search touches, one binary search over a
+handful of intervals, brought the same search to 105 $\mu$s.
+This is where interval labels earn their keep a second time: they make
+membership an $O(\log|I(c)|)$ test with no scan.

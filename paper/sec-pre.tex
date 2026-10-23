@@ -1,0 +1,79 @@
+\section{Preliminaries}
+\label{sec-pre}
+
+\begin{table}[t]
+\caption{Notation.}
+\label{tab-notation}
+\small
+\begin{tabular}{@{}p{2.15cm}p{5.6cm}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$(s,p,o)$, $\mathcal{T}$, $n$ & a triple; the set of triples; $n=|\mathcal{T}|$ \\
+$\mathit{id}(a)$ & dictionary id of term $a$ \\
+$x$, $\sigma$ & a B+ tree key, three ids in 24 bytes; a separator key \\
+$e$ & an instance (an entity with a type) \\
+$\pi$, $\ell(\pi)$ & a permutation (SPO, POS, OSP); the length of the prefix of $\pi$ a pattern binds \\
+$B$, $F$ & capacity of a leaf (169 keys) and of an internal page (144 separators) \\
+$h$ & height of a B+ tree \\
+$P$, $Q$, $R$ & a page; its parent; its right sibling \\
+$[a,b)$, $r$ & a half-open key range; the number of keys a scan returns \\
+$H=(\mathcal{C},E)$ & the class hierarchy, a DAG of classes $\mathcal{C}$ and subclass edges $E$ \\
+$\desc(c)$ & the classes at or below $c$, including $c$ \\
+$\po(c)$, $\lo(c)$ & postorder number of $c$; smallest number in its subtree of the spanning forest \\
+$I(c)$ & the set of intervals that covers the numbers of $\desc(c)$ \\
+$E'(c)$ & non-tree edges whose tail is in $\desc(c)$ \\
+$f(c)$ & fraction of terms in $\desc(c)$: $|\desc(c)|/N$ \\
+$N$, $d$ & number of terms with vectors; vector dimension \\
+$\mathbf{v}(t)$, $\mathrm{sim}$ & unit vector of $t$; cosine similarity \\
+$q$, $k$ & the query term; the number of neighbors asked for \\
+$\mathrm{inst}(c)$, $\mathrm{near}(q,c,k)$ & the instance query and the filtered similarity query \\
+$\nu$, $\rho$ & IVF: number of lists; lists probed per query \\
+$m$ & product quantization: pieces per vector \\
+$M$, $\ef$ & HNSW: links per node; search beam width \\
+$G$, $D$ & a graph and its diameter (Lemma~\ref{lem-bw}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\stitle{Triples and patterns}.
+An RDF graph is a set $\mathcal{T}$ of triples $(s,p,o)$ of subject,
+predicate, and object, with $n=|\mathcal{T}|$.
+A \emph{triple pattern} $(s,p,o)$ replaces some positions by variables,
+written $\cdot$ here when the variable is not used elsewhere; its answers
+are the triples of $\mathcal{T}$ that agree with it on every bound position.
+A \emph{basic graph pattern} is a set of triple patterns joined on shared
+variables.
+Following common practice~\cite{weiss2008,neumann2010}, \sys replaces each
+term $a$ by a dense integer $\mathit{id}(a)$ and stores triples as
+three-integer keys.
+
+\stitle{Class hierarchy}.
+The \texttt{rdfs:subClassOf} triples define a directed graph
+$H=(\mathcal{C},E)$ over classes, with an edge $(c,c')$ when $c$ is a
+subclass of $c'$.
+We write $\desc(c)$ for the classes at or below $c$, including $c$ itself, and
+call a class \emph{below} $c$ when it is in $\desc(c)$.
+Cycles are collapsed into one class, since the classes on a cycle are
+equivalent.
+The \emph{instances} of $c$ are the subjects $e$ with a triple
+$(e,\texttt{rdf:type},c')$ for some $c'\in\desc(c)$.
+
+\stitle{Similarity}.
+Each term $t$ among $N$ terms has a unit vector $\mathbf{v}(t)\in\mathbb{R}^d$
+produced by an embedding model, and the similarity of two terms is the cosine
+$\mathrm{sim}(t,u)=\mathbf{v}(t)\cdot\mathbf{v}(u)$.
+
+\begin{definition}[Queries]
+\label{def-queries}
+Given the data above, \sys answers
+(i) a \emph{pattern query}, the answers of a basic graph pattern;
+(ii) an \emph{instance query} $\mathrm{inst}(c)$, the instances of a class
+$c$; and
+(iii) a \emph{filtered similarity query} $\mathrm{near}(q,c,k)$, the $k$
+terms $t\in\desc(c)$, $t\ne q$, that maximize $\mathrm{sim}(q,t)$.
+\end{definition}
+
+\noindent
+Table~\ref{tab-notation} lists the notation used throughout.
+

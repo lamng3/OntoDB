@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -265,6 +266,12 @@ auto RunOrder(int argc, char** argv) -> int {
 
 // ---- cold sessions on an indexed store ----
 
+// ONTODB_TERM_CACHE sets the dictionary's decode cache in entries; 0 turns it off.
+auto TermCacheSlots() -> size_t {
+  const char* env = std::getenv("ONTODB_TERM_CACHE");
+  return env != nullptr ? std::stoul(env) : DiskDictionary::kDefaultCacheSlots;
+}
+
 struct Session {
   IoStats stats;
   DiskManager disk;
@@ -274,7 +281,7 @@ struct Session {
   IndexedStore store;
 
   Session(const fs::path& file, size_t frames)
-      : disk(file.string(), &stats), pool(frames, &disk, 2, nullptr, &stats), catalog(&pool), dict(&pool, &catalog), store(&catalog, &pool, &dict) {}
+      : disk(file.string(), &stats), pool(frames, &disk, 2, nullptr, &stats), catalog(&pool), dict(&pool, &catalog, TermCacheSlots()), store(&catalog, &pool, &dict) {}
 };
 
 // Loads files into a fresh indexed store file; returns seconds.

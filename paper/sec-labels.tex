@@ -1,0 +1,82 @@
+\section{Hierarchies as Intervals}
+\label{sec-labels}
+
+An instance query $\mathrm{inst}(c)$ (Definition~\ref{def-queries}) must return
+the instances of every class in $\desc(c)$.
+A store can \emph{materialize} the entailed type triples, or \emph{rewrite}
+the query into one scan per class in $\desc(c)$.
+\sys instead numbers the classes so that $\desc(c)$ is a few integer
+intervals, and keeps the numbers in the B+ tree it already has.
+
+\stitle{Labelling}.
+Collapse each cycle of $H$ into one class.
+Choose a spanning forest by taking, for each class with several parents, the
+parent with the longest path from a root.
+Number the classes $1,\dots,|\mathcal{C}|$ in postorder of the forest, and let
+$\lo(c)$ be the smallest number in the forest subtree of $c$.
+In a forest, $u\in\desc(c)$ if and only if $\lo(c)\le\po(u)\le\po(c)$, a
+single interval.
+In a DAG each class carries a \emph{set} of intervals $I(c)$, built bottom-up
+(Algorithm~\ref{alg-label}).
+
+\begin{algorithm}[t]
+\caption{Interval sets for a class DAG}\label{alg-label}
+\small
+\KwIn{subclass edges $E$ of $H$}
+\KwOut{$\po(c)$ and an interval set $I(c)$ for each class $c$}
+collapse the strongly connected components of $H$ (Tarjan), and number them parents first\;
+\For{each component $c$, parents first}{
+  $\mathit{depth}(c) \gets 1 + \max_{c'}\ \mathit{depth}(c')$ over its parents $c'$ \tcp*{0 for a root}
+  $\mathit{tp}(c) \gets$ the parent with the largest depth\;
+}
+number the forest $\{(c,\mathit{tp}(c))\}$ in postorder; record $\lo(c)$\;
+\For{each component $c$, children first}{
+  $I(c) \gets \textsc{Merge}\big(\{[\lo(c),\po(c)]\} \cup \bigcup_{c'\text{ a child of }c} I(c')\big)$ \tcp*{sort; join overlapping or adjacent}
+}
+\end{algorithm}
+
+\begin{lemma}[Correctness]\label{lem-correct}
+$u\in\desc(c)$ if and only if $\po(u)$ lies in an interval of $I(c)$.
+\end{lemma}
+\begin{proof}
+By induction over the order in which Algorithm~\ref{alg-label} builds $I$: the
+numbers covered by $I(c)$ are exactly those of the classes in $\desc(c)$.
+\end{proof}
+
+\begin{lemma}[Size]\label{lem-size}
+For every class $c$, $|I(c)|\le 1+|E'(c)|$, where $E'(c)$ is the set of non-tree edges whose tail is in $\desc(c)$.
+\end{lemma}
+\begin{proof}
+A class $u\in\desc(c)$ is reached from $c$ by a path.
+If the path uses no non-tree edge, $u$ is in the forest subtree of $c$.
+Otherwise let $\epsilon$ be the last non-tree edge on it; $u$ is then in the forest
+subtree of the head of $\epsilon$.
+So the covered set is the forest subtree of $c$ together with the forest
+subtrees of the heads of the edges of $E'(c)$, a union of $1+|E'(c)|$
+intervals.
+\end{proof}
+
+The labelling takes $O(|\mathcal{C}|+|E|)$ plus the merges, and a tree needs
+one interval per class.
+
+\stitle{Index}.
+The labels go into B+ trees of \sys: key $(\po(c),\mathit{id}(c),0)$ for each
+class, and $(\po(c),\mathit{id}(e),0)$ for each triple $(e,\texttt{rdf:type},c)$.
+The classes below $c$, or the instances of $c$ and its subclasses, are then
+one range scan $[\,(a,0,0),\,(b{+}1,0,0)\,)$ per interval $[a,b]$ of $I(c)$,
+and the answers of different intervals are disjoint.
+Inserting an instance adds one key; deleting a class edge rebuilds the labels,
+which takes tens of milliseconds for an ontology of tens of thousands of
+classes.
+Incremental maintenance with gaps in the numbering~\cite{agrawal1989} is not
+implemented.
+Dictionary ids are untouched: ids appear in three permutations, the log, and
+checkpoints, and renumbering them to follow the hierarchy would rewrite all of
+it.
+The label tree is separate and rebuildable, which keeps ids stable.
+
+\stitle{Membership}.
+A class $u$ is below $c$ if $\po(u)$ lies in an interval of $I(c)$, a binary
+search over $|I(c)|$ intervals with no scan.
+This makes the class filter of Section~\ref{sec-vectors} a constant-space
+predicate on a term's number.

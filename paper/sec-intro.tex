@@ -1,0 +1,99 @@
+\section{Introduction}
+\label{sec-intro}
+
+Ontologies such as the Gene Ontology~\cite{ashburner2000} and the schemas
+of enterprise knowledge graphs are stored as sets of triples and queried in
+three ways.
+A \emph{pattern} query asks for the triples that match a template, such as
+the resources of one type, and is the base case of every RDF
+store~\cite{weiss2008,neumann2010}.
+A \emph{structural} query asks for the instances at or below a class, and
+needs the class hierarchy.
+A \emph{semantic} query asks for the terms closest in meaning to a given
+term, which has no answer in the data and needs a similarity measure over
+embeddings.
+The three meet in queries such as ``the terms most similar to
+\emph{apoptotic process} that lie under \emph{cell death}''.
+
+Existing systems leave three problems open.
+\textbf{C1. Hierarchy costs space or time.}
+RDFS entailment is either \emph{materialized} at write time, which stores
+every inferred triple~\cite{rdfox}, or \emph{rewritten} into the query,
+which scans once per subclass.
+On the Gene Ontology with 200,000 typed entities, materializing the closure
+multiplies the triples by 8.1, and rewriting reads 48 times more pages than
+a store that knows the hierarchy.
+\textbf{C2. A sorted index does not hold meaning.}
+Triple stores answer patterns with range scans over sorted permutations.
+It is tempting to believe that neighbors in meaning are neighbors in the
+order; we prove they cannot all be (Section~\ref{sec-order}), and measure how
+few are.
+Similarity is therefore left to a vector database next to the triple store,
+with its own storage, its own paging, and no view of the hierarchy.
+\textbf{C3. A class filter is correlated with the vectors.}
+Filtered vector search is usually costed by assuming that the filter is
+independent of the similarity.
+In an ontology it is not: the neighbors of a term lie under the term's own
+ancestors.
+A post-filtered index can then find 7\% of the right answers, and the
+independence estimate of the work it must do is wrong in both directions
+(Section~\ref{sec-vectors}).
+
+\begin{example}
+\label{exa-motivation}
+Let $q$ be the term \emph{apoptotic process} in the Gene Ontology and $c$ the
+class \emph{cell death}.
+The query asks for the five terms nearest to $q$ in embedding space among
+the 97 classes at or below $c$ in an 834-class slice of the ontology.
+A triple store alone cannot rank by meaning.
+A vector index alone returns neighbors from anywhere in the ontology, and
+a post-filter keeps those under $c$ only if enough of them are.
+\sys finds the 97 classes with one range scan of the same B+ tree that holds
+the triples, scores them exactly, and returns \emph{apoptotic process
+involved in development} (cosine 0.865) first, in under a millisecond in a
+web page.
+\end{example}
+
+Database systems have handled a similar split for decades: an access method
+is added to the engine that owns the storage, paging, and logging, and not
+beside it.
+This paper takes that view of ontologies.
+
+\stitle{Contributions}.
+This paper introduces \sys, an open-source ontology database in C++20
+(Figure~\ref{fig-arch}).
+\begin{enumerate}
+\item \textbf{A B+ tree triple store with its algorithms}
+  (Section~\ref{sec-store}).
+  Three permutations of dictionary-encoded triples sit behind a buffer pool
+  with LRU-K eviction.
+  We give the algorithms for search, insert, delete, range scan, and bulk
+  load, the invariants they keep, and a bound on the pages a range scan
+  reads.
+\item \textbf{Hierarchies as intervals} (Section~\ref{sec-labels}).
+  A postorder labelling of the class DAG gives each class a set of
+  intervals, kept in the same B+ tree, so that ``everything under $c$'' is
+  a few range scans.
+  We bound the number of intervals by the number of non-tree edges and
+  store no entailed triple.
+\item \textbf{Vector indexes in the engine}
+  (Sections~\ref{sec-order} and~\ref{sec-vectors}).
+  We prove that no linear order keeps neighbors close, add exact, IVF,
+  product-quantized, and HNSW search, and store IVF posting lists as key
+  ranges of the triple B+ tree.
+  We show that filtering by a class is correlated with similarity, and give
+  the rule that picks between pre-filtering and masked search.
+\item \textbf{A build for the browser} (Section~\ref{sec-system}).
+  The engine, with its paged B+ trees and its semantic extension, compiles
+  to a 0.85\,MB WebAssembly module.
+\item \textbf{An evaluation against three other stores}
+  (Section~\ref{sec-exp}).
+  We compare \sys with Oxigraph~\cite{oxigraph}, Apache Jena
+  TDB2~\cite{jenatdb}, and SQLite on LUBM~\cite{lubm} and the Gene Ontology.
+  \sys is fastest on selective patterns and on class instances, within a
+  factor of two of the best on large scans, and slowest to load; the
+  dictionary decode that dominates its large results is a cost we measure
+  and reduce with a cache.
+\end{enumerate}
+The code, data generators, and benchmark programs are available at the
+artifact URL above.

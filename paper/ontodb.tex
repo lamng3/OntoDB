@@ -1,0 +1,47 @@
+% Built on the VLDB template (acmart with pvldb.sty), as the Hermes paper is.
+
+\documentclass[sigconf, nonacm]{acmart}
+
+\usepackage{pvldb}
+\input{commands}
+
+\renewcommand\vldbdoi{XX.XX/XXX.XX}
+\renewcommand\vldbpages{XXX-XXX}
+\renewcommand\vldbavailabilityurl{https://github.com/lamng3/OntoDB}
+
+\begin{document}
+
+\title{OntoDB: A Fast Ontology Database for\\Pattern, Hierarchy, and Semantic Queries}
+
+\author{Lam Nguyen}
+\affiliation{%
+  \institution{Case Western Reserve University}
+  \city{Cleveland}
+  \state{Ohio}
+  \country{USA}
+}
+\email{ltn18@case.edu}
+
+\input{abstract}
+
+\keywords{ontology, triple store, B+ tree, RDFS, vector search, WebAssembly}
+
+\maketitle
+
+\vldbtopmatter
+
+\input{sec-intro}
+\input{sec-pre}
+\input{sec-store}
+\input{sec-order}
+\input{sec-labels}
+\input{sec-vectors}
+\input{sec-system}
+\input{sec-exp}
+\input{sec-related}
+\input{sec-conclude}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

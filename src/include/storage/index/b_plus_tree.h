@@ -55,6 +55,9 @@ class BPlusTree {
   auto Insert(const TripleKey& key) -> bool;
   auto Remove(const TripleKey& key) -> bool;
   auto GetValue(const TripleKey& key) const -> bool;
+  // The first key covered by the prefix, or nullopt. Reads the leaf in place instead of copying
+  // its keys the way an iterator does, so a lookup that wants one key costs one descent.
+  auto FindFirst(const TripleKey& key, int prefix_len) const -> std::optional<TripleKey>;
   auto Begin() -> IndexIterator;
   auto Begin(const TripleKey& key, int prefix_len) -> IndexIterator;
   // The keys in [lower, upper): from the first key >= lower to the first key >= upper.

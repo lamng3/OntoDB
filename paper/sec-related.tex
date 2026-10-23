@@ -1,0 +1,94 @@
+\section{Related Work}
+\label{sec-related}
+
+\stitle{RDF stores}.
+Triple stores keep triples in sorted permutations.
+Hexastore indexes all six~\cite{weiss2008}; RDF-3X keeps six compressed B+
+trees and prunes joins with statistics~\cite{neumann2010}; QLever builds
+read-mostly permutation indexes in bulk~\cite{bast2017}; HDT is a compressed
+read-only format~\cite{fernandez2013}; Virtuoso stores quads in a relational
+engine~\cite{erling2010}.
+Among systems we could run side by side, Apache Jena TDB2 uses B+
+trees~\cite{jenatdb}, RDF4J's native store uses B-trees~\cite{rdf4j}, and
+Oxigraph~\cite{oxigraph} keeps its indexes in RocksDB, a log-structured merge
+tree.
+\sys follows the B+ tree line with three permutations, which
+Section~\ref{sec-exp} shows suffice.
+The B+ tree~\cite{bayer1972,comer1979} and its concurrency and recovery
+machinery~\cite{lehman1981,graefe2011,mohan1992} are textbook; the
+contribution here is the choice of parts, their measured behavior on
+ontologies, and what is built on top (Table~\ref{tab-related}).
+
+\begin{table}[t]
+\caption{Stores for ontologies, as documented (October 2026). We ran \sys, Oxigraph, Jena TDB2, and SQLite.}
+\label{tab-related}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llll@{}}
+\toprule
+System & Triples are kept in & Hierarchy by & In a browser \\
+\midrule
+Oxigraph~\cite{oxigraph} & RocksDB (LSM) & query only & in-memory \\
+Jena TDB2~\cite{jenatdb} & B+ trees & reasoner layer & no \\
+RDF4J native~\cite{rdf4j} & B-trees & materialized & no \\
+RDF-3X~\cite{neumann2010} & 6 compressed B+ trees & query only & no \\
+RDFox~\cite{rdfox} & in memory & materialized & no \\
+\sys & 3 B+ trees & intervals & full engine \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\stitle{Inference}.
+RDFS entailment is usually either \emph{rewritten} into the query or
+\emph{materialized} at write time, with maintenance by counting or by
+delete-and-rederive~\cite{gupta1993}.
+Section~\ref{sec-labels} adds a third option that stores no entailed triple.
+Agrawal, Borgida, and Jagadish~\cite{agrawal1989} store a compressed
+transitive closure by numbering a spanning forest in postorder and giving each
+node a set of intervals; Grust~\cite{grust2002} numbers XML trees in pre- and
+postorder so that axes become regions of a plane.
+We use the former on class DAGs inside a B+ tree store and measure it against
+the other two ways to answer a type query.
+
+\stitle{Vector search}.
+Approximate nearest neighbor search has three families that matter here:
+inverted files and product quantization~\cite{jegou2011}, proximity graphs, of
+which HNSW~\cite{malkov2020} is the standard, and disk-oriented graphs such as
+DiskANN~\cite{subramanya2019}.
+FAISS~\cite{johnson2021} packages the first two.
+Pan, Wang, and Li survey vector database systems and the hybrid queries
+(attribute plus vector) that are hard for them~\cite{pan2024}.
+ACORN~\cite{patel2024} makes HNSW traverse only the nodes that pass a
+predicate.
+Neo4j offers an HNSW vector index queried from Cypher~\cite{neo4jvec}; Amazon
+Neptune Analytics offers vector similarity over graph nodes~\cite{neptunevec};
+Fluree provides inline similarity functions and HNSW indexes for
+RDF~\cite{fluree}; GraphDB has had similarity indexes queried from \sparql
+since version 8~\cite{graphdbsim}.
+In the documentation we read, none turns the class hierarchy into
+range-scannable intervals, in the engine that holds the triples, to restrict
+a vector search.
+Euclidean embeddings of names are what we use; hyperbolic
+embeddings~\cite{nickel2017} represent hierarchies more faithfully and would
+change the vectors, not the indexes.
+
+\stitle{Adaptive radix trees}.
+An ART~\cite{leis2013} orders keys by byte, so its range scan is a lexical
+range scan, the same one-dimensional order as a B+ tree, and
+Lemma~\ref{lem-bw} applies to it.
+Giving its leaves sibling links is possible and awkward: path compression and
+node growth never move a leaf, but lazy expansion does, so a link that
+pointed at the old leaf points at an inner node, and concurrent inserts must
+latch both neighbors.
+The usual alternative is a stack-based iterator that climbs and descends
+between leaves.
+\sys's keys are three fixed-width integers, which leave an ART little to
+compress, so the B+ tree stays; DuckDB persists an ART for its own
+keys~\cite{duckdbart}.
+
+\stitle{Databases in the browser}.
+WebAssembly~\cite{haas2017} lets a C++ engine run in a page.
+Oxigraph ships a JavaScript build with an in-memory store.
+\sys compiles the whole engine, including the paged B+ trees, the buffer pool,
+and the semantic extension, by replacing the two parts that need threads or a
+native library (Section~\ref{sec-system}).

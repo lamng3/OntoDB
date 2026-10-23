@@ -1,0 +1,40 @@
+\section{Conclusion}
+\label{sec-conclude}
+
+An ontology store is asked for patterns, for hierarchies, and for meaning.
+This paper described \sys, which answers all three inside one disk-based
+engine.
+A B+ tree store of three permutations, with crabbing insert and delete, a range
+scan that holds no latch between rows, and a bulk loader that fills pages,
+answers selective patterns faster than an LSM store, a Java B+ tree store, and a
+relational store, and is within a factor of two of the best on large results.
+Labelling the class DAG with interval sets turns ``everything under $c$'' into
+a few range scans of the same tree, at 2.0 intervals per class on the Gene
+Ontology and a fraction of the cost of materializing the closure, and makes
+membership in a class's subtree a binary search, which a filtered vector search
+needs.
+A sorted index orders and does not say what is close in meaning, which the
+bandwidth argument and the measurements agree on; exact pre-filtering through
+the intervals is the right answer for classes up to about a thousand members
+and a masked graph search for the largest.
+The whole engine runs in a browser from a 0.85\,MB module.
+
+\stitle{Limitations}.
+\sys implements a \sparql subset without \texttt{OPTIONAL}, \texttt{UNION},
+property paths, or aggregates, and a reasoner only for
+\texttt{rdfs:subClassOf}; a user who needs the full language needs one of the
+other systems we measured.
+It is the slowest to load, single-threaded, and hungry for memory while
+loading, because its optimizer's exact statistics sit in hash tables.
+Decoding an id costs about 0.7\,$\mu$s and dominates large results, which the
+decode cache hides on a warm store and does not remove.
+Labels are rebuilt, not maintained, when the hierarchy changes.
+The vectors come from one ontology and one small model that embeds names only,
+the instances of the Gene Ontology are synthetic, vectors are held in memory,
+and the semantic measurements are single-threaded.
+Queries are terms of the ontology; free text would need an embedding model that
+\sys does not link.
+We did not find a vector index that makes the hierarchy order unnecessary:
+neighbors by meaning and descendants are different sets (a third of a term's
+ten nearest neighbors are within two \texttt{is\_a} steps, two thirds are
+not), which is why the two are combined at query time and not at index time.

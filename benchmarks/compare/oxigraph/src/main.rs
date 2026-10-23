@@ -10,7 +10,7 @@
 //
 // `types` reads classes.tsv from `ontodb_bench_semantic types` (bucket, class IRI, expected
 // answers, OntoDB's microseconds) and asks for the instances of each class through the subclass
-// path: SELECT DISTINCT ?x WHERE { ?x a ?c . ?c rdfs:subClassOf* <C> }.
+// path: SELECT DISTINCT ?x WHERE { ?c rdfs:subClassOf* <C> . ?x a ?c } (path first: Jena does not reorder it).
 
 use oxigraph::io::{RdfFormat, RdfParser};
 use oxigraph::sparql::{PreparedSparqlQuery, QueryResults, SparqlEvaluator};
@@ -115,7 +115,7 @@ fn main() {
         if types {
             let class = cols[1];
             let text = format!(
-                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?x WHERE {{ ?x a ?c . ?c rdfs:subClassOf* {} }}",
+                "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> SELECT DISTINCT ?x WHERE {{ ?c rdfs:subClassOf* {} . ?x a ?c }}",
                 class
             );
             let (rows, us) = timed(&store, &text, runs);

@@ -177,6 +177,30 @@ TEST(P3_2_DiskDictionary, ManyTermsMatchMemoryDictionaryAcrossRestart) {
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
 }
 
+// The decode cache maps an id to a slot by its remainder, so two ids 65,536 apart share a slot.
+// Alternating between them, and reading ids in a different order than they were written, must
+// still return each id's own spelling.
+TEST(P3_2_DiskDictionary, DecodeCacheNeverReturnsAnotherIdsSpelling) {
+  test::TempDir dir;
+  DiskManager disk((dir.path() / "db").string());
+  BufferPoolManager bpm(32, &disk, 2);
+  Catalog catalog(&bpm);
+  DiskDictionary dict(&bpm, &catalog);
+  const int n = 70000;
+  for (int i = 1; i <= n; i++) {
+    ASSERT_EQ(dict.Insert("<http://ex/t" + std::to_string(i) + ">"), static_cast<term_id_t>(i));
+  }
+  for (int round = 0; round < 3; round++) {
+    for (int i = 1; i <= 4000; i++) {
+      for (const int id : {i, i + 65536, n + 1 - i}) {
+        ASSERT_EQ(dict.Lookup(static_cast<term_id_t>(id)), "<http://ex/t" + std::to_string(id) + ">") << id;
+      }
+    }
+  }
+  EXPECT_FALSE(dict.Lookup(static_cast<term_id_t>(n + 1)).has_value());
+  EXPECT_EQ(bpm.GetPinnedFrameCount(), 0u);
+}
+
 TEST(P3_3_Catalog, RootsSurviveFlush) {
   test::DiskEnv env;
   Catalog catalog(&env.bpm, 0);
