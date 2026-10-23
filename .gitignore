@@ -22,3 +22,4 @@ benchmarks/compare/oxigraph/target/
 benchmarks/compare/jena/target/
 benchmarks/compare/jena/cp.txt
 __pycache__/
+benchmarks/vector/.venv/

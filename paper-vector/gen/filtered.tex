@@ -1,0 +1,28 @@
+\begin{table*}[t]
+\caption{Ten nearest terms under a class: recall@10 / microseconds per query, by number of classes below $c$ and by query kind, pooled over 4 ontologies. FAISS runs each query with an ID selector of the class's members (their lookup is not timed). Bold marks the fastest strategy with recall at least 0.99; blue marks \sys{}.}
+\label{tab-filtered}
+\small
+\begin{tabular}{@{}llccccccc@{}}
+\toprule
+Below $c$ & query & DuckDB join & FAISS exact & FAISS IVF & FAISS HNSW & pre-filter & masked HNSW & auto \\
+\midrule
+$\le$10 & inside $c$ & 1.00 / 718 & 1.00 / 71 & 0.79 / 29 & 0.87 / 50 & \cellcolor{ours}\textbf{1.00 / 2.1} & 1.00 / 42.1\,k & 1.00 / 2.2 \\
+11--100 &  & 1.00 / 811 & 1.00 / 72 & 0.82 / 30 & 0.85 / 49 & \cellcolor{ours}\textbf{1.00 / 7.9} & 1.00 / 37.4\,k & 1.00 / 8.1 \\
+101--1,000 &  & 1.00 / 1.2\,k & 1.00 / 90 & 0.89 / 35 & 0.91 / 50 & \cellcolor{ours}\textbf{1.00 / 47} & 1.00 / 5.9\,k & 1.00 / 49 \\
+1,001--5,000 &  & 1.00 / 2.6\,k & \textbf{1.00 / 213} & 0.93 / 46 & 0.98 / 47 & 1.00 / 244 & 1.00 / 1.2\,k & 1.00 / 396 \\
+$>$5,000 &  & 1.00 / 28.6\,k & 1.00 / 2.0\,k & 0.93 / 81 & 0.98 / 56 & 1.00 / 4.9\,k & 1.00 / 506 & \cellcolor{ours}\textbf{1.00 / 456} \\
+\midrule
+$\le$10 & outside $c$ & 1.00 / 708 & 1.00 / 69 & 0.05 / 29 & 0.02 / 51 & \cellcolor{ours}\textbf{1.00 / 2.1} & 1.00 / 42.2\,k & 1.00 / 2.2 \\
+11--100 &  & 1.00 / 802 & 1.00 / 71 & 0.06 / 29 & 0.04 / 49 & \cellcolor{ours}\textbf{1.00 / 7.8} & 1.00 / 38.8\,k & 1.00 / 8.3 \\
+101--1,000 &  & 1.00 / 1.1\,k & 1.00 / 88 & 0.23 / 29 & 0.24 / 50 & \cellcolor{ours}\textbf{1.00 / 47} & 1.00 / 18.2\,k & 1.00 / 51 \\
+1,001--5,000 &  & 1.00 / 2.6\,k & \textbf{1.00 / 205} & 0.40 / 33 & 0.39 / 49 & 1.00 / 245 & 1.00 / 9.3\,k & 1.00 / 652 \\
+$>$5,000 &  & 1.00 / 27.4\,k & 1.00 / 2.0\,k & 0.58 / 61 & 0.73 / 62 & 1.00 / 5.0\,k & 0.99 / 1.9\,k & \cellcolor{ours}\textbf{0.99 / 1.9\,k} \\
+\midrule
+$\le$10 & synonym of a member & 1.00 / 708 & 1.00 / 49 & 0.74 / 25 & 0.76 / 48 & \cellcolor{ours}\textbf{1.00 / 2.2} & 1.00 / 25.3\,k & 1.00 / 2.3 \\
+11--100 &  & 1.00 / 808 & 1.00 / 56 & 0.74 / 27 & 0.74 / 47 & \cellcolor{ours}\textbf{1.00 / 7.7} & 1.00 / 27.1\,k & 1.00 / 8.0 \\
+101--1,000 &  & 1.00 / 1.1\,k & 1.00 / 87 & 0.82 / 33 & 0.88 / 51 & \cellcolor{ours}\textbf{1.00 / 47} & 1.00 / 8.9\,k & 1.00 / 50 \\
+1,001--5,000 &  & 1.00 / 2.6\,k & \textbf{1.00 / 203} & 0.79 / 42 & 0.90 / 50 & 1.00 / 246 & 1.00 / 3.7\,k & 1.00 / 257 \\
+$>$5,000 &  & 1.00 / 28.1\,k & \textbf{1.00 / 2.0\,k} & 0.88 / 75 & 0.91 / 59 & 1.00 / 5.1\,k & 0.98 / 615 & 0.98 / 596 \\
+\bottomrule
+\end{tabular}
+\end{table*}

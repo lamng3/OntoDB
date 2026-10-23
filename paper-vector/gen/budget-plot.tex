@@ -1,0 +1,12 @@
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=5.0cm,xmode=log,xlabel={$\mu$s per query (log)},ylabel={recall@10},ymin=0,ymax=1.05,grid=both,legend pos=south east,legend style={font=\scriptsize},tick label style={font=\scriptsize},label style={font=\small}]
+\addplot+[mark=square*,color=red!70!black,thick] coordinates {(28.8,0.113) (38.3,0.301) (68.6,0.710) (91.3,0.697)};
+\addlegendentry{FAISS IVF (nprobe 16, 64, 256, half)}
+\addplot+[mark=triangle*,color=orange!80!black,thick] coordinates {(49.9,0.105) (171.4,0.201) (1231.3,0.401) (11354.3,0.684)};
+\addlegendentry{FAISS HNSW (beam 64, 256, 1,024, 4,096)}
+\addplot[only marks,mark=diamond*,mark size=3pt,color=blue!70!black] coordinates {(18.9,1.000)};
+\addlegendentry{pre-filter}
+\addplot[only marks,mark=*,mark size=3pt,color=blue!70!black] coordinates {(20.6,1.000)};
+\addlegendentry{\sys{} auto}
+\end{axis}
+\end{tikzpicture}

@@ -1,0 +1,16 @@
+\begin{table}[t]
+\caption{Masked HNSW with the filter tested per row against the class's intervals, and with the filter resolved first into a bitmap by range scans (resolving is timed): microseconds per query, pooled over the ontologies.}
+\label{tab-resolve}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Below $c$ & interval test & resolve, then bitmap & ratio \\
+\midrule
+$\le$10 & 42.2\,k & 41.1\,k & 1.0$\times$ \\
+11--100 & 38.1\,k & 37.4\,k & 1.0$\times$ \\
+101--1,000 & 12.0\,k & 11.9\,k & 1.0$\times$ \\
+1,001--5,000 & 5.3\,k & 5.4\,k & 1.0$\times$ \\
+$>$5,000 & 1.2\,k & 3.3\,k & 2.7$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}

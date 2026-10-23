@@ -1,0 +1,24 @@
+\section{Proofs}
+\label{apx-proofs}
+
+\begin{proof}[Proof of Lemma~\ref{lem-bw}]
+The first and last vertices of the order are $N-1$ apart and joined by a path of at most
+$D$ edges, so some edge of the path covers at least $(N-1)/D$ positions.
+\end{proof}
+
+\begin{proof}[Proof of Lemma~\ref{lem-exact}]
+Pre-filter scores every member of $\desc(c)$ and keeps the $k$ best, which is
+$\mathrm{near}(q,c,k)$ by definition.
+Masked IVF scores only rows whose number lies in an interval of $I(c)$, which are the
+members; it stops when it holds $k$ of them after $\rho$ lists, or after all $\nu$ lists,
+so it returns $k$ members if $|\desc(c)|\ge k$ and all otherwise.
+With $\rho=\nu$ it has scored every member and keeps the $k$ best, which is
+$\mathrm{near}(q,c,k)$.
+\end{proof}
+
+\section{More Measurements}
+\label{apx-more}
+
+\input{gen/per-ontology}
+
+\input{gen/index-batched}

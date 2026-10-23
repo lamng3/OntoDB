@@ -1,0 +1,14 @@
+\begin{table}[t]
+\caption{The number of neighbors asked for, on the Gene Ontology: recall / mean microseconds over every class size and query kind.}
+\label{tab-k}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+$k$ & FAISS IVF & FAISS HNSW & pre-filter & auto \\
+\midrule
+1 & 0.70 / 31 & 0.75 / 46 & 1.00 / 173 & 1.00 / 107 \\
+10 & 0.63 / 31 & 0.67 / 47 & 1.00 / 178 & 1.00 / 110 \\
+50 & 0.55 / 33 & 0.56 / 49 & 1.00 / 182 & 1.00 / 115 \\
+\bottomrule
+\end{tabular}
+\end{table}

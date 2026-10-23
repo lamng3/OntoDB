@@ -1,0 +1,35 @@
+\section{Related Work}
+\label{sec-related}
+
+\stitle{Vector search}.
+Approximate nearest neighbor search has inverted files and product
+quantization~\cite{jegou2011}, proximity graphs such as HNSW~\cite{malkov2020}, and
+disk-oriented graphs such as DiskANN~\cite{subramanya2019}; FAISS~\cite{johnson2021,douze2024}
+and hnswlib implement them, and vector database systems such as Milvus~\cite{wang2021milvus}
+wrap them with storage and a query language; Pan, Wang, and Li survey the hybrid
+queries, an attribute predicate plus a vector, that are hard for them~\cite{pan2024}.
+
+\stitle{Filtered search}.
+Filtered-DiskANN builds a graph whose edges respect label filters~\cite{gollapudi2023},
+and ACORN makes HNSW traverse only the nodes that pass a predicate and densifies the
+graph so that it stays connected~\cite{patel2024}.
+Both treat the filter as an opaque attribute of the vector; a class filter is not
+opaque, because the hierarchy supplies a structure that makes membership a binary search
+and the filter correlated with the vectors, which is what we measure and use.
+FAISS's ID selectors, the baseline here, pass a predicate to the index's own search.
+
+\stitle{Hierarchies in stores}.
+Agrawal, Borgida, and Jagadish~\cite{agrawal1989} label a hierarchy with postorder
+intervals, and Grust~\cite{grust2002} numbers XML trees; RDFS entailment is otherwise
+rewritten or materialized~\cite{rdfox}.
+Neo4j, Neptune Analytics, Fluree, and GraphDB add vector or similarity indexes to graph
+and RDF stores~\cite{neo4jvec,neptunevec,fluree,graphdbsim}; in the documentation we
+read, none restricts the search with range-scannable hierarchy intervals in the engine
+that holds the triples.
+Embeddings of the hierarchy itself, such as hyperbolic embeddings~\cite{nickel2017}, would
+change the vectors, not the filter.
+
+\stitle{Order and similarity}.
+Space-filling curves and sorting keys map points to one dimension and keep neighbors
+close on average; the bandwidth argument says they cannot keep all of them close, and the
+adaptive radix tree~\cite{leis2013} orders keys by byte and falls under the same bound.

@@ -1,0 +1,15 @@
+\begin{table*}[t]
+\caption{Unfiltered search with FAISS and hnswlib answering the 1,000 queries in one batch on one thread: recall@10 / microseconds per query. The flat scan is a matrix product, which one-query-at-a-time search cannot use.}
+\label{tab-index-batched}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Ontology & flat & IVF (nprobe 16) & HNSW ($\mathit{ef}{=}40$), FAISS & HNSW ($\mathit{ef}{=}40$), hnswlib & IVF (nprobe 64) \\
+\midrule
+GO & 1.00 / 30 & 0.93 / 60 & 1.00 / 58 & 1.00 / 250 & 0.98 / 192 \\
+HPO & 1.00 / 17 & 0.92 / 38 & 1.00 / 44 & 1.00 / 256 & 0.97 / 132 \\
+Uberon & 1.00 / 13 & 0.91 / 35 & 1.00 / 36 & 1.00 / 241 & 0.97 / 120 \\
+ChEBI & 1.00 / 162 & 0.92 / 124 & 0.98 / 91 & 0.98 / 299 & 0.96 / 447 \\
+\bottomrule
+\end{tabular}
+\end{table*}

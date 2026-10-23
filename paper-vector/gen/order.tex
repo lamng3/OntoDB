@@ -1,0 +1,18 @@
+\begin{table}[t]
+\caption{Share of a term's ten nearest neighbors (cosine) found within $\pm$100 positions, and the median position gap to the nearest neighbor, by order of the terms. 2,000 queries.}
+\label{tab-order}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrrrrr@{}}
+\toprule
+ & & \multicolumn{4}{c}{share within $\pm$100} & \multicolumn{3}{c}{median gap} \\
+\cmidrule(lr){3-6}\cmidrule(lr){7-9}
+Ontology & terms & hierarchy & first-seen id & alphabetical & random & hierarchy & id & random \\
+\midrule
+GO & 38,092 & \textbf{0.38} & 0.21 & 0.33 & 0.005 & 45 & 1,739 & 10,823 \\
+HPO & 19,894 & \textbf{0.56} & 0.23 & 0.28 & 0.009 & 6 & 2,033 & 5,589 \\
+Uberon & 15,047 & \textbf{0.39} & 0.23 & 0.35 & 0.013 & 41 & 930 & 4,374 \\
+ChEBI & 218,723 & 0.23 & 0.13 & \textbf{0.41} & 0.001 & 444 & 4,351 & 61,743 \\
+\bottomrule
+\end{tabular}}
+\end{table}

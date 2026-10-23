@@ -1,0 +1,14 @@
+\begin{table}[t]
+\caption{A second embedding model, \texttt{all-mpnet-base-v2} (768 dimensions): recall@10 / mean microseconds over every class size and query kind, and the share of the unfiltered top 100 under the class for queries inside and outside.}
+\label{tab-model}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Ontology & FAISS IVF & FAISS HNSW & pre-filter & auto & top-100 under $c$, inside & outside \\
+\midrule
+GO & 0.64 / 51 & 0.67 / 81 & 1.00 / 279 & 1.00 / 195 & 0.30 & 0.02 \\
+HPO & 0.68 / 43 & 0.71 / 77 & 1.00 / 181 & 1.00 / 94 & 0.37 & 0.05 \\
+\bottomrule
+\end{tabular}}
+\end{table}

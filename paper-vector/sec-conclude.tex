@@ -1,0 +1,26 @@
+\section{Conclusion}
+\label{sec-conclude}
+
+An ontology's hierarchy is a better filter for vector search than an attribute the
+index cannot see.
+Postorder intervals in the store's B+ tree make a class's members a few range scans and
+membership a binary search; a vector search can then test the filter per row, or
+resolve it and score the members exactly, and a cost model with one threshold picks the
+cheaper.
+On four ontologies this answers $\mathrm{near}(q,c,k)$ with recall 0.999 and a median of
+26\,$\mu$s, where FAISS indexes with ID selectors return recall 0.61 and 0.64 and lose
+almost every answer for a query outside a small class, and where an exact FAISS scan is
+33 times slower for classes of at most ten members.
+No sorted order of the terms can do the same: every order separates some neighbors by
+$(N{-}1)/D$ positions, and the best we found holds at most 56\% of a term's neighbors in
+a window of 200.
+
+\stitle{Limitations}.
+Our IVF and HNSW are 2 to 4 times slower than FAISS's when called one query at a time and
+take longer to build, the price of keeping lists in the triple tree; the vectors are held
+in memory and the indexes are rebuilt, not updated, when they change; the labels are
+rebuilt when the hierarchy changes; the embeddings come from one small model that
+embeds names only; masked HNSW is slow for classes of a few hundred members and under,
+which the rule avoids and a denser graph, as ACORN builds~\cite{patel2024}, might fix;
+and for classes of 1,001 to 5,000 members an exact FAISS scan with a precomputed member
+bitmap is faster than our rule.
