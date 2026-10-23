@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OntoDB Showcase</title>
+<meta name="description" content="One SPARQL query through OntoDB, page by page: dictionary lookups, the statistics pass, the plan, B+ tree scans and the buffer pool; then a crash and restart, hierarchy search, and the benchmark against other stores.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d28d9'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='15' fill='white'%3EDB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=TikTok+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: the manuals' single page with tabs; the walkthrough is a stepper (notes left, the store's pages right) over a fixed control bar.
+   Engines keep one hue each across every chart: OntoDB violet, then the four stores it is measured against. */
+:root {
+  --primary: #6d28d9; --primary-dark: #a78bfa;
+  --e-ontodb: #6d28d9; --e-oxrocks: #eb6834; --e-oxmem: #2a78d6; --e-jena: #eda100; --e-sqlite: #1baf7a;
+  --dict: #64748b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --e-ontodb: #8b5cf6; --e-oxrocks: #d95926; --e-oxmem: #3987e5; --e-jena: #c98500; --e-sqlite: #199e70; --dict: #94a3b8; }
+}
+/* Shared by the showcases (Aegis, Agentic Ontologist): the manuals' design, as a single page with tabs.
+   Set --primary per project (and --primary-dark for dark mode) before this file. */
+:root {
+  --primary-5: color-mix(in srgb, var(--primary) 5%, transparent);
+  --primary-10: color-mix(in srgb, var(--primary) 10%, transparent);
+  --primary-15: color-mix(in srgb, var(--primary) 16%, transparent);
+  --primary-50: color-mix(in srgb, var(--primary) 50%, transparent);
+  --bg: #ffffff; --fg: #111111; --muted: #4b5563; --subtle: #6b7280; --faint: #9ca3af; --border: #e5e7eb;
+  --ok: #1d7f47; --ok-bg: rgba(29, 127, 71, 0.1); --bad: #b42318; --bad-bg: rgba(180, 35, 24, 0.09);
+  --warn: #a15c07; --warn-bg: rgba(161, 92, 7, 0.1);
+  --font: "TikTok Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --primary: var(--primary-dark);
+    --bg: #111214; --fg: #ececec; --muted: #b4b8bf; --subtle: #9096a0; --faint: #6b7280; --border: #2a2d33;
+    --ok: #5fd08f; --ok-bg: rgba(95, 208, 143, 0.12); --bad: #ff8a80; --bad-bg: rgba(255, 138, 128, 0.12);
+    --warn: #f0b252; --warn-bg: rgba(240, 178, 82, 0.12); color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--font); }
+::selection { background: var(--primary-15); }
+a { color: var(--primary); text-underline-offset: 0.15em; }
+button, select, input { font: inherit; color: inherit; }
+button:not(:disabled) { cursor: pointer; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.muted { color: var(--subtle); }
+
+header.site { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 16px 24px; max-width: 1180px; margin: 0 auto; }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fg); font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.logo-mark { width: 30px; height: 30px; border-radius: 8px; background: var(--primary); color: var(--bg); display: grid; place-items: center; font-size: 15px; font-weight: 700; }
+.logo small { font-size: 14px; font-weight: 400; color: var(--subtle); margin-left: 2px; }
+nav.site { display: flex; align-items: center; gap: 22px; }
+nav.site a { text-decoration: none; color: var(--fg); }
+nav.site a:hover { color: var(--primary); }
+nav.site a.pill { background: var(--primary-15); padding: 4px 16px; border-radius: 999px; white-space: nowrap; }
+
+.hero { padding: 24px 0 8px; }
+.hero h1 { font-size: clamp(28px, 4vw, 38px); line-height: 1.15; font-weight: 400; letter-spacing: -0.01em; margin: 0 0 14px; max-width: 40rem; }
+.hero .lede { font-size: 18px; line-height: 1.45; color: var(--muted); margin: 0 0 18px; max-width: 46rem; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 18px 0 8px; }
+.stat { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.stat b { display: block; font-size: 26px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 13px; color: var(--subtle); }
+
+nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 22px 0 22px; overflow-x: auto; position: sticky; top: 0; background: var(--bg); z-index: 5; }
+nav.tabs button { background: none; border: 0; padding: 10px 14px; color: var(--subtle); border-bottom: 2px solid transparent; white-space: nowrap; }
+nav.tabs button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--primary); font-weight: 500; }
+section.tab[hidden] { display: none; }
+section.tab > h2 { font-size: 22px; font-weight: 500; margin: 0 0 4px; letter-spacing: -0.01em; }
+section.tab > .sub { color: var(--muted); margin: 0 0 18px; max-width: 52rem; }
+
+.panel { border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.panel h3 { font-size: 15px; font-weight: 500; margin: 0 0 4px; }
+.panel .sub { font-size: 13.5px; color: var(--subtle); margin: 0 0 12px; }
+.grid { display: grid; gap: 16px; }
+.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 860px) { .cols-2, .cols-3 { grid-template-columns: minmax(0, 1fr); } }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin: 0 0 14px; font-size: 14px; }
+.controls label { display: inline-flex; align-items: center; gap: 8px; color: var(--subtle); }
+.controls select { border: 1px solid var(--border); background: transparent; border-radius: 8px; padding: 5px 8px; }
+.controls input[type="range"] { accent-color: var(--primary); width: 160px; }
+.controls output { color: var(--fg); min-width: 4.5em; font-variant-numeric: tabular-nums; }
+.seg { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.seg button { border: 1px solid var(--border); background: transparent; border-radius: 999px; padding: 2px 12px; font-size: 13.5px; }
+.seg button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-10); color: var(--primary); }
+.btn { border: 1px solid var(--primary); background: var(--primary-5); border-radius: 999px; padding: 4px 14px; font-size: 14px; text-decoration: none; color: var(--fg); }
+.btn:hover:not(:disabled) { background: var(--primary-15); }
+.btn.solid { background: var(--primary); color: var(--bg); }
+
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: var(--lw, 7em) 1fr auto; gap: 10px; align-items: center; font-size: 13.5px; color: var(--subtle); }
+.bar i { display: block; height: 11px; border-radius: 6px; background: var(--primary-10); position: relative; overflow: hidden; }
+.bar i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--c, var(--primary)); border-radius: 6px; transition: width 0.25s; }
+.bar b { white-space: nowrap; font-weight: 500; color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; }
+.bar.alt { --c: var(--faint); }
+
+svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+svg.chart text { font: 11px var(--font); fill: var(--subtle); }
+svg.chart .grid { stroke: var(--border); stroke-width: 1; }
+svg.chart .axis { stroke: var(--faint); stroke-width: 1; }
+svg.chart .line { fill: none; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+svg.chart .dot { stroke: var(--bg); stroke-width: 1.5; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--subtle); margin-top: 8px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); display: inline-block; }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-weight: 500; color: var(--subtle); white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+pre { background: var(--primary-5); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; font: 12.5px/1.5 var(--mono); margin: 0; white-space: pre-wrap; }
+code { font-family: var(--mono); font-size: 0.9em; }
+.chip { display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--primary-10); color: var(--primary); }
+.chip.ok { background: var(--ok-bg); color: var(--ok); } .chip.bad { background: var(--bad-bg); color: var(--bad); }
+.note { font-size: 13.5px; color: var(--subtle); margin: 12px 0 0; }
+.callout { border-left: 3px solid var(--primary); background: var(--primary-5); border-radius: 0 10px 10px 0; padding: 10px 14px; font-size: 14.5px; }
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; counter-reset: s; }
+@media (max-width: 860px) { .steps { grid-template-columns: minmax(0, 1fr); } }
+.step { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; counter-increment: s; }
+.step::before { content: counter(s); display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: var(--bg); font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.step h3 { font-size: 16px; font-weight: 500; margin: 0 0 4px; }
+.step p { margin: 0; font-size: 14.5px; color: var(--muted); }
+footer.site { max-width: 1180px; margin: 40px auto 0; padding: 20px 24px 40px; border-top: 1px solid var(--border); font-size: 13.5px; color: var(--subtle); }
+footer.site p { margin: 0 0 6px; }
+@media (max-width: 700px) { nav.site a:not(.pill) { display: none; } .wrap, header.site { padding-left: 16px; padding-right: 16px; } }
+
+.btn.solid:hover:not(:disabled) { background: var(--primary); color: var(--bg); filter: brightness(1.12); }
+.btn.solid:disabled { opacity: 0.5; }
+
+:root[data-theme="dark"] {
+  --primary: var(--primary-dark);
+  --bg: #111214; --fg: #ececec; --muted: #b4b8bf; --subtle: #9096a0; --faint: #6b7280; --border: #2a2d33;
+  --ok: #5fd08f; --ok-bg: rgba(95, 208, 143, 0.12); --bad: #ff8a80; --bad-bg: rgba(255, 138, 128, 0.12);
+  --warn: #f0b252; --warn-bg: rgba(240, 178, 82, 0.12); color-scheme: dark;
+  --e-ontodb: #8b5cf6; --e-oxrocks: #d95926; --e-oxmem: #3987e5; --e-jena: #c98500; --e-sqlite: #199e70; --dict: #94a3b8;
+}
+:root { --cur-tint: color-mix(in srgb, var(--primary) 8%, var(--bg)); --dict-10: color-mix(in srgb, var(--dict) 12%, var(--bg)); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap, header.site, footer.site { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+nav.tabs { top: env(safe-area-inset-top, 0px); }
+h1, h2, h3 { text-wrap: balance; }
+.hero h1 em { font-style: normal; color: var(--primary); }
+.hero .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--subtle); margin-top: 6px; }
+.hero .meta b { color: var(--fg); font-weight: 500; }
+.stat b small { font-size: 14px; color: var(--subtle); font-weight: 400; margin-left: 3px; }
+
+/* Walkthrough */
+.wrail { display: flex; align-items: center; margin: 4px 0 22px; overflow-x: auto; padding: 4px 2px 8px; }
+.stg { display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 4px 2px; color: var(--subtle); white-space: nowrap; font-size: 14.5px; }
+.stg .dot { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--border); display: grid; place-items: center; font-size: 12.5px; font-weight: 600; background: var(--bg); }
+.stg.past { color: var(--muted); } .stg.past .dot { background: var(--primary); border-color: var(--primary); color: var(--bg); }
+.stg.on { color: var(--fg); font-weight: 500; } .stg.on .dot { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 4px var(--primary-10); }
+.rail-line { flex: 1 0 18px; height: 2px; background: var(--border); margin: 0 8px; } .rail-line.past { background: var(--primary); }
+.wt { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 40px; align-items: start; }
+@media (min-width: 1000px) { .wt { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.25fr); } .w-right { position: sticky; top: calc(56px + env(safe-area-inset-top, 0px)); } }
+.wside, .w-right { display: grid; gap: 18px; min-width: 0; }
+.wp { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; min-width: 0; }
+.wph { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+.wph h3 { margin: 0; font-size: 11.5px; line-height: 1; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.wph .meta { font-size: 12.5px; color: var(--subtle); margin: 0; }
+.w-note { padding: 20px 22px 22px; display: grid; gap: 12px; }
+.w-note .hd { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wstep { font: 600 12px/1 var(--mono); color: var(--primary); background: var(--cur-tint); border: 1px solid var(--primary-50); padding: 5px 9px; border-radius: 6px; }
+.wtag { font: 600 11px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 9px; border-radius: 6px; background: var(--primary-5); color: var(--muted); border: 1px solid var(--border); }
+.w-note h3 { margin: 2px 0 0; font-size: 22px; line-height: 1.25; font-weight: 500; letter-spacing: -0.01em; }
+.w-note p { margin: 0; font-size: 16px; line-height: 1.65; color: var(--muted); }
+.w-note p b { color: var(--fg); font-weight: 600; }
+.w-note code { font-size: 13.5px; color: var(--fg); background: var(--primary-5); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.qtext { font: 13px/1.7 var(--mono); padding: 12px 14px; border-radius: 10px; background: var(--primary-5); border: 1px solid var(--border); overflow-wrap: anywhere; color: var(--fg); }
+.qtext .kw { color: var(--primary); font-weight: 600; } .qtext .v { color: var(--e-oxrocks); }
+
+/* plan tree */
+.plan { padding: 14px 18px 18px; display: grid; gap: 6px; }
+.pn { display: grid; gap: 4px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); margin-left: calc(var(--d) * 22px); position: relative; }
+.pn::before { content: ""; position: absolute; left: -14px; top: -7px; bottom: 50%; width: 12px; border-left: 1.5px solid var(--border); border-bottom: 1.5px solid var(--border); border-bottom-left-radius: 6px; }
+.pn[style*="--d:0"]::before { display: none; }
+.pn .op { font: 600 13.5px var(--mono); } .pn .det { font: 12.5px/1.5 var(--mono); color: var(--subtle); overflow-wrap: anywhere; }
+.pn .nums { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.pn .nums span { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-variant-numeric: tabular-nums; }
+.pn.on { border-color: var(--primary); background: var(--cur-tint); box-shadow: 0 0 0 3px var(--primary-10); }
+.pn.done { border-color: var(--primary-50); }
+
+/* buffer pool */
+.bpm { padding: 14px 18px 18px; display: grid; gap: 10px; }
+.frames { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
+@media (max-width: 520px) { .frames { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.fr { aspect-ratio: 1.25; border-radius: 4px; display: grid; place-items: center; font: 500 10px var(--mono); color: var(--subtle); background: var(--dict-10); border: 1.5px solid transparent; position: relative; max-width: 100%; }
+.fr.idx { background: var(--primary-10); color: var(--muted); }
+.fr.hit { border-color: var(--primary); color: var(--fg); font-weight: 700; }
+.fr.miss { border-color: var(--warn); background: var(--warn-bg); color: var(--fg); font-weight: 700; }
+.bpm-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--subtle); }
+.bpm-key span { display: inline-flex; align-items: center; gap: 6px; }
+.bpm-key i { width: 14px; height: 11px; border-radius: 3px; display: inline-block; background: var(--c); border: 1.5px solid var(--b, transparent); }
+.counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.counts div { border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; }
+.counts b { display: block; font-size: 19px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.counts span { font-size: 12px; color: var(--subtle); }
+.evlist { font: 12px/1.6 var(--mono); color: var(--subtle); }
+
+/* the store */
+.store { padding: 12px 18px 16px; overflow-x: auto; }
+.store svg { display: block; width: 100%; min-width: 560px; height: auto; font-family: var(--font); }
+.store text { font: 500 11px var(--font); fill: var(--subtle); }
+.store text.lbl { font: 600 11.5px var(--font); letter-spacing: 0.08em; fill: var(--muted); }
+.store text.pg { font: 500 10px var(--mono); fill: var(--subtle); }
+.store .node { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+.store .leaf { fill: var(--primary-5); stroke: var(--border); stroke-width: 1; }
+.store .leaf.seen { fill: var(--primary-15); }
+.store .on { fill: var(--primary); stroke: var(--primary); }
+.store .on.miss { fill: var(--warn); stroke: var(--warn); }
+.store .sep { stroke: var(--border); stroke-width: 1; }
+.store .path { fill: none; stroke: var(--primary); stroke-width: 1.8; }
+.store .path.miss { stroke: var(--warn); }
+.store .dim { opacity: 0.45; }
+.store .dnode { fill: var(--dict-10); stroke: var(--border); stroke-width: 1.2; }
+.store .dnode.on { fill: var(--dict); stroke: var(--dict); }
+.store text.on { fill: var(--bg); stroke: none; }
+.detail { padding: 14px 18px 18px; display: grid; gap: 10px; }
+.keys { width: 100%; font: 12.5px/1.45 var(--mono); border-collapse: collapse; }
+.keys td, .keys th { padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.keys th { font: 600 11px var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--subtle); }
+.keys tr.found td { background: var(--ok-bg); color: var(--fg); font-weight: 600; }
+.keys tr.gap td { color: var(--faint); font-style: italic; font-family: var(--font); }
+.keys td.n { color: var(--faint); text-align: right; }
+.chain { display: grid; gap: 10px; }
+.link { display: grid; gap: 6px; }
+.link .what { font-size: 13px; color: var(--muted); } .link .what b { color: var(--fg); font-weight: 600; }
+.pages { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font: 12px var(--mono); }
+.pg { padding: 3px 9px; border-radius: 7px; border: 1.5px solid var(--primary); background: var(--cur-tint); color: var(--fg); }
+.pg.miss { border-color: var(--warn); background: var(--warn-bg); }
+.pg.d { border-color: var(--dict); background: var(--dict-10); }
+.pg small { color: var(--subtle); font-family: var(--font); margin-right: 4px; }
+.arr { color: var(--faint); }
+.result { padding: 10px 12px; border-radius: 10px; background: var(--ok-bg); font: 600 13px/1.5 var(--mono); color: var(--fg); overflow-wrap: anywhere; }
+.wlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--subtle); }
+.wlegend span { display: inline-flex; align-items: center; gap: 6px; }
+.wlegend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--c); }
+
+.wbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--bg); border-top: 1px solid var(--border); padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.wbar-in { max-width: 1180px; margin: 0 auto; padding: 0 8px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.wbar .btn { height: 38px; display: inline-flex; align-items: center; padding: 0 18px; border-radius: 999px; }
+#wscrub { flex: 1 1 200px; min-width: 0; accent-color: var(--primary); }
+.wctr { font: 500 13px var(--mono); color: var(--muted); white-space: nowrap; } .wctr b { color: var(--fg); }
+body.stepping { padding-bottom: 80px; }
+
+/* Plans */
+.qlist { display: grid; gap: 6px; align-content: start; }
+.qbtn { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13.5px; }
+.qbtn b { font: 600 13px var(--mono); } .qbtn span { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qbtn em { font-style: normal; font: 500 12px var(--mono); color: var(--muted); }
+.qbtn[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-5); }
+.qbtn.zero em { color: var(--faint); }
+.plans { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); align-items: start; }
+@media (max-width: 860px) { .plans { grid-template-columns: minmax(0, 1fr); } }
+
+/* Crash and restart */
+.rgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+@media (max-width: 900px) { .rgrid { grid-template-columns: minmax(0, 1fr); } }
+.term { font: 12.5px/1.6 var(--mono); background: var(--primary-5); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; max-height: 560px; overflow: auto; }
+.term .cmd { color: var(--fg); overflow-wrap: anywhere; } .term .cmd::before { content: "OntoDB> "; color: var(--primary); font-weight: 600; }
+.term .cmd.sh::before { content: "$ "; }
+.term .out { color: var(--subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .blk { display: grid; gap: 2px; padding: 6px 8px; border-radius: 8px; }
+.term .blk.on { background: var(--bg); box-shadow: 0 0 0 1.5px var(--primary); }
+.term .blk.later { display: none; }
+.term .out.warn { color: var(--warn); }
+.files { display: grid; gap: 10px; }
+.file { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) 6em; gap: 10px; align-items: center; font-size: 13.5px; }
+.file b { font: 600 13px var(--mono); } .file span { text-align: right; font: 500 12.5px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.file i { display: block; height: 12px; border-radius: 6px; background: var(--primary-10); position: relative; overflow: hidden; }
+.file i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--c, var(--primary)); border-radius: 6px; transition: width 0.3s; }
+.tape { display: flex; flex-wrap: wrap; gap: 3px; }
+.rec { width: 13px; height: 18px; border-radius: 3px; background: var(--c); position: relative; }
+.rec.cut { background: repeating-linear-gradient(135deg, var(--bad) 0 3px, transparent 3px 6px); outline: 1.5px solid var(--bad); }
+.rec.dropped { opacity: 0.35; outline: 1.5px dashed var(--bad); outline-offset: 1px; }
+.recs { font: 12px/1.55 var(--mono); display: grid; gap: 1px; max-height: 260px; overflow: auto; }
+.recs div { display: grid; grid-template-columns: 4.5em 3.5em 5.5em minmax(0, 1fr); gap: 8px; padding: 1px 6px; border-radius: 4px; }
+.recs div span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.recs div.dropped { background: var(--bad-bg); text-decoration: line-through; color: var(--bad); }
+.rnav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.rdots { display: flex; gap: 5px; flex-wrap: wrap; }
+.rdots button { border: 1px solid var(--border); background: var(--bg); border-radius: 999px; font-size: 12.5px; padding: 3px 10px; color: var(--muted); }
+.rdots button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-10); color: var(--primary); }
+.rdots button.past { color: var(--fg); }
+
+/* Hierarchy */
+.hits { display: grid; gap: 4px; font-size: 13.5px; }
+.hit { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); gap: 10px; align-items: center; }
+.hit .sc { font: 500 12.5px var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.hit .nm { position: relative; padding: 4px 8px; border-radius: 6px; overflow: hidden; overflow-wrap: anywhere; }
+.hit .nm::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--primary-10); z-index: -1; }
+.hit .nm small { color: var(--faint); font-family: var(--mono); margin-left: 6px; }
+.hit .nm { isolation: isolate; }
+.cls { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13.5px; }
+.cls li { display: flex; gap: 10px; justify-content: space-between; padding: 3px 8px; border-radius: 6px; }
+.cls li:nth-child(odd) { background: var(--primary-5); }
+.cls li small { font: 11.5px var(--mono); color: var(--faint); white-space: nowrap; }
+.big { font-size: 30px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.big small { font-size: 14px; color: var(--subtle); font-weight: 400; margin-left: 6px; }
+
+/* Benchmarks */
+.dots svg { display: block; width: 100%; height: auto; overflow: visible; }
+.dots text { font: 11.5px var(--font); fill: var(--subtle); }
+.dots text.q { font: 600 12px var(--mono); fill: var(--fg); }
+.dots text.q.zero { fill: var(--faint); font-weight: 500; }
+.dots .grid { stroke: var(--border); } .dots .lane { stroke: var(--border); stroke-dasharray: 2 3; }
+.dots circle { stroke: var(--bg); stroke-width: 2; }
+.dots circle.ring { fill: var(--bg); stroke-width: 2; }
+.tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12.5px; padding: 6px 9px; border-radius: 6px; z-index: 30; display: none; max-width: 300px; }
+details.tbl { margin-top: 12px; } details.tbl summary { cursor: pointer; color: var(--primary); font-size: 14px; }
+details.tbl .scroll { margin-top: 8px; }
+td.best { font-weight: 600; color: var(--fg); }
+.legend i { border-radius: 50%; }
+</style>
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="#walk"><span class="logo-mark">DB</span><span>OntoDB <small>showcase</small></span></a>
+  <nav class="site">
+    <a href="https://lamng3.com/ontodb/playground.html">Playground</a>
+    <a href="https://github.com/lamng3/OntoDB">Source</a>
+    <a href="https://lamng3.com/ontodb/" class="pill">Manual</a>
+  </nav>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <h1>One query, <em>page by page</em>, through a database built for ontologies</h1>
+    <p class="lede">OntoDB stores RDF as 64-bit ids in B+ trees and answers SPARQL with a cost-based optimizer, a buffer pool and a write-ahead log. Everything below was printed by the real shell: its plans, its trees, every page the buffer pool fetched while it answered one LUBM query, and what it did after an abrupt exit.</p>
+    <div class="stats" id="stats"></div>
+    <div class="meta" id="meta"></div>
+  </section>
+  <nav class="tabs" role="tablist">
+    <button type="button" data-tab="walk" role="tab">Walkthrough</button>
+    <button type="button" data-tab="plans" role="tab">Plans</button>
+    <button type="button" data-tab="crash" role="tab">Crash and restart</button>
+    <button type="button" data-tab="hierarchy" role="tab">Hierarchy search</button>
+    <button type="button" data-tab="bench" role="tab">Against other stores</button>
+  </nav>
+
+  <section class="tab" id="tab-walk">
+    <h2>Graduate students in GraduateCourse0, from SPARQL to rows</h2>
+    <p class="sub">LUBM query 1 on one university, recorded with <code>\trace on</code>. Each step is one thing the engine did, in the order it did it, with the pages it pinned. Use the bar at the bottom, or the arrow keys.</p>
+    <nav class="wrail" id="wrail" aria-label="Stages"></nav>
+    <div class="wt">
+      <div class="wside">
+        <section class="wp w-note" id="wnote" aria-live="polite"></section>
+        <section class="wp">
+          <div class="wph"><h3>Plan</h3><span class="meta" id="plan-m"></span></div>
+          <div class="plan" id="wplan"></div>
+        </section>
+        <section class="wp">
+          <div class="wph"><h3>Buffer pool</h3><span class="meta" id="bpm-m"></span></div>
+          <div class="bpm" id="wbpm"></div>
+        </section>
+      </div>
+      <div class="w-right">
+        <section class="wp">
+          <div class="wph"><h3>The store's pages</h3><div class="wlegend" id="store-key"></div></div>
+          <div class="store" id="wstore"></div>
+        </section>
+        <section class="wp">
+          <div class="wph"><h3 id="detail-h">Detail</h3><span class="meta" id="detail-m"></span></div>
+          <div class="detail" id="wdetail"></div>
+        </section>
+      </div>
+    </div>
+    <div class="wbar" id="wbar" hidden><div class="wbar-in">
+      <button class="btn" id="wfirst" aria-label="First step">⏮</button>
+      <button class="btn" id="wprev">← Prev</button>
+      <button class="btn" id="wplay">Play</button>
+      <button class="btn solid" id="wnext">Next →</button>
+      <input type="range" id="wscrub" min="0" max="0" value="0" aria-label="Step">
+      <span class="wctr" id="wctr"></span>
+    </div></div>
+  </section>
+
+  <section class="tab" id="tab-plans" hidden>
+    <h2>What the optimizer chose for each LUBM query</h2>
+    <p class="sub">The fourteen LUBM queries under <code>\explain analyze</code> on the same university: each operator with the rows the optimizer estimated and the rows it produced. OntoDB does not do RDFS inference yet, so queries that rely on the class hierarchy return no rows here; LUBM's own note for each query says what it assumes.</p>
+    <div class="grid plans">
+      <div class="qlist" id="qlist"></div>
+      <div class="panel" id="qplan"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-crash" hidden>
+    <h2>A database directory survives an abrupt exit</h2>
+    <p class="sub"><code>ontodb mydb</code> runs each statement as a transaction and forces its log records to <code>mydb/wal</code> before the prompt returns. <code>\checkpoint</code> writes a snapshot and resets the log. Here the shell exits with <code>\crash</code>, which flushes nothing, and the last 10 bytes of the log are cut off by hand to stand in for a write the disk never finished.</p>
+    <div class="rnav">
+      <button class="btn" id="rprev">← Prev</button>
+      <button class="btn solid" id="rnext">Next →</button>
+      <div class="rdots" id="rdots"></div>
+    </div>
+    <div class="grid rgrid">
+      <div class="term" id="rterm"></div>
+      <div class="grid">
+        <div class="callout" id="rnote"></div>
+        <div class="panel">
+          <h3>On disk</h3>
+          <p class="sub">The two files in <code>mydb/</code>, to scale.</p>
+          <div class="files" id="rfiles"></div>
+        </div>
+        <div class="panel">
+          <h3>Log records</h3>
+          <p class="sub" id="rwal-sub"></p>
+          <div class="tape" id="rtape"></div>
+          <div class="wlegend" id="rkey" style="margin:10px 0"></div>
+          <div class="recs" id="rrecs"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-hierarchy" hidden>
+    <h2>Everything under a class is a range scan</h2>
+    <p class="sub">On a slice of the Gene Ontology, <code>\hindex build</code> numbers the class hierarchy so that each class owns a few integer intervals, kept in a B+ tree. "Every class at or below C" becomes one range scan per interval. The same intervals can restrict a vector search to the classes under C.</p>
+    <div class="grid cols-2" id="hgrid"></div>
+  </section>
+
+  <section class="tab" id="tab-bench" hidden>
+    <h2>OntoDB against Oxigraph, Jena and SQLite</h2>
+    <p class="sub" id="bench-sub"></p>
+    <div class="grid">
+      <div class="panel">
+        <h3>LUBM(10), query latency</h3>
+        <p class="sub">Mean time per query, log scale; lower is better. 1.3 million triples. Queries that return no rows rely on inference that none of these runs did.</p>
+        <div class="dots" id="bq"></div>
+        <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bq-t"></div></details>
+      </div>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h3>Instances of a class and its subclasses</h3>
+          <p class="sub">Gene Ontology, 200,000 entities; 30 classes per bucket of descendant count. OntoDB as ids (the ring) and as strings, which is what the others return.</p>
+          <div class="dots" id="bgo"></div>
+          <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bgo-t"></div></details>
+        </div>
+        <div class="panel">
+          <h3>Lookups per second, by threads</h3>
+          <p class="sub">The <code>(s,.,.)</code> and <code>(s,p,.)</code> lookups on LUBM(10), 3 seconds per cell. The machine has 8 performance cores.</p>
+          <div id="bconc"></div>
+          <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bconc-t"></div></details>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Loading LUBM(10)</h3>
+        <p class="sub">OntoDB is the slowest to load and the second largest in memory: it builds three B+ trees and the dictionary from one pass over the file.</p>
+        <div class="scroll" id="bload"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="site" id="foot"></footer>
+<div class="tip" id="tip"></div>
+<script id="data" type="application/json">{"commit":"ad87669","walk":{"query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE { ?X rdf:type ub:GraduateStudent . ?X ub:takesCourse <http://www.Department0.University0.edu/GraduateCourse0> }","loaded":"loaded 8555 triples in 65.0197 ms","plan":{"plan":{"op":"Projection","detail":"[?X]","est":4,"actual":4,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":4,"actual":4,"kids":[{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse> <http://www.Department0.University0.edu/GraduateCourse0>}","est":4,"actual":4,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent>}","est":146,"actual":null,"kids":[]}]}]},"ms":0.074},"rows":"?X\n<http://www.Department0.University0.edu/GraduateStudent44>\n<http://www.Department0.University0.edu/GraduateStudent101>\n<http://www.Department0.University0.edu/GraduateStudent124>\n<http://www.Department0.University0.edu/GraduateStudent142>\n(4 rows)","trees":{"spo":{"root":164,"levels":[[{"page":164,"leaf":false,"seps":[[95,8,3078],[175,22,179],[252,17,257],[324,30,31],[400,2,3129],[467,417,275],[530,2,413],[593,417,65],[653,417,129],[713,417,148],[776,8,777],[839,2,413],[902,2,413],[965,30,31],[1025,417,360],[1085,430,324],[1145,417,367],[1208,8,1209],[1268,417,291],[1331,30,31],[1391,417,217],[1457,8,1458],[1517,28,1519],[1577,430,244],[1640,2,413],[1700,415,10],[1760,417,359],[1820,415,10],[1883,417,216],[1949,8,1950],[2012,415,10],[2072,2,7],[2135,415,10],[2198,2,7],[2261,417,66],[2324,417,197],[2386,417,369],[2453,2,3197],[2515,30,31],[2577,2,2575],[2647,2588,2507],[2689,8,2612],[2732,2588,2218],[2780,8,2614],[2826,2,2586],[2869,8,2602],[2913,2588,2035],[2956,2588,244],[3002,2,2586],[3035,8,2594]]}],[{"page":113,"leaf":true,"count":169,"first":[1,2,3],"last":[95,2,3067]},{"page":114,"leaf":true,"count":169,"first":[95,8,3078],"last":[175,17,178]},{"page":115,"leaf":true,"count":169,"first":[175,22,179],"last":[252,17,256]},{"page":116,"leaf":true,"count":169,"first":[252,17,257],"last":[324,28,333]},{"page":117,"leaf":true,"count":169,"first":[324,30,31],"last":[399,8,3127]},{"page":118,"leaf":true,"count":169,"first":[400,2,3129],"last":[467,417,177]},{"page":119,"leaf":true,"count":169,"first":[467,417,275],"last":[527,417,275]},{"page":120,"leaf":true,"count":169,"first":[530,2,413],"last":[593,415,10]},{"page":121,"leaf":true,"count":169,"first":[593,417,65],"last":[653,415,10]},{"page":122,"leaf":true,"count":169,"first":[653,417,129],"last":[713,417,36]},{"page":123,"leaf":true,"count":169,"first":[713,417,148],"last":[776,2,413]},{"page":124,"leaf":true,"count":169,"first":[776,8,777],"last":[836,417,360]},{"page":125,"leaf":true,"count":169,"first":[839,2,413],"last":[899,430,93]},{"page":126,"leaf":true,"count":169,"first":[902,2,413],"last":[965,28,967]},{"page":127,"leaf":true,"count":169,"first":[965,30,31],"last":[1025,417,307]},{"page":128,"leaf":true,"count":169,"first":[1025,417,360],"last":[1085,417,139]},{"page":129,"leaf":true,"count":169,"first":[1085,430,324],"last":[1145,417,299]},{"page":130,"leaf":true,"count":169,"first":[1145,417,367],"last":[1208,2,413]},{"page":131,"leaf":true,"count":169,"first":[1208,8,1209],"last":[1268,417,246]},{"page":132,"leaf":true,"count":169,"first":[1268,417,291],"last":[1331,28,1333]},{"page":133,"leaf":true,"count":169,"first":[1331,30,31],"last":[1391,417,168]},{"page":134,"leaf":true,"count":169,"first":[1391,417,217],"last":[1457,2,413]},{"page":135,"leaf":true,"count":169,"first":[1457,8,1458],"last":[1517,8,1518]},{"page":136,"leaf":true,"count":169,"first":[1517,28,1519],"last":[1577,417,391]},{"page":137,"leaf":true,"count":169,"first":[1577,430,244],"last":[1637,430,93]},{"page":138,"leaf":true,"count":169,"first":[1640,2,413],"last":[1700,30,31]},{"page":139,"leaf":true,"count":169,"first":[1700,415,10],"last":[1760,417,186]},{"page":140,"leaf":true,"count":169,"first":[1760,417,359],"last":[1820,30,31]},{"page":141,"leaf":true,"count":169,"first":[1820,415,10],"last":[1883,417,196]},{"page":142,"leaf":true,"count":169,"first":[1883,417,216],"last":[1949,2,413]},{"page":143,"leaf":true,"count":169,"first":[1949,8,1950],"last":[2012,30,31]},{"page":144,"leaf":true,"count":169,"first":[2012,415,10],"last":[2069,3198,106]},{"page":145,"leaf":true,"count":169,"first":[2072,2,7],"last":[2135,30,31]},{"page":146,"leaf":true,"count":169,"first":[2135,415,10],"last":[2195,430,14],"keys":[[2135,415,10],[2135,417,37],[2135,417,140],[2135,430,43],[2138,2,7],[2139,2,2013],[2139,8,2140],[2139,22,2142],[2139,28,2141],[2139,30,31],[2139,415,10],[2139,417,131],[2139,417,256],[2139,417,369],[2139,430,252],[2142,2,7],[2143,2,2013],[2143,2,3197],[2143,8,2144],[2143,22,2146],[2143,28,2145],[2143,30,31],[2143,415,10],[2143,417,131],[2143,417,228],[2143,417,393],[2143,430,289],[2143,3198,196],[2146,2,7],[2147,2,2013],[2147,2,3199],[2147,8,2148],[2147,22,277],[2147,28,2149],[2147,30,31],[2147,415,10],[2147,417,308],[2147,430,233],[2150,2,2013],[2150,8,2151],[2150,22,2153],[2150,28,2152],[2150,30,31],[2150,415,10],[2150,417,77],[2150,430,146],[2153,2,7],[2154,2,2013],[2154,8,2155],[2154,22,410],[2154,28,2156],[2154,30,31],[2154,415,10],[2154,417,150],[2154,417,257],[2154,430,43],[2157,2,2013],[2157,2,3199],[2157,8,2158],[2157,22,2160],[2157,28,2159],[2157,30,31],[2157,415,10],[2157,417,108],[2157,417,350],[2157,430,233],[2160,2,7],[2161,2,2013],[2161,2,3199],[2161,8,2162],[2161,22,2084],[2161,28,2163],[2161,30,31],[2161,415,10],[2161,417,328],[2161,417,339],[2161,417,386],[2161,430,223],[2164,2,2013],[2164,8,2165],[2164,22,2167],[2164,28,2166],[2164,30,31],[2164,415,10],[2164,417,140],[2164,417,386],[2164,430,193],[2167,2,7],[2168,2,2013],[2168,8,2169],[2168,22,160],[2168,28,2170],[2168,30,31],[2168,415,10],[2168,417,58],[2168,417,401],[2168,430,334],[2171,2,2013],[2171,2,3199],[2171,8,2172],[2171,22,2174],[2171,28,2173],[2171,30,31],[2171,415,10],[2171,417,408],[2171,430,305],[2174,2,7],[2175,2,2013],[2175,2,3197],[2175,8,2176],[2175,22,2178],[2175,28,2177],[2175,30,31],[2175,415,10],[2175,417,58],[2175,430,175],[2175,3198,117],[2178,2,7],[2179,2,2013],[2179,8,2180],[2179,22,2182],[2179,28,2181],[2179,30,31],[2179,415,10],[2179,417,19],[2179,417,140],[2179,417,308],[2179,430,204],[2182,2,7],[2183,2,2013],[2183,8,2184],[2183,22,2186],[2183,28,2185],[2183,30,31],[2183,415,10],[2183,417,97],[2183,417,150],[2183,430,156],[2186,2,7],[2187,2,2013],[2187,2,3197],[2187,8,2188],[2187,22,2190],[2187,28,2189],[2187,30,31],[2187,415,10],[2187,417,187],[2187,430,252],[2187,3198,360],[2190,2,7],[2191,2,2013],[2191,8,2192],[2191,22,2194],[2191,28,2193],[2191,30,31],[2191,415,10],[2191,417,218],[2191,417,256],[2191,417,401],[2191,430,289],[2194,2,7],[2195,2,2013],[2195,8,2196],[2195,22,2198],[2195,28,2197],[2195,30,31],[2195,415,10],[2195,417,377],[2195,430,14]]},{"page":147,"leaf":true,"count":169,"first":[2198,2,7],"last":[2261,415,10]},{"page":148,"leaf":true,"count":169,"first":[2261,417,66],"last":[2324,417,57]},{"page":149,"leaf":true,"count":169,"first":[2324,417,197],"last":[2386,415,10]},{"page":150,"leaf":true,"count":169,"first":[2386,417,369],"last":[2453,2,2013],"keys":[[2386,417,369],[2386,430,282],[2389,2,7],[2390,2,2013],[2390,2,3199],[2390,8,2391],[2390,22,2393],[2390,28,2392],[2390,30,31],[2390,415,10],[2390,417,400],[2390,430,34],[2393,2,7],[2394,2,2013],[2394,8,2395],[2394,22,2397],[2394,28,2396],[2394,30,31],[2394,415,10],[2394,417,237],[2394,417,267],[2394,417,339],[2394,430,314],[2397,2,7],[2398,2,2013],[2398,8,2399],[2398,22,121],[2398,28,2400],[2398,30,31],[2398,415,10],[2398,417,57],[2398,430,146],[2401,2,2013],[2401,8,2402],[2401,22,2404],[2401,28,2403],[2401,30,31],[2401,415,10],[2401,417,19],[2401,417,401],[2401,430,93],[2404,2,7],[2405,2,2013],[2405,8,2406],[2405,22,2408],[2405,28,2407],[2405,30,31],[2405,415,10],[2405,417,361],[2405,430,184],[2408,2,7],[2409,2,2013],[2409,8,2410],[2409,22,2412],[2409,28,2411],[2409,30,31],[2409,415,10],[2409,417,118],[2409,430,244],[2412,2,7],[2413,2,2013],[2413,2,3199],[2413,8,2414],[2413,22,2416],[2413,28,2415],[2413,30,31],[2413,415,10],[2413,417,76],[2413,417,198],[2413,417,408],[2413,430,334],[2416,2,7],[2417,2,2013],[2417,2,3199],[2417,8,2418],[2417,22,2420],[2417,28,2419],[2417,30,31],[2417,415,10],[2417,417,300],[2417,430,193],[2420,2,7],[2421,2,2013],[2421,8,2422],[2421,22,2424],[2421,28,2423],[2421,30,31],[2421,415,10],[2421,417,130],[2421,430,273],[2424,2,7],[2425,2,2013],[2425,8,2426],[2425,22,2428],[2425,28,2427],[2425,30,31],[2425,415,10],[2425,417,20],[2425,417,141],[2425,417,218],[2425,430,193],[2428,2,7],[2429,2,2013],[2429,8,2430],[2429,22,2432],[2429,28,2431],[2429,30,31],[2429,415,10],[2429,417,151],[2429,430,184],[2432,2,7],[2433,2,2013],[2433,2,3197],[2433,8,2434],[2433,22,2436],[2433,28,2435],[2433,30,31],[2433,415,10],[2433,417,401],[2433,430,214],[2433,3198,206],[2436,2,7],[2437,2,2013],[2437,2,3197],[2437,8,2438],[2437,22,2440],[2437,28,2439],[2437,30,31],[2437,415,10],[2437,417,178],[2437,417,207],[2437,430,73],[2437,3198,18],[2440,2,7],[2441,2,2013],[2441,8,2442],[2441,22,2444],[2441,28,2443],[2441,30,31],[2441,415,10],[2441,417,119],[2441,417,131],[2441,430,305],[2444,2,7],[2445,2,2013],[2445,2,3199],[2445,8,2446],[2445,22,2448],[2445,28,2447],[2445,30,31],[2445,415,10],[2445,417,218],[2445,417,247],[2445,430,214],[2448,2,7],[2449,2,2013],[2449,2,3197],[2449,8,2450],[2449,22,2452],[2449,28,2451],[2449,30,31],[2449,415,10],[2449,417,178],[2449,417,257],[2449,417,318],[2449,430,165],[2449,3198,226],[2452,2,7],[2453,2,2013]]},{"page":151,"leaf":true,"count":169,"first":[2453,2,3197],"last":[2515,28,2517],"keys":[[2453,2,3197],[2453,8,2454],[2453,22,2456],[2453,28,2455],[2453,30,31],[2453,415,10],[2453,417,76],[2453,417,119],[2453,417,408],[2453,430,63],[2453,3198,327],[2456,2,7],[2457,2,2013],[2457,8,2458],[2457,22,2460],[2457,28,2459],[2457,30,31],[2457,415,10],[2457,417,37],[2457,417,98],[2457,430,73],[2460,2,7],[2461,2,2013],[2461,8,2462],[2461,22,180],[2461,28,2463],[2461,30,31],[2461,415,10],[2461,417,292],[2461,417,369],[2461,430,262],[2464,2,2013],[2464,2,3199],[2464,8,2465],[2464,22,2467],[2464,28,2466],[2464,30,31],[2464,415,10],[2464,417,20],[2464,417,308],[2464,430,184],[2467,2,7],[2468,2,2013],[2468,8,2469],[2468,22,2471],[2468,28,2470],[2468,30,31],[2468,415,10],[2468,417,256],[2468,417,286],[2468,417,350],[2468,430,314],[2471,2,7],[2472,2,2013],[2472,8,2473],[2472,22,2475],[2472,28,2474],[2472,30,31],[2472,415,10],[2472,417,308],[2472,430,297],[2475,2,7],[2476,2,2013],[2476,8,2477],[2476,22,2479],[2476,28,2478],[2476,30,31],[2476,415,10],[2476,417,393],[2476,430,297],[2479,2,7],[2480,2,2013],[2480,2,3199],[2480,8,2481],[2480,22,2483],[2480,28,2482],[2480,30,31],[2480,415,10],[2480,417,141],[2480,430,43],[2483,2,7],[2484,2,2013],[2484,2,3199],[2484,8,2485],[2484,22,2487],[2484,28,2486],[2484,30,31],[2484,415,10],[2484,417,47],[2484,430,43],[2487,2,7],[2488,2,2013],[2488,8,2489],[2488,22,363],[2488,28,2490],[2488,30,31],[2488,415,10],[2488,417,97],[2488,417,400],[2488,430,273],[2491,2,2013],[2491,8,2492],[2491,22,2494],[2491,28,2493],[2491,30,31],[2491,415,10],[2491,417,19],[2491,417,107],[2491,417,408],[2491,430,273],[2494,2,7],[2495,2,2013],[2495,8,2496],[2495,22,2498],[2495,28,2497],[2495,30,31],[2495,415,10],[2495,417,218],[2495,417,369],[2495,430,204],[2498,2,7],[2499,2,2013],[2499,8,2500],[2499,22,2502],[2499,28,2501],[2499,30,31],[2499,415,10],[2499,417,108],[2499,417,268],[2499,417,377],[2499,430,104],[2502,2,7],[2503,2,2013],[2503,8,2504],[2503,22,2506],[2503,28,2505],[2503,30,31],[2503,415,10],[2503,417,227],[2503,430,214],[2506,2,7],[2507,2,2013],[2507,2,3199],[2507,8,2508],[2507,22,2510],[2507,28,2509],[2507,30,31],[2507,415,10],[2507,417,187],[2507,417,286],[2507,417,349],[2507,430,297],[2510,2,7],[2511,2,2013],[2511,8,2512],[2511,22,2514],[2511,28,2513],[2511,30,31],[2511,415,10],[2511,417,268],[2511,417,349],[2511,417,401],[2511,430,193],[2514,2,7],[2515,2,2013],[2515,2,3197],[2515,8,2516],[2515,22,2518],[2515,28,2517]]},{"page":152,"leaf":true,"count":169,"first":[2515,30,31],"last":[2576,13,10],"keys":[[2515,30,31],[2515,415,10],[2515,417,47],[2515,430,34],[2515,3198,236],[2518,2,7],[2519,2,2013],[2519,2,3199],[2519,8,2520],[2519,22,2522],[2519,28,2521],[2519,30,31],[2519,415,10],[2519,417,238],[2519,417,292],[2519,430,314],[2522,2,7],[2523,2,2013],[2523,2,3199],[2523,8,2524],[2523,22,2526],[2523,28,2525],[2523,30,31],[2523,415,10],[2523,417,256],[2523,430,63],[2526,2,7],[2527,2,2013],[2527,8,2528],[2527,22,221],[2527,28,2529],[2527,30,31],[2527,415,10],[2527,417,150],[2527,417,339],[2527,417,369],[2527,430,345],[2530,2,2013],[2530,8,2531],[2530,22,2533],[2530,28,2532],[2530,30,31],[2530,415,10],[2530,417,131],[2530,417,286],[2530,417,368],[2530,430,214],[2533,2,7],[2534,2,2013],[2534,2,3199],[2534,8,2535],[2534,22,2537],[2534,28,2536],[2534,30,31],[2534,415,10],[2534,417,66],[2534,417,77],[2534,417,97],[2534,430,289],[2537,2,7],[2538,2,2013],[2538,8,2539],[2538,22,2541],[2538,28,2540],[2538,30,31],[2538,415,10],[2538,417,350],[2538,430,262],[2541,2,7],[2542,2,2013],[2542,2,3199],[2542,8,2543],[2542,22,2408],[2542,28,2544],[2542,30,31],[2542,415,10],[2542,417,66],[2542,417,300],[2542,430,289],[2545,2,2013],[2545,8,2546],[2545,22,2548],[2545,28,2547],[2545,30,31],[2545,415,10],[2545,417,118],[2545,417,338],[2545,417,400],[2545,430,104],[2548,2,7],[2549,2,2013],[2549,8,2550],[2549,22,2552],[2549,28,2551],[2549,30,31],[2549,415,10],[2549,417,97],[2549,430,334],[2552,2,7],[2553,2,2013],[2553,8,2554],[2553,22,2556],[2553,28,2555],[2553,30,31],[2553,415,10],[2553,417,20],[2553,417,408],[2553,430,282],[2556,2,7],[2557,2,2013],[2557,8,2558],[2557,22,287],[2557,28,2559],[2557,30,31],[2557,415,10],[2557,417,285],[2557,417,386],[2557,430,93],[2560,2,2013],[2560,2,3197],[2560,8,2561],[2560,22,2563],[2560,28,2562],[2560,30,31],[2560,415,10],[2560,417,19],[2560,417,268],[2560,417,400],[2560,430,214],[2560,3198,376],[2563,2,7],[2564,2,2013],[2564,2,3197],[2564,8,2565],[2564,22,2567],[2564,28,2566],[2564,30,31],[2564,415,10],[2564,417,169],[2564,417,317],[2564,417,339],[2564,430,334],[2564,3198,45],[2567,2,7],[2568,2,2013],[2568,2,3197],[2568,8,2569],[2568,22,88],[2568,28,2570],[2568,30,31],[2568,415,10],[2568,417,97],[2568,417,151],[2568,430,282],[2568,3198,254],[2571,2,2013],[2571,8,2572],[2571,22,2099],[2571,28,2573],[2571,30,31],[2571,415,10],[2571,417,47],[2571,417,58],[2571,417,197],[2571,430,324],[2574,2,2575],[2574,13,10],[2576,2,2575],[2576,13,10]]},{"page":153,"leaf":true,"count":169,"first":[2577,2,2575],"last":[2647,2588,43]},{"page":154,"leaf":true,"count":169,"first":[2647,2588,2507],"last":[2689,2,2586]},{"page":155,"leaf":true,"count":169,"first":[2689,8,2612],"last":[2732,2588,93]},{"page":156,"leaf":true,"count":169,"first":[2732,2588,2218],"last":[2780,2,2586]},{"page":157,"leaf":true,"count":169,"first":[2780,8,2614],"last":[2825,2588,2560]},{"page":158,"leaf":true,"count":169,"first":[2826,2,2586],"last":[2869,2,2586]},{"page":159,"leaf":true,"count":169,"first":[2869,8,2602],"last":[2913,2588,214]},{"page":160,"leaf":true,"count":169,"first":[2913,2588,2035],"last":[2956,8,2602]},{"page":161,"leaf":true,"count":169,"first":[2956,2588,244],"last":[3001,2588,2269]},{"page":162,"leaf":true,"count":120,"first":[3002,2,2586],"last":[3035,2,2586]},{"page":163,"leaf":true,"count":120,"first":[3035,8,2594],"last":[3066,2588,405]}]]},"pos":{"root":216,"levels":[[{"page":216,"leaf":false,"seps":[[2,7,2268],[2,413,590],[2,413,1097],[2,413,1604],[2,2013,2139],[2,2586,2653],[2,2586,2822],[2,2586,2991],[2,3129,227],[8,483,482],[8,990,989],[8,1497,1496],[8,2004,2003],[8,2587,2922],[8,2598,2719],[8,2610,2708],[8,3136,66],[17,327,324],[22,2359,2356],[27,10,389],[28,793,791],[28,1300,1298],[28,1807,1805],[28,2400,2398],[30,31,662],[30,31,1169],[30,31,1676],[30,31,2230],[415,10,551],[415,10,1058],[415,10,1565],[415,10,2089],[417,36,1019],[417,65,1925],[417,116,794],[417,139,1262],[417,177,467],[417,216,1697],[417,246,602],[417,284,427],[417,326,755],[417,350,2468],[417,385,1340],[430,63,872],[430,273,2488],[2588,83,2714],[2588,193,2883],[2588,345,3052],[2588,2230,2722],[2588,2441,2968]]}],[{"page":165,"leaf":true,"count":169,"first":[2,3,1],"last":[2,7,2264]},{"page":166,"leaf":true,"count":169,"first":[2,7,2268],"last":[2,413,587]},{"page":167,"leaf":true,"count":169,"first":[2,413,590],"last":[2,413,1094]},{"page":168,"leaf":true,"count":169,"first":[2,413,1097],"last":[2,413,1601]},{"page":169,"leaf":true,"count":169,"first":[2,413,1604],"last":[2,2013,2135]},{"page":170,"leaf":true,"count":169,"first":[2,2013,2139],"last":[2,2586,2652]},{"page":171,"leaf":true,"count":169,"first":[2,2586,2653],"last":[2,2586,2821]},{"page":172,"leaf":true,"count":169,"first":[2,2586,2822],"last":[2,2586,2990]},{"page":173,"leaf":true,"count":169,"first":[2,2586,2991],"last":[2,3129,218]},{"page":174,"leaf":true,"count":169,"first":[2,3129,227],"last":[8,480,479]},{"page":175,"leaf":true,"count":169,"first":[8,483,482],"last":[8,987,986]},{"page":176,"leaf":true,"count":169,"first":[8,990,989],"last":[8,1494,1493]},{"page":177,"leaf":true,"count":169,"first":[8,1497,1496],"last":[8,2001,2000]},{"page":178,"leaf":true,"count":169,"first":[8,2004,2003],"last":[8,2587,2906]},{"page":179,"leaf":true,"count":169,"first":[8,2587,2922],"last":[8,2598,2702]},{"page":180,"leaf":true,"count":169,"first":[8,2598,2719],"last":[8,2610,2688]},{"page":181,"leaf":true,"count":169,"first":[8,2610,2708],"last":[8,3135,58]},{"page":182,"leaf":true,"count":169,"first":[8,3136,66],"last":[17,326,324]},{"page":183,"leaf":true,"count":169,"first":[17,327,324],"last":[22,2355,2352]},{"page":184,"leaf":true,"count":169,"first":[22,2359,2356],"last":[27,10,382]},{"page":185,"leaf":true,"count":169,"first":[27,10,389],"last":[28,790,788]},{"page":186,"leaf":true,"count":169,"first":[28,793,791],"last":[28,1297,1295]},{"page":187,"leaf":true,"count":169,"first":[28,1300,1298],"last":[28,1804,1802]},{"page":188,"leaf":true,"count":169,"first":[28,1807,1805],"last":[28,2396,2394]},{"page":189,"leaf":true,"count":169,"first":[28,2400,2398],"last":[30,31,659]},{"page":190,"leaf":true,"count":169,"first":[30,31,662],"last":[30,31,1166]},{"page":191,"leaf":true,"count":169,"first":[30,31,1169],"last":[30,31,1673]},{"page":192,"leaf":true,"count":169,"first":[30,31,1676],"last":[30,31,2226]},{"page":193,"leaf":true,"count":169,"first":[30,31,2230],"last":[415,10,548]},{"page":194,"leaf":true,"count":169,"first":[415,10,551],"last":[415,10,1055]},{"page":195,"leaf":true,"count":169,"first":[415,10,1058],"last":[415,10,1562]},{"page":196,"leaf":true,"count":169,"first":[415,10,1565],"last":[415,10,2085]},{"page":197,"leaf":true,"count":169,"first":[415,10,2089],"last":[417,36,992],"keys":[[415,10,2089],[415,10,2092],[415,10,2096],[415,10,2100],[415,10,2104],[415,10,2108],[415,10,2112],[415,10,2116],[415,10,2120],[415,10,2124],[415,10,2128],[415,10,2132],[415,10,2135],[415,10,2139],[415,10,2143],[415,10,2147],[415,10,2150],[415,10,2154],[415,10,2157],[415,10,2161],[415,10,2164],[415,10,2168],[415,10,2171],[415,10,2175],[415,10,2179],[415,10,2183],[415,10,2187],[415,10,2191],[415,10,2195],[415,10,2199],[415,10,2203],[415,10,2206],[415,10,2210],[415,10,2214],[415,10,2218],[415,10,2222],[415,10,2226],[415,10,2230],[415,10,2234],[415,10,2238],[415,10,2242],[415,10,2246],[415,10,2249],[415,10,2253],[415,10,2257],[415,10,2261],[415,10,2265],[415,10,2269],[415,10,2273],[415,10,2277],[415,10,2281],[415,10,2285],[415,10,2289],[415,10,2293],[415,10,2297],[415,10,2301],[415,10,2305],[415,10,2309],[415,10,2312],[415,10,2316],[415,10,2320],[415,10,2324],[415,10,2328],[415,10,2332],[415,10,2336],[415,10,2340],[415,10,2344],[415,10,2348],[415,10,2352],[415,10,2356],[415,10,2360],[415,10,2364],[415,10,2368],[415,10,2371],[415,10,2375],[415,10,2379],[415,10,2383],[415,10,2386],[415,10,2390],[415,10,2394],[415,10,2398],[415,10,2401],[415,10,2405],[415,10,2409],[415,10,2413],[415,10,2417],[415,10,2421],[415,10,2425],[415,10,2429],[415,10,2433],[415,10,2437],[415,10,2441],[415,10,2445],[415,10,2449],[415,10,2453],[415,10,2457],[415,10,2461],[415,10,2464],[415,10,2468],[415,10,2472],[415,10,2476],[415,10,2480],[415,10,2484],[415,10,2488],[415,10,2491],[415,10,2495],[415,10,2499],[415,10,2503],[415,10,2507],[415,10,2511],[415,10,2515],[415,10,2519],[415,10,2523],[415,10,2527],[415,10,2530],[415,10,2534],[415,10,2538],[415,10,2542],[415,10,2545],[415,10,2549],[415,10,2553],[415,10,2557],[415,10,2560],[415,10,2564],[415,10,2568],[415,10,2571],[417,18,446],[417,18,464],[417,18,482],[417,18,542],[417,18,734],[417,18,764],[417,18,806],[417,18,818],[417,18,911],[417,18,977],[417,18,1019],[417,18,1151],[417,18,1154],[417,18,1163],[417,18,1175],[417,18,1190],[417,18,1196],[417,18,1223],[417,18,1238],[417,18,1247],[417,18,1295],[417,18,1595],[417,18,1601],[417,18,1622],[417,18,1646],[417,18,1715],[417,18,1766],[417,18,1787],[417,18,1850],[417,18,1919],[417,19,2179],[417,19,2401],[417,19,2491],[417,19,2560],[417,20,2425],[417,20,2464],[417,20,2553],[417,36,421],[417,36,713],[417,36,785],[417,36,890],[417,36,944],[417,36,992]]},{"page":198,"leaf":true,"count":169,"first":[417,36,1019],"last":[417,65,1718]},{"page":199,"leaf":true,"count":169,"first":[417,65,1925],"last":[417,116,722]},{"page":200,"leaf":true,"count":169,"first":[417,116,794],"last":[417,139,1199]},{"page":201,"leaf":true,"count":169,"first":[417,139,1262],"last":[417,177,449]},{"page":202,"leaf":true,"count":169,"first":[417,177,467],"last":[417,216,1673]},{"page":203,"leaf":true,"count":169,"first":[417,216,1697],"last":[417,246,482]},{"page":204,"leaf":true,"count":169,"first":[417,246,602],"last":[417,275,1901]},{"page":205,"leaf":true,"count":169,"first":[417,284,427],"last":[417,326,725]},{"page":206,"leaf":true,"count":169,"first":[417,326,755],"last":[417,350,2305]},{"page":207,"leaf":true,"count":169,"first":[417,350,2468],"last":[417,385,1331]},{"page":208,"leaf":true,"count":169,"first":[417,385,1340],"last":[430,53,2265]},{"page":209,"leaf":true,"count":169,"first":[430,63,872],"last":[430,273,2421]},{"page":210,"leaf":true,"count":169,"first":[430,273,2488],"last":[2588,73,2713]},{"page":211,"leaf":true,"count":169,"first":[2588,83,2714],"last":[2588,193,2882]},{"page":212,"leaf":true,"count":169,"first":[2588,193,2883],"last":[2588,345,3051]},{"page":213,"leaf":true,"count":169,"first":[2588,345,3052],"last":[2588,2230,2634]},{"page":214,"leaf":true,"count":120,"first":[2588,2230,2722],"last":[2588,2441,2880]},{"page":215,"leaf":true,"count":120,"first":[2588,2441,2968],"last":[3198,399,2371]}]]},"osp":{"root":268,"levels":[[{"page":268,"leaf":false,"seps":[[7,2256,2],[10,578,415],[10,1085,415],[10,1592,415],[10,2124,415],[18,977,417],[31,692,30],[31,1199,30],[31,1706,30],[31,2269,30],[43,2653,2588],[58,2218,417],[85,1229,417],[106,479,417],[126,223,2],[141,2480,417],[158,1781,417],[186,842,417],[206,1769,417],[225,2000,417],[246,935,417],[265,1832,417],[289,2012,430],[314,3027,2588],[336,1970,417],[360,356,17],[385,1331,417],[408,2453,417],[413,902,2],[413,1409,2],[413,1916,2],[622,620,28],[876,875,8],[1129,1127,28],[1383,1382,8],[1636,1634,28],[1890,1889,8],[2013,2328,2],[2089,2970,2588],[2207,2206,8],[2321,2320,8],[2454,2453,8],[2575,2574,2],[2586,2766,2],[2586,2935,2],[2590,2589,8],[2598,2970,8],[2612,2631,8],[3091,168,8],[3145,118,8]]}],[{"page":217,"leaf":true,"count":169,"first":[3,1,2],"last":[7,2252,2]},{"page":218,"leaf":true,"count":169,"first":[7,2256,2],"last":[10,575,415]},{"page":219,"leaf":true,"count":169,"first":[10,578,415],"last":[10,1082,415]},{"page":220,"leaf":true,"count":169,"first":[10,1085,415],"last":[10,1589,415]},{"page":221,"leaf":true,"count":169,"first":[10,1592,415],"last":[10,2120,415]},{"page":222,"leaf":true,"count":169,"first":[10,2124,415],"last":[18,911,417]},{"page":223,"leaf":true,"count":169,"first":[18,977,417],"last":[31,689,30]},{"page":224,"leaf":true,"count":169,"first":[31,692,30],"last":[31,1196,30]},{"page":225,"leaf":true,"count":169,"first":[31,1199,30],"last":[31,1703,30]},{"page":226,"leaf":true,"count":169,"first":[31,1706,30],"last":[31,2265,30]},{"page":227,"leaf":true,"count":169,"first":[31,2269,30],"last":[43,2652,2588]},{"page":228,"leaf":true,"count":169,"first":[43,2653,2588],"last":[58,2175,417]},{"page":229,"leaf":true,"count":169,"first":[58,2218,417],"last":[85,1205,417]},{"page":230,"leaf":true,"count":169,"first":[85,1229,417],"last":[106,470,417]},{"page":231,"leaf":true,"count":169,"first":[106,479,417],"last":[126,214,2]},{"page":232,"leaf":true,"count":169,"first":[126,223,2],"last":[141,2425,417]},{"page":233,"leaf":true,"count":169,"first":[141,2480,417],"last":[158,1757,417]},{"page":234,"leaf":true,"count":169,"first":[158,1781,417],"last":[186,839,417]},{"page":235,"leaf":true,"count":169,"first":[186,842,417],"last":[206,1724,417]},{"page":236,"leaf":true,"count":169,"first":[206,1769,417],"last":[225,1709,417]},{"page":237,"leaf":true,"count":169,"first":[225,2000,417],"last":[246,863,417]},{"page":238,"leaf":true,"count":169,"first":[246,935,417],"last":[265,1784,417]},{"page":239,"leaf":true,"count":169,"first":[265,1832,417],"last":[289,878,430]},{"page":240,"leaf":true,"count":169,"first":[289,2012,430],"last":[314,3026,2588]},{"page":241,"leaf":true,"count":169,"first":[314,3027,2588],"last":[336,1949,417]},{"page":242,"leaf":true,"count":169,"first":[336,1970,417],"last":[359,2009,417]},{"page":243,"leaf":true,"count":169,"first":[360,356,17],"last":[385,1328,417]},{"page":244,"leaf":true,"count":169,"first":[385,1331,417],"last":[408,2413,417]},{"page":245,"leaf":true,"count":169,"first":[408,2453,417],"last":[413,899,2]},{"page":246,"leaf":true,"count":169,"first":[413,902,2],"last":[413,1406,2]},{"page":247,"leaf":true,"count":169,"first":[413,1409,2],"last":[413,1913,2]},{"page":248,"leaf":true,"count":169,"first":[413,1916,2],"last":[621,620,8]},{"page":249,"leaf":true,"count":169,"first":[622,620,28],"last":[874,872,28]},{"page":250,"leaf":true,"count":169,"first":[876,875,8],"last":[1128,1127,8]},{"page":251,"leaf":true,"count":169,"first":[1129,1127,28],"last":[1381,1379,28]},{"page":252,"leaf":true,"count":169,"first":[1383,1382,8],"last":[1635,1634,8]},{"page":253,"leaf":true,"count":169,"first":[1636,1634,28],"last":[1888,1886,28]},{"page":254,"leaf":true,"count":169,"first":[1890,1889,8],"last":[2013,2324,2]},{"page":255,"leaf":true,"count":169,"first":[2013,2328,2],"last":[2089,2892,2588]},{"page":256,"leaf":true,"count":169,"first":[2089,2970,2588],"last":[2206,3062,2588]},{"page":257,"leaf":true,"count":169,"first":[2207,2206,8],"last":[2320,2903,2588]},{"page":258,"leaf":true,"count":169,"first":[2321,2320,8],"last":[2453,3031,2588]},{"page":259,"leaf":true,"count":169,"first":[2454,2453,8],"last":[2573,2571,28]},{"page":260,"leaf":true,"count":169,"first":[2575,2574,2],"last":[2586,2765,2]},{"page":261,"leaf":true,"count":169,"first":[2586,2766,2],"last":[2586,2934,2]},{"page":262,"leaf":true,"count":169,"first":[2586,2935,2],"last":[2587,3062,8]},{"page":263,"leaf":true,"count":169,"first":[2590,2589,8],"last":[2598,2954,8]},{"page":264,"leaf":true,"count":169,"first":[2598,2970,8],"last":[2612,2611,8]},{"page":265,"leaf":true,"count":169,"first":[2612,2631,8],"last":[3090,167,8]},{"page":266,"leaf":true,"count":120,"first":[3091,168,8],"last":[3144,108,8]},{"page":267,"leaf":true,"count":120,"first":[3145,118,8],"last":[3199,2542,2]}]]}},"bpm":{"frames":64,"k":2,"resident":{"0":112,"1":1,"2":2,"3":3,"4":4,"5":98,"6":65,"7":44,"8":8,"9":9,"10":10,"11":11,"12":12,"13":13,"14":14,"15":15,"16":16,"17":106,"18":18,"19":105,"20":107,"21":21,"22":19,"23":68,"24":24,"25":268,"26":111,"27":101,"28":71,"29":29,"30":7,"31":73,"32":75,"33":17,"34":34,"35":76,"36":77,"37":78,"38":79,"39":39,"40":80,"41":81,"42":42,"43":82,"44":108,"45":83,"46":84,"47":85,"48":267,"49":86,"50":74,"51":87,"52":88,"53":53,"54":89,"55":90,"56":91,"57":92,"58":93,"59":59,"60":94,"61":22,"62":20,"63":110}},"steps":[{"kind":"bind","visits":[{"pages":[{"page":3,"hit":true,"frame":null},{"page":14,"hit":true,"frame":null},{"page":65,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":8,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":1,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.w3.org/1999/02/22-rdf-syntax-ns#type","id":2},{"kind":"bind","visits":[{"pages":[{"page":3,"hit":true,"frame":null},{"page":14,"hit":true,"frame":null},{"page":44,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":76,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":71,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent","id":2013},{"kind":"bind","visits":[{"pages":[{"page":3,"hit":true,"frame":null},{"page":14,"hit":true,"frame":null},{"page":98,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":22,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":20,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse","id":417},{"kind":"bind","visits":[{"pages":[{"page":3,"hit":true,"frame":null},{"page":14,"hit":true,"frame":null},{"page":77,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":8,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":1,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.Department0.University0.edu/GraduateCourse0","id":19},{"kind":"stats","perm":"spo","visits":[{"pages":[{"page":5,"hit":false,"frame":30},{"page":164,"hit":false,"frame":48},{"page":113,"hit":false,"frame":25}],"evictions":[{"page":7,"frame":30,"kdist":"inf"},{"page":267,"frame":48,"kdist":"inf"},{"page":268,"frame":25,"kdist":"inf"}],"writes":[7,267,268]},{"pages":[{"page":114,"hit":false,"frame":30}],"evictions":[{"page":5,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":115,"hit":false,"frame":48}],"evictions":[{"page":164,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":116,"hit":false,"frame":25}],"evictions":[{"page":113,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":117,"hit":false,"frame":30}],"evictions":[{"page":114,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":118,"hit":false,"frame":48}],"evictions":[{"page":115,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":119,"hit":false,"frame":25}],"evictions":[{"page":116,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":120,"hit":false,"frame":30}],"evictions":[{"page":117,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":121,"hit":false,"frame":48}],"evictions":[{"page":118,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":122,"hit":false,"frame":25}],"evictions":[{"page":119,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":123,"hit":false,"frame":30}],"evictions":[{"page":120,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":124,"hit":false,"frame":48}],"evictions":[{"page":121,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":125,"hit":false,"frame":25}],"evictions":[{"page":122,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":126,"hit":false,"frame":30}],"evictions":[{"page":123,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":127,"hit":false,"frame":48}],"evictions":[{"page":124,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":128,"hit":false,"frame":25}],"evictions":[{"page":125,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":129,"hit":false,"frame":30}],"evictions":[{"page":126,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":130,"hit":false,"frame":48}],"evictions":[{"page":127,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":131,"hit":false,"frame":25}],"evictions":[{"page":128,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":132,"hit":false,"frame":30}],"evictions":[{"page":129,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":133,"hit":false,"frame":48}],"evictions":[{"page":130,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":134,"hit":false,"frame":25}],"evictions":[{"page":131,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":135,"hit":false,"frame":30}],"evictions":[{"page":132,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":136,"hit":false,"frame":48}],"evictions":[{"page":133,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":137,"hit":false,"frame":25}],"evictions":[{"page":134,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":138,"hit":false,"frame":30}],"evictions":[{"page":135,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":139,"hit":false,"frame":48}],"evictions":[{"page":136,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":140,"hit":false,"frame":25}],"evictions":[{"page":137,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":141,"hit":false,"frame":30}],"evictions":[{"page":138,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":142,"hit":false,"frame":48}],"evictions":[{"page":139,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":143,"hit":false,"frame":25}],"evictions":[{"page":140,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":144,"hit":false,"frame":30}],"evictions":[{"page":141,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":145,"hit":false,"frame":48}],"evictions":[{"page":142,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":146,"hit":false,"frame":25}],"evictions":[{"page":143,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":147,"hit":false,"frame":30}],"evictions":[{"page":144,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":148,"hit":false,"frame":48}],"evictions":[{"page":145,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":149,"hit":false,"frame":25}],"evictions":[{"page":146,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":150,"hit":false,"frame":30}],"evictions":[{"page":147,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":151,"hit":false,"frame":48}],"evictions":[{"page":148,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":152,"hit":false,"frame":25}],"evictions":[{"page":149,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":153,"hit":false,"frame":30}],"evictions":[{"page":150,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":154,"hit":false,"frame":48}],"evictions":[{"page":151,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":155,"hit":false,"frame":25}],"evictions":[{"page":152,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":156,"hit":false,"frame":30}],"evictions":[{"page":153,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":157,"hit":false,"frame":48}],"evictions":[{"page":154,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":158,"hit":false,"frame":25}],"evictions":[{"page":155,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":159,"hit":false,"frame":30}],"evictions":[{"page":156,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":160,"hit":false,"frame":48}],"evictions":[{"page":157,"frame":48,"kdist":"inf"}],"writes":[]},{"pages":[{"page":161,"hit":false,"frame":25}],"evictions":[{"page":158,"frame":25,"kdist":"inf"}],"writes":[]},{"pages":[{"page":162,"hit":false,"frame":30}],"evictions":[{"page":159,"frame":30,"kdist":"inf"}],"writes":[]},{"pages":[{"page":163,"hit":false,"frame":48}],"evictions":[{"page":160,"frame":48,"kdist":"inf"}],"writes":[]}],"leaves":[113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163]},{"kind":"scan","perm":"pos","visits":[{"pages":[{"page":6,"hit":false,"frame":25},{"page":216,"hit":false,"frame":30},{"page":197,"hit":false,"frame":48}],"evictions":[{"page":161,"frame":25,"kdist":"inf"},{"page":162,"frame":30,"kdist":"inf"},{"page":163,"frame":48,"kdist":"inf"}],"writes":[]}],"range":[417,19],"found":[[417,19,2179],[417,19,2401],[417,19,2491],[417,19,2560]],"leaf":197},{"kind":"scan","perm":"spo","visits":[{"pages":[{"page":5,"hit":false,"frame":25},{"page":164,"hit":false,"frame":30},{"page":146,"hit":false,"frame":48}],"evictions":[{"page":6,"frame":25,"kdist":"inf"},{"page":216,"frame":30,"kdist":"inf"},{"page":197,"frame":48,"kdist":"inf"}],"writes":[]}],"probe":[2179,2,2013],"found":[[2179,2,2013]],"leaf":146},{"kind":"decode","visits":[{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":82,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":79,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.Department0.University0.edu/GraduateStudent44","id":2179},{"kind":"scan","perm":"spo","visits":[{"pages":[{"page":5,"hit":true,"frame":null},{"page":164,"hit":true,"frame":null},{"page":150,"hit":false,"frame":48}],"evictions":[{"page":146,"frame":48,"kdist":"inf"}],"writes":[]}],"probe":[2401,2,2013],"found":[[2401,2,2013]],"leaf":150},{"kind":"decode","visits":[{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":90,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":86,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.Department0.University0.edu/GraduateStudent101","id":2401},{"kind":"scan","perm":"spo","visits":[{"pages":[{"page":5,"hit":true,"frame":null},{"page":164,"hit":true,"frame":null},{"page":151,"hit":false,"frame":48}],"evictions":[{"page":150,"frame":48,"kdist":"inf"}],"writes":[]}],"probe":[2491,2,2013],"found":[[2491,2,2013]],"leaf":151},{"kind":"decode","visits":[{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":92,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":89,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.Department0.University0.edu/GraduateStudent124","id":2491},{"kind":"scan","perm":"spo","visits":[{"pages":[{"page":5,"hit":true,"frame":null},{"page":164,"hit":true,"frame":null},{"page":152,"hit":false,"frame":48}],"evictions":[{"page":151,"frame":48,"kdist":"inf"}],"writes":[]}],"probe":[2560,2,2013],"found":[[2560,2,2013]],"leaf":152},{"kind":"decode","visits":[{"pages":[{"page":2,"hit":true,"frame":null},{"page":12,"hit":true,"frame":null},{"page":94,"hit":true,"frame":null}],"evictions":[],"writes":[]},{"pages":[{"page":91,"hit":true,"frame":null}],"evictions":[],"writes":[]}],"term":"http://www.Department0.University0.edu/GraduateStudent142","id":2560}],"stats_after":"page reads: 75\npage writes: 218\nbuffer hits: 195513\nbuffer misses: 75\nlog flushes: 0","terms":{"2":"<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>","7":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#University>","8":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#name>","10":"<http://www.Department0.University0.edu>","13":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#subOrganizationOf>","14":"<http://www.Department0.University0.edu/FullProfessor0>","18":"<http://www.Department0.University0.edu/Course0>","19":"<http://www.Department0.University0.edu/GraduateCourse0>","20":"<http://www.Department0.University0.edu/GraduateCourse1>","22":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#undergraduateDegreeFrom>","28":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#emailAddress>","30":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#telephone>","31":"\"xxx-xxx-xxxx\"","34":"<http://www.Department0.University0.edu/FullProfessor1>","2084":"<http://www.University239.edu>","37":"<http://www.Department0.University0.edu/GraduateCourse2>","36":"<http://www.Department0.University0.edu/Course1>","2450":"\"GraduateStudent113\"","2089":"<http://www.Department0.University0.edu/GraduateStudent20>","43":"<http://www.Department0.University0.edu/FullProfessor2>","2092":"<http://www.Department0.University0.edu/GraduateStudent21>","45":"<http://www.Department0.University0.edu/Course2>","47":"<http://www.Department0.University0.edu/GraduateCourse3>","2096":"<http://www.Department0.University0.edu/GraduateStudent22>","2099":"<http://www.University852.edu>","2100":"<http://www.Department0.University0.edu/GraduateStudent23>","2104":"<http://www.Department0.University0.edu/GraduateStudent24>","57":"<http://www.Department0.University0.edu/GraduateCourse4>","58":"<http://www.Department0.University0.edu/GraduateCourse5>","2108":"<http://www.Department0.University0.edu/GraduateStudent25>","63":"<http://www.Department0.University0.edu/FullProfessor4>","2112":"<http://www.Department0.University0.edu/GraduateStudent26>","66":"<http://www.Department0.University0.edu/GraduateCourse6>","2116":"<http://www.Department0.University0.edu/GraduateStudent27>","421":"<http://www.Department0.University0.edu/UndergraduateStudent2>","2120":"<http://www.Department0.University0.edu/GraduateStudent28>","73":"<http://www.Department0.University0.edu/FullProfessor5>","2457":"<http://www.Department0.University0.edu/GraduateStudent115>","76":"<http://www.Department0.University0.edu/GraduateCourse8>","77":"<http://www.Department0.University0.edu/GraduateCourse9>","2124":"<http://www.Department0.University0.edu/GraduateStudent29>","2128":"<http://www.Department0.University0.edu/GraduateStudent30>","2132":"<http://www.Department0.University0.edu/GraduateStudent31>","2135":"<http://www.Department0.University0.edu/GraduateStudent32>","88":"<http://www.University297.edu>","2138":"<http://www.University422.edu>","2139":"<http://www.Department0.University0.edu/GraduateStudent33>","2140":"\"GraduateStudent33\"","2141":"\"GraduateStudent33@Department0.University0.edu\"","2142":"<http://www.University765.edu>","2143":"<http://www.Department0.University0.edu/GraduateStudent34>","2144":"\"GraduateStudent34\"","2145":"\"GraduateStudent34@Department0.University0.edu\"","2146":"<http://www.University950.edu>","2147":"<http://www.Department0.University0.edu/GraduateStudent35>","2148":"\"GraduateStudent35\"","2149":"\"GraduateStudent35@Department0.University0.edu\"","2150":"<http://www.Department0.University0.edu/GraduateStudent36>","2151":"\"GraduateStudent36\"","104":"<http://www.Department0.University0.edu/FullProfessor8>","2152":"\"GraduateStudent36@Department0.University0.edu\"","2153":"<http://www.University630.edu>","107":"<http://www.Department0.University0.edu/GraduateCourse13>","2154":"<http://www.Department0.University0.edu/GraduateStudent37>","2155":"\"GraduateStudent37\"","2156":"\"GraduateStudent37@Department0.University0.edu\"","2157":"<http://www.Department0.University0.edu/GraduateStudent38>","2158":"\"GraduateStudent38\"","2159":"\"GraduateStudent38@Department0.University0.edu\"","2160":"<http://www.University990.edu>","108":"<http://www.Department0.University0.edu/GraduateCourse14>","2161":"<http://www.Department0.University0.edu/GraduateStudent39>","117":"<http://www.Department0.University0.edu/Course14>","118":"<http://www.Department0.University0.edu/GraduateCourse15>","119":"<http://www.Department0.University0.edu/GraduateCourse16>","2162":"\"GraduateStudent39\"","2163":"\"GraduateStudent39@Department0.University0.edu\"","2164":"<http://www.Department0.University0.edu/GraduateStudent40>","2166":"\"GraduateStudent40@Department0.University0.edu\"","2167":"<http://www.University475.edu>","2168":"<http://www.Department0.University0.edu/GraduateStudent41>","2169":"\"GraduateStudent41\"","2170":"\"GraduateStudent41@Department0.University0.edu\"","2171":"<http://www.Department0.University0.edu/GraduateStudent42>","2172":"\"GraduateStudent42\"","2174":"<http://www.University139.edu>","2173":"\"GraduateStudent42@Department0.University0.edu\"","131":"<http://www.Department0.University0.edu/GraduateCourse18>","2175":"<http://www.Department0.University0.edu/GraduateStudent43>","2176":"\"GraduateStudent43\"","2178":"<http://www.University527.edu>","2177":"\"GraduateStudent43@Department0.University0.edu\"","2179":"<http://www.Department0.University0.edu/GraduateStudent44>","2180":"\"GraduateStudent44\"","2182":"<http://www.University144.edu>","2181":"\"GraduateStudent44@Department0.University0.edu\"","140":"<http://www.Department0.University0.edu/GraduateCourse19>","2183":"<http://www.Department0.University0.edu/GraduateStudent45>","2184":"\"GraduateStudent45\"","2186":"<http://www.University440.edu>","2185":"\"GraduateStudent45@Department0.University0.edu\"","2187":"<http://www.Department0.University0.edu/GraduateStudent46>","146":"<http://www.Department0.University0.edu/AssociateProfessor2>","2188":"\"GraduateStudent46\"","2190":"<http://www.University971.edu>","2189":"\"GraduateStudent46@Department0.University0.edu\"","150":"<http://www.Department0.University0.edu/GraduateCourse21>","2191":"<http://www.Department0.University0.edu/GraduateStudent47>","2192":"\"GraduateStudent47\"","2194":"<http://www.University252.edu>","2195":"<http://www.Department0.University0.edu/GraduateStudent48>","156":"<http://www.Department0.University0.edu/AssociateProfessor3>","2196":"\"GraduateStudent48\"","2198":"<http://www.University869.edu>","151":"<http://www.Department0.University0.edu/GraduateCourse22>","160":"<http://www.University986.edu>","2203":"<http://www.Department0.University0.edu/GraduateStudent50>","2206":"<http://www.Department0.University0.edu/GraduateStudent51>","2210":"<http://www.Department0.University0.edu/GraduateStudent52>","165":"<http://www.Department0.University0.edu/AssociateProfessor4>","2214":"<http://www.Department0.University0.edu/GraduateStudent53>","169":"<http://www.Department0.University0.edu/GraduateCourse24>","2218":"<http://www.Department0.University0.edu/GraduateStudent54>","2222":"<http://www.Department0.University0.edu/GraduateStudent55>","175":"<http://www.Department0.University0.edu/AssociateProfessor5>","178":"<http://www.Department0.University0.edu/GraduateCourse25>","2226":"<http://www.Department0.University0.edu/GraduateStudent56>","180":"<http://www.University98.edu>","2230":"<http://www.Department0.University0.edu/GraduateStudent57>","184":"<http://www.Department0.University0.edu/AssociateProfessor6>","2234":"<http://www.Department0.University0.edu/GraduateStudent58>","187":"<http://www.Department0.University0.edu/GraduateCourse26>","2238":"<http://www.Department0.University0.edu/GraduateStudent59>","193":"<http://www.Department0.University0.edu/AssociateProfessor7>","2242":"<http://www.Department0.University0.edu/GraduateStudent60>","196":"<http://www.Department0.University0.edu/Course27>","197":"<http://www.Department0.University0.edu/GraduateCourse27>","198":"<http://www.Department0.University0.edu/GraduateCourse28>","2246":"<http://www.Department0.University0.edu/GraduateStudent61>","446":"<http://www.Department0.University0.edu/UndergraduateStudent10>","2249":"<http://www.Department0.University0.edu/GraduateStudent62>","204":"<http://www.Department0.University0.edu/AssociateProfessor8>","2253":"<http://www.Department0.University0.edu/GraduateStudent63>","206":"<http://www.Department0.University0.edu/Course28>","207":"<http://www.Department0.University0.edu/GraduateCourse29>","2257":"<http://www.Department0.University0.edu/GraduateStudent64>","2261":"<http://www.Department0.University0.edu/GraduateStudent65>","214":"<http://www.Department0.University0.edu/AssociateProfessor9>","2265":"<http://www.Department0.University0.edu/GraduateStudent66>","218":"<http://www.Department0.University0.edu/GraduateCourse31>","221":"<http://www.University494.edu>","2269":"<http://www.Department0.University0.edu/GraduateStudent67>","223":"<http://www.Department0.University0.edu/AssociateProfessor10>","2273":"<http://www.Department0.University0.edu/GraduateStudent68>","226":"<http://www.Department0.University0.edu/Course32>","227":"<http://www.Department0.University0.edu/GraduateCourse32>","228":"<http://www.Department0.University0.edu/GraduateCourse33>","2277":"<http://www.Department0.University0.edu/GraduateStudent69>","233":"<http://www.Department0.University0.edu/AssociateProfessor11>","2281":"<http://www.Department0.University0.edu/GraduateStudent70>","236":"<http://www.Department0.University0.edu/Course34>","237":"<http://www.Department0.University0.edu/GraduateCourse34>","238":"<http://www.Department0.University0.edu/GraduateCourse35>","2285":"<http://www.Department0.University0.edu/GraduateStudent71>","2289":"<http://www.Department0.University0.edu/GraduateStudent72>","244":"<http://www.Department0.University0.edu/AssociateProfessor12>","2293":"<http://www.Department0.University0.edu/GraduateStudent73>","247":"<http://www.Department0.University0.edu/GraduateCourse36>","2297":"<http://www.Department0.University0.edu/GraduateStudent74>","252":"<http://www.Department0.University0.edu/AssociateProfessor13>","2301":"<http://www.Department0.University0.edu/GraduateStudent75>","254":"<http://www.Department0.University0.edu/Course36>","256":"<http://www.Department0.University0.edu/GraduateCourse37>","257":"<http://www.Department0.University0.edu/GraduateCourse38>","2305":"<http://www.Department0.University0.edu/GraduateStudent76>","2309":"<http://www.Department0.University0.edu/GraduateStudent77>","262":"<http://www.Department0.University0.edu/AssistantProfessor0>","2312":"<http://www.Department0.University0.edu/GraduateStudent78>","267":"<http://www.Department0.University0.edu/GraduateCourse39>","268":"<http://www.Department0.University0.edu/GraduateCourse40>","2316":"<http://www.Department0.University0.edu/GraduateStudent79>","2320":"<http://www.Department0.University0.edu/GraduateStudent80>","273":"<http://www.Department0.University0.edu/AssistantProfessor1>","2324":"<http://www.Department0.University0.edu/GraduateStudent81>","277":"<http://www.University644.edu>","2328":"<http://www.Department0.University0.edu/GraduateStudent82>","282":"<http://www.Department0.University0.edu/AssistantProfessor2>","2332":"<http://www.Department0.University0.edu/GraduateStudent83>","285":"<http://www.Department0.University0.edu/GraduateCourse42>","286":"<http://www.Department0.University0.edu/GraduateCourse43>","287":"<http://www.University158.edu>","2336":"<http://www.Department0.University0.edu/GraduateStudent84>","289":"<http://www.Department0.University0.edu/AssistantProfessor3>","464":"<http://www.Department0.University0.edu/UndergraduateStudent16>","292":"<http://www.Department0.University0.edu/GraduateCourse44>","2340":"<http://www.Department0.University0.edu/GraduateStudent85>","2501":"\"GraduateStudent126@Department0.University0.edu\"","297":"<http://www.Department0.University0.edu/AssistantProfessor4>","2344":"<http://www.Department0.University0.edu/GraduateStudent86>","300":"<http://www.Department0.University0.edu/GraduateCourse45>","2348":"<http://www.Department0.University0.edu/GraduateStudent87>","2352":"<http://www.Department0.University0.edu/GraduateStudent88>","305":"<http://www.Department0.University0.edu/AssistantProfessor5>","308":"<http://www.Department0.University0.edu/GraduateCourse46>","2356":"<http://www.Department0.University0.edu/GraduateStudent89>","2360":"<http://www.Department0.University0.edu/GraduateStudent90>","314":"<http://www.Department0.University0.edu/AssistantProfessor6>","2536":"\"GraduateStudent135@Department0.University0.edu\"","2364":"<http://www.Department0.University0.edu/GraduateStudent91>","317":"<http://www.Department0.University0.edu/GraduateCourse48>","318":"<http://www.Department0.University0.edu/GraduateCourse49>","2368":"<http://www.Department0.University0.edu/GraduateStudent92>","2371":"<http://www.Department0.University0.edu/GraduateStudent93>","324":"<http://www.Department0.University0.edu/AssistantProfessor7>","327":"<http://www.Department0.University0.edu/Course47>","328":"<http://www.Department0.University0.edu/GraduateCourse50>","2375":"<http://www.Department0.University0.edu/GraduateStudent94>","2508":"\"GraduateStudent128\"","2379":"<http://www.Department0.University0.edu/GraduateStudent95>","334":"<http://www.Department0.University0.edu/AssistantProfessor8>","2383":"<http://www.Department0.University0.edu/GraduateStudent96>","2386":"<http://www.Department0.University0.edu/GraduateStudent97>","339":"<http://www.Department0.University0.edu/GraduateCourse53>","338":"<http://www.Department0.University0.edu/GraduateCourse52>","2389":"<http://www.University927.edu>","2390":"<http://www.Department0.University0.edu/GraduateStudent98>","2391":"\"GraduateStudent98\"","2392":"\"GraduateStudent98@Department0.University0.edu\"","2393":"<http://www.University156.edu>","2394":"<http://www.Department0.University0.edu/GraduateStudent99>","2395":"\"GraduateStudent99\"","2396":"\"GraduateStudent99@Department0.University0.edu\"","349":"<http://www.Department0.University0.edu/GraduateCourse54>","2397":"<http://www.University2.edu>","350":"<http://www.Department0.University0.edu/GraduateCourse55>","2398":"<http://www.Department0.University0.edu/GraduateStudent100>","2399":"\"GraduateStudent100\"","2400":"\"GraduateStudent100@Department0.University0.edu\"","2401":"<http://www.Department0.University0.edu/GraduateStudent101>","2402":"\"GraduateStudent101\"","2404":"<http://www.University366.edu>","2403":"\"GraduateStudent101@Department0.University0.edu\"","2405":"<http://www.Department0.University0.edu/GraduateStudent102>","2406":"\"GraduateStudent102\"","360":"<http://www.Department0.University0.edu/Course53>","2408":"<http://www.University648.edu>","363":"<http://www.University259.edu>","2407":"\"GraduateStudent102@Department0.University0.edu\"","361":"<http://www.Department0.University0.edu/GraduateCourse56>","2409":"<http://www.Department0.University0.edu/GraduateStudent103>","2410":"\"GraduateStudent103\"","2412":"<http://www.University995.edu>","2411":"\"GraduateStudent103@Department0.University0.edu\"","2413":"<http://www.Department0.University0.edu/GraduateStudent104>","369":"<http://www.Department0.University0.edu/GraduateCourse58>","2414":"\"GraduateStudent104\"","2416":"<http://www.University45.edu>","2415":"\"GraduateStudent104@Department0.University0.edu\"","2417":"<http://www.Department0.University0.edu/GraduateStudent105>","2418":"\"GraduateStudent105\"","2420":"<http://www.University890.edu>","2419":"\"GraduateStudent105@Department0.University0.edu\"","377":"<http://www.Department0.University0.edu/GraduateCourse59>","2421":"<http://www.Department0.University0.edu/GraduateStudent106>","2422":"\"GraduateStudent106\"","2424":"<http://www.University851.edu>","2423":"\"GraduateStudent106@Department0.University0.edu\"","2425":"<http://www.Department0.University0.edu/GraduateStudent107>","2426":"\"GraduateStudent107\"","2428":"<http://www.University915.edu>","2427":"\"GraduateStudent107@Department0.University0.edu\"","386":"<http://www.Department0.University0.edu/GraduateCourse60>","2429":"<http://www.Department0.University0.edu/GraduateStudent108>","2430":"\"GraduateStudent108\"","2432":"<http://www.University697.edu>","2431":"\"GraduateStudent108@Department0.University0.edu\"","2433":"<http://www.Department0.University0.edu/GraduateStudent109>","2434":"\"GraduateStudent109\"","2443":"\"GraduateStudent111@Department0.University0.edu\"","393":"<http://www.Department0.University0.edu/GraduateCourse63>","2436":"<http://www.University880.edu>","2437":"<http://www.Department0.University0.edu/GraduateStudent110>","2447":"\"GraduateStudent112@Department0.University0.edu\"","2440":"<http://www.University65.edu>","400":"<http://www.Department0.University0.edu/GraduateCourse64>","401":"<http://www.Department0.University0.edu/GraduateCourse65>","2451":"\"GraduateStudent113@Department0.University0.edu\"","2444":"<http://www.University876.edu>","2445":"<http://www.Department0.University0.edu/GraduateStudent112>","2446":"\"GraduateStudent112\"","2455":"\"GraduateStudent114@Department0.University0.edu\"","2448":"<http://www.University314.edu>","408":"<http://www.Department0.University0.edu/GraduateCourse66>","2449":"<http://www.Department0.University0.edu/GraduateStudent113>","2459":"\"GraduateStudent115@Department0.University0.edu\"","410":"<http://www.University661.edu>","2452":"<http://www.University162.edu>","2453":"<http://www.Department0.University0.edu/GraduateStudent114>","2454":"\"GraduateStudent114\"","415":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#memberOf>","2456":"<http://www.University989.edu>","417":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse>","2458":"\"GraduateStudent115\"","2460":"<http://www.University638.edu>","2461":"<http://www.Department0.University0.edu/GraduateStudent116>","2470":"\"GraduateStudent118@Department0.University0.edu\"","2462":"\"GraduateStudent116\"","2463":"\"GraduateStudent116@Department0.University0.edu\"","2464":"<http://www.Department0.University0.edu/GraduateStudent117>","2465":"\"GraduateStudent117\"","2467":"<http://www.University952.edu>","2468":"<http://www.Department0.University0.edu/GraduateStudent118>","2469":"\"GraduateStudent118\"","430":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#advisor>","2471":"<http://www.University321.edu>","2472":"<http://www.Department0.University0.edu/GraduateStudent119>","2473":"\"GraduateStudent119\"","2475":"<http://www.University687.edu>","2474":"\"GraduateStudent119@Department0.University0.edu\"","2476":"<http://www.Department0.University0.edu/GraduateStudent120>","2477":"\"GraduateStudent120\"","2479":"<http://www.University857.edu>","2478":"\"GraduateStudent120@Department0.University0.edu\"","2480":"<http://www.Department0.University0.edu/GraduateStudent121>","2481":"\"GraduateStudent121\"","2483":"<http://www.University474.edu>","2482":"\"GraduateStudent121@Department0.University0.edu\"","2484":"<http://www.Department0.University0.edu/GraduateStudent122>","2485":"\"GraduateStudent122\"","2487":"<http://www.University590.edu>","2486":"\"GraduateStudent122@Department0.University0.edu\"","2488":"<http://www.Department0.University0.edu/GraduateStudent123>","2489":"\"GraduateStudent123\"","2490":"\"GraduateStudent123@Department0.University0.edu\"","2491":"<http://www.Department0.University0.edu/GraduateStudent124>","2492":"\"GraduateStudent124\"","2494":"<http://www.University114.edu>","2493":"\"GraduateStudent124@Department0.University0.edu\"","2495":"<http://www.Department0.University0.edu/GraduateStudent125>","2496":"\"GraduateStudent125\"","2498":"<http://www.University368.edu>","2497":"\"GraduateStudent125@Department0.University0.edu\"","2499":"<http://www.Department0.University0.edu/GraduateStudent126>","2500":"\"GraduateStudent126\"","2509":"\"GraduateStudent128@Department0.University0.edu\"","2502":"<http://www.University423.edu>","2503":"<http://www.Department0.University0.edu/GraduateStudent127>","2504":"\"GraduateStudent127\"","2506":"<http://www.University4.edu>","2505":"\"GraduateStudent127@Department0.University0.edu\"","2507":"<http://www.Department0.University0.edu/GraduateStudent128>","93":"<http://www.Department0.University0.edu/FullProfessor7>","2517":"\"GraduateStudent130@Department0.University0.edu\"","2510":"<http://www.University669.edu>","2511":"<http://www.Department0.University0.edu/GraduateStudent129>","2512":"\"GraduateStudent129\"","2514":"<http://www.University672.edu>","2513":"\"GraduateStudent129@Department0.University0.edu\"","2515":"<http://www.Department0.University0.edu/GraduateStudent130>","2516":"\"GraduateStudent130\"","2518":"<http://www.University1.edu>","2519":"<http://www.Department0.University0.edu/GraduateStudent131>","2520":"\"GraduateStudent131\"","2522":"<http://www.University543.edu>","2521":"\"GraduateStudent131@Department0.University0.edu\"","2523":"<http://www.Department0.University0.edu/GraduateStudent132>","2524":"\"GraduateStudent132\"","2526":"<http://www.University36.edu>","2525":"\"GraduateStudent132@Department0.University0.edu\"","2527":"<http://www.Department0.University0.edu/GraduateStudent133>","2528":"\"GraduateStudent133\"","2529":"\"GraduateStudent133@Department0.University0.edu\"","97":"<http://www.Department0.University0.edu/GraduateCourse11>","2530":"<http://www.Department0.University0.edu/GraduateStudent134>","2531":"\"GraduateStudent134\"","2533":"<http://www.University59.edu>","2532":"\"GraduateStudent134@Department0.University0.edu\"","98":"<http://www.Department0.University0.edu/GraduateCourse12>","2534":"<http://www.Department0.University0.edu/GraduateStudent135>","2535":"\"GraduateStudent135\"","2537":"<http://www.University877.edu>","2538":"<http://www.Department0.University0.edu/GraduateStudent136>","2539":"\"GraduateStudent136\"","2541":"<http://www.University564.edu>","2540":"\"GraduateStudent136@Department0.University0.edu\"","2542":"<http://www.Department0.University0.edu/GraduateStudent137>","2543":"\"GraduateStudent137\"","2544":"\"GraduateStudent137@Department0.University0.edu\"","2545":"<http://www.Department0.University0.edu/GraduateStudent138>","2546":"\"GraduateStudent138\"","2548":"<http://www.University940.edu>","2547":"\"GraduateStudent138@Department0.University0.edu\"","2549":"<http://www.Department0.University0.edu/GraduateStudent139>","2550":"\"GraduateStudent139\"","2552":"<http://www.University850.edu>","2551":"\"GraduateStudent139@Department0.University0.edu\"","2553":"<http://www.Department0.University0.edu/GraduateStudent140>","2554":"\"GraduateStudent140\"","2556":"<http://www.University846.edu>","2555":"\"GraduateStudent140@Department0.University0.edu\"","2557":"<http://www.Department0.University0.edu/GraduateStudent141>","2558":"\"GraduateStudent141\"","2559":"\"GraduateStudent141@Department0.University0.edu\"","2560":"<http://www.Department0.University0.edu/GraduateStudent142>","2561":"\"GraduateStudent142\"","2563":"<http://www.University103.edu>","2562":"\"GraduateStudent142@Department0.University0.edu\"","2564":"<http://www.Department0.University0.edu/GraduateStudent143>","2565":"\"GraduateStudent143\"","2567":"<http://www.University417.edu>","2566":"\"GraduateStudent143@Department0.University0.edu\"","2568":"<http://www.Department0.University0.edu/GraduateStudent144>","2569":"\"GraduateStudent144\"","2570":"\"GraduateStudent144@Department0.University0.edu\"","2571":"<http://www.Department0.University0.edu/GraduateStudent145>","2572":"\"GraduateStudent145\"","2573":"\"GraduateStudent145@Department0.University0.edu\"","2574":"<http://www.Department0.University0.edu/ResearchGroup0>","2575":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchGroup>","2576":"<http://www.Department0.University0.edu/ResearchGroup1>","542":"<http://www.Department0.University0.edu/UndergraduateStudent42>","2466":"\"GraduateStudent117@Department0.University0.edu\"","121":"<http://www.University963.edu>","2165":"\"GraduateStudent40\"","130":"<http://www.Department0.University0.edu/GraduateCourse17>","141":"<http://www.Department0.University0.edu/GraduateCourse20>","713":"<http://www.Department0.University0.edu/UndergraduateStudent99>","734":"<http://www.Department0.University0.edu/UndergraduateStudent106>","764":"<http://www.Department0.University0.edu/UndergraduateStudent116>","785":"<http://www.Department0.University0.edu/UndergraduateStudent123>","2193":"\"GraduateStudent47@Department0.University0.edu\"","806":"<http://www.Department0.University0.edu/UndergraduateStudent130>","2197":"\"GraduateStudent48@Department0.University0.edu\"","818":"<http://www.Department0.University0.edu/UndergraduateStudent134>","2199":"<http://www.Department0.University0.edu/GraduateStudent49>","890":"<http://www.Department0.University0.edu/UndergraduateStudent158>","911":"<http://www.Department0.University0.edu/UndergraduateStudent165>","944":"<http://www.Department0.University0.edu/UndergraduateStudent176>","977":"<http://www.Department0.University0.edu/UndergraduateStudent187>","992":"<http://www.Department0.University0.edu/UndergraduateStudent192>","1019":"<http://www.Department0.University0.edu/UndergraduateStudent201>","3197":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#TeachingAssistant>","3198":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#teachingAssistantOf>","3199":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchAssistant>","1151":"<http://www.Department0.University0.edu/UndergraduateStudent245>","1154":"<http://www.Department0.University0.edu/UndergraduateStudent246>","1163":"<http://www.Department0.University0.edu/UndergraduateStudent249>","1175":"<http://www.Department0.University0.edu/UndergraduateStudent253>","1190":"<http://www.Department0.University0.edu/UndergraduateStudent258>","1196":"<http://www.Department0.University0.edu/UndergraduateStudent260>","1223":"<http://www.Department0.University0.edu/UndergraduateStudent269>","1238":"<http://www.Department0.University0.edu/UndergraduateStudent274>","1247":"<http://www.Department0.University0.edu/UndergraduateStudent277>","1295":"<http://www.Department0.University0.edu/UndergraduateStudent293>","1595":"<http://www.Department0.University0.edu/UndergraduateStudent393>","1601":"<http://www.Department0.University0.edu/UndergraduateStudent395>","1622":"<http://www.Department0.University0.edu/UndergraduateStudent402>","1646":"<http://www.Department0.University0.edu/UndergraduateStudent410>","1715":"<http://www.Department0.University0.edu/UndergraduateStudent433>","345":"<http://www.Department0.University0.edu/AssistantProfessor9>","1766":"<http://www.Department0.University0.edu/UndergraduateStudent450>","1787":"<http://www.Department0.University0.edu/UndergraduateStudent457>","1850":"<http://www.Department0.University0.edu/UndergraduateStudent478>","368":"<http://www.Department0.University0.edu/GraduateCourse57>","482":"<http://www.Department0.University0.edu/UndergraduateStudent22>","376":"<http://www.Department0.University0.edu/Course55>","1919":"<http://www.Department0.University0.edu/UndergraduateStudent501>","2435":"\"GraduateStudent109@Department0.University0.edu\"","2013":"<http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent>","2438":"\"GraduateStudent110\"","2439":"\"GraduateStudent110@Department0.University0.edu\"","2441":"<http://www.Department0.University0.edu/GraduateStudent111>","2442":"\"GraduateStudent111\""},"triples":8521,"pages":{"header":{"5":"spo","6":"pos"},"heap":1,"terms":2,"spelling":3},"ids":{"type":2,"GraduateStudent":2013,"takesCourse":417,"GraduateCourse0":19}},"plans":[{"name":"q01","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:GraduateStudent . ?X ub:takesCourse <http://www.Department0.University0.edu/GraduateCourse0>}","note":"This query bears large input and high selectivity. It queries about just one class and one property and does not assume any hierarchy information or inference.","plan":{"op":"Projection","detail":"[?X]","est":4,"actual":4,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":4,"actual":4,"kids":[{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse> <http://www.Department0.University0.edu/GraduateCourse0>}","est":4,"actual":4,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent>}","est":146,"actual":null,"kids":[]}]}]},"ms":0.062833},{"name":"q02","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y ?Z WHERE {?X rdf:type ub:GraduateStudent . ?Y rdf:type ub:University . ?Z rdf:type ub:Department . ?X ub:memberOf ?Z . ?Z ub:subOrganizationOf ?Y . ?X ub:undergraduateDegreeFrom ?Y}","note":"This query increases in complexity: 3 classes and 3 properties are involved. Additionally, there is a triangular pattern of relationships between the objects involved.","plan":{"op":"Projection","detail":"[?X, ?Y, ?Z]","est":1,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":1,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":1,"kids":[{"op":"TripleScan","detail":"{?Z <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Department>}","est":1,"actual":1,"kids":[]},{"op":"TripleScan","detail":"{?Z <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#subOrganizationOf> ?Y}","est":11,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#University>}","est":237,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#undergraduateDegreeFrom> ?Y}","est":187,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#GraduateStudent>}","est":146,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#memberOf> ?Z}","est":678,"actual":null,"kids":[]}]}]},"ms":0.060042},{"name":"q03","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:Publication . ?X ub:publicationAuthor <http://www.Department0.University0.edu/AssistantProfessor0>}","note":"This query is similar to Query 1 but class Publication has a wide hierarchy.","plan":{"op":"Projection","detail":"[?X]","est":6,"actual":6,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":6,"actual":6,"kids":[{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#publicationAuthor> <http://www.Department0.University0.edu/AssistantProfessor0>}","est":6,"actual":6,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Publication>}","est":460,"actual":null,"kids":[]}]}]},"ms":0.0325},{"name":"q04","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y1 ?Y2 ?Y3 WHERE {?X rdf:type ub:Professor . ?X ub:worksFor <http://www.Department0.University0.edu> . ?X ub:name ?Y1 . ?X ub:emailAddress ?Y2 . ?X ub:telephone ?Y3}","note":"This query has small input and high selectivity. It assumes subClassOf relationship between Professor and its subclasses. Class Professor has a wide hierarchy. Another feature is that it queries about multiple properties of a single class.","plan":{"op":"Projection","detail":"[?X, ?Y1, ?Y2, ?Y3]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Professor>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#worksFor> <http://www.Department0.University0.edu>}","est":41,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#name> ?Y1}","est":1309,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#emailAddress> ?Y2}","est":719,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#telephone> ?Y3}","est":719,"actual":null,"kids":[]}]}]},"ms":0.001083},{"name":"q05","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:Person . ?X ub:memberOf <http://www.Department0.University0.edu>}","note":"This query assumes subClassOf relationship between Person and its subclasses and subPropertyOf relationship between memberOf and its subproperties. Moreover, class Person features a deep and wide hierarchy.","plan":{"op":"Projection","detail":"[?X]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#memberOf> <http://www.Department0.University0.edu>}","est":678,"actual":null,"kids":[]}]}]},"ms":0.000541},{"name":"q06","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:Student}","note":"This query queries about only one class. But it assumes both the explicit subClassOf relationship between UndergraduateStudent and Student and the implicit one between GraduateStudent and Student. In addition, it has large input and low selectivity.","plan":{"op":"Projection","detail":"[?X]","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student>}","est":0,"actual":0,"kids":[]}]},"ms":0.000333},{"name":"q07","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y WHERE {?X rdf:type ub:Student . ?Y rdf:type ub:Course . ?X ub:takesCourse ?Y . <http://www.Department0.University0.edu/AssociateProfessor0> ub:teacherOf ?Y .}","note":"This query is similar to Query 6 in terms of class Student but it increases in the number of classes and properties and its selectivity is high.","plan":{"op":"Projection","detail":"[?X, ?Y]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse> ?Y}","est":1878,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Course>}","est":61,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{<http://www.Department0.University0.edu/AssociateProfessor0> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#teacherOf> ?Y}","est":4,"actual":null,"kids":[]}]}]},"ms":0.00075},{"name":"q08","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y ?Z WHERE {?X rdf:type ub:Student . ?Y rdf:type ub:Department . ?X ub:memberOf ?Y . ?Y ub:subOrganizationOf <http://www.University0.edu> . ?X ub:emailAddress ?Z}","note":"This query is further more complex than Query 7 by including one more property.","plan":{"op":"Projection","detail":"[?X, ?Y, ?Z]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#memberOf> ?Y}","est":678,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Department>}","est":1,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#subOrganizationOf> <http://www.University0.edu>}","est":1,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#emailAddress> ?Z}","est":719,"actual":null,"kids":[]}]}]},"ms":0.001},{"name":"q09","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y ?Z WHERE {?X rdf:type ub:Student . ?Y rdf:type ub:Faculty . ?Z rdf:type ub:Course . ?X ub:advisor ?Y . ?Y ub:teacherOf ?Z . ?X ub:takesCourse ?Z}","note":"Besides the aforementioned features of class Student and the wide hierarchy of class Faculty, like Query 2, this query is characterized by the most classes and properties in the query set and there is a triangular pattern of relationships.","plan":{"op":"Projection","detail":"[?X, ?Y, ?Z]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#advisor> ?Y}","est":255,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Faculty>}","est":0,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#teacherOf> ?Z}","est":128,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Z <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Course>}","est":61,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse> ?Z}","est":1878,"actual":null,"kids":[]}]}]},"ms":0.001625},{"name":"q10","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:Student . ?X ub:takesCourse <http://www.Department0.University0.edu/GraduateCourse0>}","note":"This query differs from Query 6, 7, 8 and 9 in that it only requires the (implicit) subClassOf relationship between GraduateStudent and Student, i.e., subClassOf rela-tionship between UndergraduateStudent and Student does not add to the results.","plan":{"op":"Projection","detail":"[?X]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Student>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#takesCourse> <http://www.Department0.University0.edu/GraduateCourse0>}","est":4,"actual":null,"kids":[]}]}]},"ms":0.000625},{"name":"q11","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:ResearchGroup . ?X ub:subOrganizationOf <http://www.University0.edu>}","note":"Query 11, 12 and 13 are intended to verify the presence of certain OWL reasoning capabilities in the system. In this query, property subOrganizationOf is defined as transitive. Since in the benchmark data, instances of ResearchGroup are stated as a sub-organization of a Department individual and the later suborganization of a University individual, inference about the subOrgnizationOf relationship between instances of ResearchGroup and University is required to answer this query. Additionally, its input is small.","plan":{"op":"Projection","detail":"[?X]","est":1,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":1,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#subOrganizationOf> <http://www.University0.edu>}","est":1,"actual":1,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#ResearchGroup>}","est":10,"actual":null,"kids":[]}]}]},"ms":0.03125},{"name":"q12","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X ?Y WHERE {?X rdf:type ub:Chair . ?Y rdf:type ub:Department . ?X ub:worksFor ?Y . ?Y ub:subOrganizationOf <http://www.University0.edu>}","note":"The benchmark data do not produce any instances of class Chair. Instead, each Department individual is linked to the chair professor of that department by property headOf. Hence this query requires realization, i.e., inference that that professor is an instance of class Chair because he or she is the head of a department. Input of this query is small as well.","plan":{"op":"Projection","detail":"[?X, ?Y]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Chair>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{?X <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#worksFor> ?Y}","est":41,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Department>}","est":1,"actual":null,"kids":[]}]},{"op":"TripleScan","detail":"{?Y <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#subOrganizationOf> <http://www.University0.edu>}","est":1,"actual":null,"kids":[]}]}]},"ms":0.000625},{"name":"q13","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:Person . <http://www.University0.edu> ub:hasAlumnus ?X}","note":"Property hasAlumnus is defined in the benchmark ontology as the inverse of property degreeFrom, which has three subproperties: undergraduateDegreeFrom, mastersDegreeFrom, and doctoralDegreeFrom. The benchmark data state a person as an alumnus of a university using one of these three subproperties instead of hasAlumnus. Therefore, this query assumes subPropertyOf relationships between degreeFrom and its subproperties, and also requires inference about inverseOf.","plan":{"op":"Projection","detail":"[?X]","est":0,"actual":0,"kids":[{"op":"IndexNestedLoopJoin","detail":"","est":0,"actual":0,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#Person>}","est":0,"actual":0,"kids":[]},{"op":"TripleScan","detail":"{<http://www.University0.edu> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#hasAlumnus> ?X}","est":0,"actual":null,"kids":[]}]}]},"ms":0.000458},{"name":"q14","query":"PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX ub: <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#> SELECT ?X WHERE {?X rdf:type ub:UndergraduateStudent}","note":"This query is the simplest in the test set. This query represents those with large input and low selectivity and does not assume any hierarchy information or inference.","plan":{"op":"Projection","detail":"[?X]","est":532,"actual":532,"kids":[{"op":"TripleScan","detail":"{?X <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#UndergraduateStudent>}","est":532,"actual":532,"kids":[]}]},"ms":0.061459}],"recovery":{"steps":[{"kind":"open","cmd":"ontodb mydb","out":"opened mydb: no snapshot; wal 0 records, 0 committed, 0 uncommitted dropped; 0 triples","wal":[],"wal_bytes":0,"snapshot_bytes":0},{"kind":"load","cmd":"\\load …/ontodb/data/tiny.ttl","out":"loaded 53 triples in 0.788292 ms","wal":[{"lsn":1,"txn":1,"kind":"begin","body":""},{"lsn":2,"txn":1,"kind":"term","body":"1 <http://example.edu/univ#CS>"},{"lsn":3,"txn":1,"kind":"term","body":"2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"},{"lsn":4,"txn":1,"kind":"term","body":"3 <http://example.edu/univ#Department>"},{"lsn":5,"txn":1,"kind":"term","body":"4 <http://example.edu/univ#name>"},{"lsn":6,"txn":1,"kind":"term","body":"5 \"Computer Science\""},{"lsn":7,"txn":1,"kind":"term","body":"6 <http://example.edu/univ#Math>"},{"lsn":8,"txn":1,"kind":"term","body":"7 \"Mathematics\""},{"lsn":9,"txn":1,"kind":"term","body":"8 <http://example.edu/univ#Alice>"},{"lsn":10,"txn":1,"kind":"term","body":"9 <http://example.edu/univ#Student>"},{"lsn":11,"txn":1,"kind":"term","body":"10 \"Alice\""},{"lsn":12,"txn":1,"kind":"term","body":"11 <http://example.edu/univ#age>"},{"lsn":13,"txn":1,"kind":"term","body":"12 \"20\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":14,"txn":1,"kind":"term","body":"13 <http://example.edu/univ#email>"},{"lsn":15,"txn":1,"kind":"term","body":"14 \"alice@example.edu\""},{"lsn":16,"txn":1,"kind":"term","body":"15 <http://example.edu/univ#memberOf>"},{"lsn":17,"txn":1,"kind":"term","body":"16 <http://example.edu/univ#takes>"},{"lsn":18,"txn":1,"kind":"term","body":"17 <http://example.edu/univ#CS101>"},{"lsn":19,"txn":1,"kind":"term","body":"18 <http://example.edu/univ#CS102>"},{"lsn":20,"txn":1,"kind":"term","body":"19 <http://example.edu/univ#Bob>"},{"lsn":21,"txn":1,"kind":"term","body":"20 \"Bob\""},{"lsn":22,"txn":1,"kind":"term","body":"21 \"22\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":23,"txn":1,"kind":"term","body":"22 \"bob@example.edu\""},{"lsn":24,"txn":1,"kind":"term","body":"23 <http://example.edu/univ#Cara>"},{"lsn":25,"txn":1,"kind":"term","body":"24 \"Cara\""},{"lsn":26,"txn":1,"kind":"term","body":"25 \"19\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":27,"txn":1,"kind":"term","body":"26 \"cara@example.edu\""},{"lsn":28,"txn":1,"kind":"term","body":"27 <http://example.edu/univ#MA201>"},{"lsn":29,"txn":1,"kind":"term","body":"28 <http://example.edu/univ#Dana>"},{"lsn":30,"txn":1,"kind":"term","body":"29 <http://example.edu/univ#Professor>"},{"lsn":31,"txn":1,"kind":"term","body":"30 \"Dana\""},{"lsn":32,"txn":1,"kind":"term","body":"31 \"45\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":33,"txn":1,"kind":"term","body":"32 \"dana@example.edu\""},{"lsn":34,"txn":1,"kind":"term","body":"33 <http://example.edu/univ#worksFor>"},{"lsn":35,"txn":1,"kind":"term","body":"34 <http://example.edu/univ#teaches>"},{"lsn":36,"txn":1,"kind":"term","body":"35 <http://example.edu/univ#Evan>"},{"lsn":37,"txn":1,"kind":"term","body":"36 \"Evan\""},{"lsn":38,"txn":1,"kind":"term","body":"37 \"38\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":39,"txn":1,"kind":"term","body":"38 \"evan@example.edu\""},{"lsn":40,"txn":1,"kind":"term","body":"39 <http://example.edu/univ#Fay>"},{"lsn":41,"txn":1,"kind":"term","body":"40 \"Fay\""},{"lsn":42,"txn":1,"kind":"term","body":"41 \"51\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":43,"txn":1,"kind":"term","body":"42 \"fay@example.edu\""},{"lsn":44,"txn":1,"kind":"term","body":"43 <http://example.edu/univ#Course>"},{"lsn":45,"txn":1,"kind":"term","body":"44 \"Intro to Databases\""},{"lsn":46,"txn":1,"kind":"term","body":"45 <http://example.edu/univ#credits>"},{"lsn":47,"txn":1,"kind":"term","body":"46 \"3\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":48,"txn":1,"kind":"term","body":"47 <http://example.edu/univ#offeredBy>"},{"lsn":49,"txn":1,"kind":"term","body":"48 \"Operating Systems\""},{"lsn":50,"txn":1,"kind":"term","body":"49 \"4\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":51,"txn":1,"kind":"term","body":"50 \"Linear Algebra\""},{"lsn":52,"txn":1,"kind":"update","body":"insert (1 2 3)"},{"lsn":53,"txn":1,"kind":"update","body":"insert (1 4 5)"},{"lsn":54,"txn":1,"kind":"update","body":"insert (6 2 3)"},{"lsn":55,"txn":1,"kind":"update","body":"insert (6 4 7)"},{"lsn":56,"txn":1,"kind":"update","body":"insert (8 2 9)"},{"lsn":57,"txn":1,"kind":"update","body":"insert (8 4 10)"},{"lsn":58,"txn":1,"kind":"update","body":"insert (8 11 12)"},{"lsn":59,"txn":1,"kind":"update","body":"insert (8 13 14)"},{"lsn":60,"txn":1,"kind":"update","body":"insert (8 15 1)"},{"lsn":61,"txn":1,"kind":"update","body":"insert (8 16 17)"},{"lsn":62,"txn":1,"kind":"update","body":"insert (8 16 18)"},{"lsn":63,"txn":1,"kind":"update","body":"insert (19 2 9)"},{"lsn":64,"txn":1,"kind":"update","body":"insert (19 4 20)"},{"lsn":65,"txn":1,"kind":"update","body":"insert (19 11 21)"},{"lsn":66,"txn":1,"kind":"update","body":"insert (19 13 22)"},{"lsn":67,"txn":1,"kind":"update","body":"insert (19 15 1)"},{"lsn":68,"txn":1,"kind":"update","body":"insert (19 16 17)"},{"lsn":69,"txn":1,"kind":"update","body":"insert (23 2 9)"},{"lsn":70,"txn":1,"kind":"update","body":"insert (23 4 24)"},{"lsn":71,"txn":1,"kind":"update","body":"insert (23 11 25)"},{"lsn":72,"txn":1,"kind":"update","body":"insert (23 13 26)"},{"lsn":73,"txn":1,"kind":"update","body":"insert (23 15 6)"},{"lsn":74,"txn":1,"kind":"update","body":"insert (23 16 27)"},{"lsn":75,"txn":1,"kind":"update","body":"insert (28 2 29)"},{"lsn":76,"txn":1,"kind":"update","body":"insert (28 4 30)"},{"lsn":77,"txn":1,"kind":"update","body":"insert (28 11 31)"},{"lsn":78,"txn":1,"kind":"update","body":"insert (28 13 32)"},{"lsn":79,"txn":1,"kind":"update","body":"insert (28 33 1)"},{"lsn":80,"txn":1,"kind":"update","body":"insert (28 34 17)"},{"lsn":81,"txn":1,"kind":"update","body":"insert (35 2 29)"},{"lsn":82,"txn":1,"kind":"update","body":"insert (35 4 36)"},{"lsn":83,"txn":1,"kind":"update","body":"insert (35 11 37)"},{"lsn":84,"txn":1,"kind":"update","body":"insert (35 13 38)"},{"lsn":85,"txn":1,"kind":"update","body":"insert (35 33 1)"},{"lsn":86,"txn":1,"kind":"update","body":"insert (35 34 18)"},{"lsn":87,"txn":1,"kind":"update","body":"insert (39 2 29)"},{"lsn":88,"txn":1,"kind":"update","body":"insert (39 4 40)"},{"lsn":89,"txn":1,"kind":"update","body":"insert (39 11 41)"},{"lsn":90,"txn":1,"kind":"update","body":"insert (39 13 42)"},{"lsn":91,"txn":1,"kind":"update","body":"insert (39 33 6)"},{"lsn":92,"txn":1,"kind":"update","body":"insert (39 34 27)"},{"lsn":93,"txn":1,"kind":"update","body":"insert (17 2 43)"},{"lsn":94,"txn":1,"kind":"update","body":"insert (17 4 44)"},{"lsn":95,"txn":1,"kind":"update","body":"insert (17 45 46)"},{"lsn":96,"txn":1,"kind":"update","body":"insert (17 47 1)"},{"lsn":97,"txn":1,"kind":"update","body":"insert (18 2 43)"},{"lsn":98,"txn":1,"kind":"update","body":"insert (18 4 48)"},{"lsn":99,"txn":1,"kind":"update","body":"insert (18 45 49)"},{"lsn":100,"txn":1,"kind":"update","body":"insert (18 47 1)"},{"lsn":101,"txn":1,"kind":"update","body":"insert (27 2 43)"},{"lsn":102,"txn":1,"kind":"update","body":"insert (27 4 50)"},{"lsn":103,"txn":1,"kind":"update","body":"insert (27 45 46)"},{"lsn":104,"txn":1,"kind":"update","body":"insert (27 47 6)"},{"lsn":105,"txn":1,"kind":"commit","body":""}],"wal_bytes":7017,"snapshot_bytes":0},{"kind":"insert","cmd":"PREFIX ub: <http://example.edu/univ#> INSERT DATA { ub:Fay a ub:Student . ub:Fay ub:memberOf ub:Math . }","out":"inserted 2 triples","wal":[{"lsn":1,"txn":1,"kind":"begin","body":""},{"lsn":2,"txn":1,"kind":"term","body":"1 <http://example.edu/univ#CS>"},{"lsn":3,"txn":1,"kind":"term","body":"2 <http://www.w3.org/1999/02/22-rdf-syntax-ns#type>"},{"lsn":4,"txn":1,"kind":"term","body":"3 <http://example.edu/univ#Department>"},{"lsn":5,"txn":1,"kind":"term","body":"4 <http://example.edu/univ#name>"},{"lsn":6,"txn":1,"kind":"term","body":"5 \"Computer Science\""},{"lsn":7,"txn":1,"kind":"term","body":"6 <http://example.edu/univ#Math>"},{"lsn":8,"txn":1,"kind":"term","body":"7 \"Mathematics\""},{"lsn":9,"txn":1,"kind":"term","body":"8 <http://example.edu/univ#Alice>"},{"lsn":10,"txn":1,"kind":"term","body":"9 <http://example.edu/univ#Student>"},{"lsn":11,"txn":1,"kind":"term","body":"10 \"Alice\""},{"lsn":12,"txn":1,"kind":"term","body":"11 <http://example.edu/univ#age>"},{"lsn":13,"txn":1,"kind":"term","body":"12 \"20\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":14,"txn":1,"kind":"term","body":"13 <http://example.edu/univ#email>"},{"lsn":15,"txn":1,"kind":"term","body":"14 \"alice@example.edu\""},{"lsn":16,"txn":1,"kind":"term","body":"15 <http://example.edu/univ#memberOf>"},{"lsn":17,"txn":1,"kind":"term","body":"16 <http://example.edu/univ#takes>"},{"lsn":18,"txn":1,"kind":"term","body":"17 <http://example.edu/univ#CS101>"},{"lsn":19,"txn":1,"kind":"term","body":"18 <http://example.edu/univ#CS102>"},{"lsn":20,"txn":1,"kind":"term","body":"19 <http://example.edu/univ#Bob>"},{"lsn":21,"txn":1,"kind":"term","body":"20 \"Bob\""},{"lsn":22,"txn":1,"kind":"term","body":"21 \"22\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":23,"txn":1,"kind":"term","body":"22 \"bob@example.edu\""},{"lsn":24,"txn":1,"kind":"term","body":"23 <http://example.edu/univ#Cara>"},{"lsn":25,"txn":1,"kind":"term","body":"24 \"Cara\""},{"lsn":26,"txn":1,"kind":"term","body":"25 \"19\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":27,"txn":1,"kind":"term","body":"26 \"cara@example.edu\""},{"lsn":28,"txn":1,"kind":"term","body":"27 <http://example.edu/univ#MA201>"},{"lsn":29,"txn":1,"kind":"term","body":"28 <http://example.edu/univ#Dana>"},{"lsn":30,"txn":1,"kind":"term","body":"29 <http://example.edu/univ#Professor>"},{"lsn":31,"txn":1,"kind":"term","body":"30 \"Dana\""},{"lsn":32,"txn":1,"kind":"term","body":"31 \"45\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":33,"txn":1,"kind":"term","body":"32 \"dana@example.edu\""},{"lsn":34,"txn":1,"kind":"term","body":"33 <http://example.edu/univ#worksFor>"},{"lsn":35,"txn":1,"kind":"term","body":"34 <http://example.edu/univ#teaches>"},{"lsn":36,"txn":1,"kind":"term","body":"35 <http://example.edu/univ#Evan>"},{"lsn":37,"txn":1,"kind":"term","body":"36 \"Evan\""},{"lsn":38,"txn":1,"kind":"term","body":"37 \"38\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":39,"txn":1,"kind":"term","body":"38 \"evan@example.edu\""},{"lsn":40,"txn":1,"kind":"term","body":"39 <http://example.edu/univ#Fay>"},{"lsn":41,"txn":1,"kind":"term","body":"40 \"Fay\""},{"lsn":42,"txn":1,"kind":"term","body":"41 \"51\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":43,"txn":1,"kind":"term","body":"42 \"fay@example.edu\""},{"lsn":44,"txn":1,"kind":"term","body":"43 <http://example.edu/univ#Course>"},{"lsn":45,"txn":1,"kind":"term","body":"44 \"Intro to Databases\""},{"lsn":46,"txn":1,"kind":"term","body":"45 <http://example.edu/univ#credits>"},{"lsn":47,"txn":1,"kind":"term","body":"46 \"3\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":48,"txn":1,"kind":"term","body":"47 <http://example.edu/univ#offeredBy>"},{"lsn":49,"txn":1,"kind":"term","body":"48 \"Operating Systems\""},{"lsn":50,"txn":1,"kind":"term","body":"49 \"4\"^^<http://www.w3.org/2001/XMLSchema#integer>"},{"lsn":51,"txn":1,"kind":"term","body":"50 \"Linear Algebra\""},{"lsn":52,"txn":1,"kind":"update","body":"insert (1 2 3)"},{"lsn":53,"txn":1,"kind":"update","body":"insert (1 4 5)"},{"lsn":54,"txn":1,"kind":"update","body":"insert (6 2 3)"},{"lsn":55,"txn":1,"kind":"update","body":"insert (6 4 7)"},{"lsn":56,"txn":1,"kind":"update","body":"insert (8 2 9)"},{"lsn":57,"txn":1,"kind":"update","body":"insert (8 4 10)"},{"lsn":58,"txn":1,"kind":"update","body":"insert (8 11 12)"},{"lsn":59,"txn":1,"kind":"update","body":"insert (8 13 14)"},{"lsn":60,"txn":1,"kind":"update","body":"insert (8 15 1)"},{"lsn":61,"txn":1,"kind":"update","body":"insert (8 16 17)"},{"lsn":62,"txn":1,"kind":"update","body":"insert (8 16 18)"},{"lsn":63,"txn":1,"kind":"update","body":"insert (19 2 9)"},{"lsn":64,"txn":1,"kind":"update","body":"insert (19 4 20)"},{"lsn":65,"txn":1,"kind":"update","body":"insert (19 11 21)"},{"lsn":66,"txn":1,"kind":"update","body":"insert (19 13 22)"},{"lsn":67,"txn":1,"kind":"update","body":"insert (19 15 1)"},{"lsn":68,"txn":1,"kind":"update","body":"insert (19 16 17)"},{"lsn":69,"txn":1,"kind":"update","body":"insert (23 2 9)"},{"lsn":70,"txn":1,"kind":"update","body":"insert (23 4 24)"},{"lsn":71,"txn":1,"kind":"update","body":"insert (23 11 25)"},{"lsn":72,"txn":1,"kind":"update","body":"insert (23 13 26)"},{"lsn":73,"txn":1,"kind":"update","body":"insert (23 15 6)"},{"lsn":74,"txn":1,"kind":"update","body":"insert (23 16 27)"},{"lsn":75,"txn":1,"kind":"update","body":"insert (28 2 29)"},{"lsn":76,"txn":1,"kind":"update","body":"insert (28 4 30)"},{"lsn":77,"txn":1,"kind":"update","body":"insert (28 11 31)"},{"lsn":78,"txn":1,"kind":"update","body":"insert (28 13 32)"},{"lsn":79,"txn":1,"kind":"update","body":"insert (28 33 1)"},{"lsn":80,"txn":1,"kind":"update","body":"insert (28 34 17)"},{"lsn":81,"txn":1,"kind":"update","body":"insert (35 2 29)"},{"lsn":82,"txn":1,"kind":"update","body":"insert (35 4 36)"},{"lsn":83,"txn":1,"kind":"update","body":"insert (35 11 37)"},{"lsn":84,"txn":1,"kind":"update","body":"insert (35 13 38)"},{"lsn":85,"txn":1,"kind":"update","body":"insert (35 33 1)"},{"lsn":86,"txn":1,"kind":"update","body":"insert (35 34 18)"},{"lsn":87,"txn":1,"kind":"update","body":"insert (39 2 29)"},{"lsn":88,"txn":1,"kind":"update","body":"insert (39 4 40)"},{"lsn":89,"txn":1,"kind":"update","body":"insert (39 11 41)"},{"lsn":90,"txn":1,"kind":"update","body":"insert (39 13 42)"},{"lsn":91,"txn":1,"kind":"update","body":"insert (39 33 6)"},{"lsn":92,"txn":1,"kind":"update","body":"insert (39 34 27)"},{"lsn":93,"txn":1,"kind":"update","body":"insert (17 2 43)"},{"lsn":94,"txn":1,"kind":"update","body":"insert (17 4 44)"},{"lsn":95,"txn":1,"kind":"update","body":"insert (17 45 46)"},{"lsn":96,"txn":1,"kind":"update","body":"insert (17 47 1)"},{"lsn":97,"txn":1,"kind":"update","body":"insert (18 2 43)"},{"lsn":98,"txn":1,"kind":"update","body":"insert (18 4 48)"},{"lsn":99,"txn":1,"kind":"update","body":"insert (18 45 49)"},{"lsn":100,"txn":1,"kind":"update","body":"insert (18 47 1)"},{"lsn":101,"txn":1,"kind":"update","body":"insert (27 2 43)"},{"lsn":102,"txn":1,"kind":"update","body":"insert (27 4 50)"},{"lsn":103,"txn":1,"kind":"update","body":"insert (27 45 46)"},{"lsn":104,"txn":1,"kind":"update","body":"insert (27 47 6)"},{"lsn":105,"txn":1,"kind":"commit","body":""},{"lsn":106,"txn":2,"kind":"begin","body":""},{"lsn":107,"txn":2,"kind":"update","body":"insert (39 2 9)"},{"lsn":108,"txn":2,"kind":"update","body":"insert (39 15 6)"},{"lsn":109,"txn":2,"kind":"commit","body":""}],"wal_bytes":7207,"snapshot_bytes":0},{"kind":"checkpoint","cmd":"\\checkpoint","out":"checkpoint at lsn 109: 50 terms, 55 triples; wal reset","wal":[],"wal_bytes":0,"snapshot_bytes":2187},{"kind":"insert","cmd":"PREFIX ub: <http://example.edu/univ#> INSERT DATA { ub:Gus a ub:Student . }","out":"inserted 1 triple","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""}],"wal_bytes":202,"snapshot_bytes":2187},{"kind":"insert","cmd":"PREFIX ub: <http://example.edu/univ#> INSERT DATA { ub:Hal a ub:Student . }","out":"inserted 1 triple","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""}],"wal_bytes":404,"snapshot_bytes":2187},{"kind":"delete","cmd":"PREFIX ub: <http://example.edu/univ#> DELETE DATA { ub:Alice a ub:Student . }","out":"deleted 1 triple","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""},{"lsn":118,"txn":5,"kind":"begin","body":""},{"lsn":119,"txn":5,"kind":"update","body":"delete (8 2 9)"},{"lsn":120,"txn":5,"kind":"commit","body":""}],"wal_bytes":532,"snapshot_bytes":2187},{"kind":"crash","cmd":"\\crash","out":"","cut":10,"before":{"wal_bytes":532,"snapshot_bytes":2187},"wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""},{"lsn":118,"txn":5,"kind":"begin","body":""},{"lsn":119,"txn":5,"kind":"update","body":"delete (8 2 9)"},{"lsn":120,"txn":5,"kind":"commit","body":""}],"wal_bytes":522,"snapshot_bytes":2187},{"kind":"restart","cmd":"ontodb mydb","out":"opened mydb: snapshot at lsn 109 (55 triples); wal 10 records, 2 committed, 1 uncommitted dropped; 57 triples\nwarning: wal stopped: log record: buffer shorter than the record at byte 499; discarded 23 bytes after the last valid record","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""},{"lsn":118,"txn":5,"kind":"begin","body":""},{"lsn":119,"txn":5,"kind":"update","body":"delete (8 2 9)"}],"wal_bytes":499,"snapshot_bytes":2187},{"kind":"query","cmd":"PREFIX ub: <http://example.edu/univ#> SELECT ?s WHERE { ?s a ub:Student }","out":"?s\n<http://example.edu/univ#Alice>\n<http://example.edu/univ#Bob>\n<http://example.edu/univ#Cara>\n<http://example.edu/univ#Fay>\n<http://example.edu/univ#Gus>\n<http://example.edu/univ#Hal>\n(6 rows)","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""},{"lsn":118,"txn":5,"kind":"begin","body":""},{"lsn":119,"txn":5,"kind":"update","body":"delete (8 2 9)"}],"wal_bytes":499,"snapshot_bytes":2187},{"kind":"verify","cmd":"\\verify","out":"snapshot: ok (lsn 109, 50 terms, 55 triples)\nwal: ok (10 records, 499 bytes)\nreplay: matches the live database (57 triples)\ninvariants: ok (no duplicate triples, every id in the dictionary)\nverify: ok","wal":[{"lsn":110,"txn":3,"kind":"begin","body":""},{"lsn":111,"txn":3,"kind":"term","body":"51 <http://example.edu/univ#Gus>"},{"lsn":112,"txn":3,"kind":"update","body":"insert (51 2 9)"},{"lsn":113,"txn":3,"kind":"commit","body":""},{"lsn":114,"txn":4,"kind":"begin","body":""},{"lsn":115,"txn":4,"kind":"term","body":"52 <http://example.edu/univ#Hal>"},{"lsn":116,"txn":4,"kind":"update","body":"insert (52 2 9)"},{"lsn":117,"txn":4,"kind":"commit","body":""},{"lsn":118,"txn":5,"kind":"begin","body":""},{"lsn":119,"txn":5,"kind":"update","body":"delete (8 2 9)"}],"wal_bytes":499,"snapshot_bytes":2187}]},"semantic":{"loaded":"loaded 2043 triples in 16.8602 ms","hindex":"labelled 834 classes (834 after collapsing cycles), 1209 edges, 376 outside the spanning forest; 1411 intervals, at most 58 per class; 0.609625 ms","under":["576 classes at or below <http://purl.obolibrary.org/obo/GO_0006629> (1 range scans, 0.027666 ms)\n  <http://purl.obolibrary.org/obo/GO_0000038>  \"very long-chain fatty acid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0006631>  \"fatty acid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0001516>  \"prostaglandin biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0006693>  \"prostaglandin metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0046457>  \"prostanoid biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0001523>  \"retinoid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0016101>  \"diterpenoid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0001561>  \"fatty acid alpha-oxidation\"\n  <http://purl.obolibrary.org/obo/GO_0009062>  \"fatty acid catabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0019395>  \"fatty acid oxidation\"\n  <http://purl.obolibrary.org/obo/GO_0001572>  \"lactosylceramide biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0006688>  \"glycosphingolipid biosynthetic process\"\n... 564 more","85 classes at or below <http://purl.obolibrary.org/obo/GO_0006631> (3 range scans, 0.006417 ms)\n  <http://purl.obolibrary.org/obo/GO_0000038>  \"very long-chain fatty acid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0006631>  \"fatty acid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0001516>  \"prostaglandin biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0006693>  \"prostaglandin metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0046457>  \"prostanoid biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0001561>  \"fatty acid alpha-oxidation\"\n  <http://purl.obolibrary.org/obo/GO_0009062>  \"fatty acid catabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0019395>  \"fatty acid oxidation\"\n  <http://purl.obolibrary.org/obo/GO_0001676>  \"long-chain fatty acid metabolic process\"\n  <http://purl.obolibrary.org/obo/GO_0006633>  \"fatty acid biosynthetic process\"\n  <http://purl.obolibrary.org/obo/GO_0006635>  \"fatty acid beta-oxidation\"\n  <http://purl.obolibrary.org/obo/GO_0006636>  \"unsaturated fatty acid biosynthetic process\"\n... 73 more"],"vload":"read 834 vectors of 384 floats, kept 834, skipped 0 whose term is not in the dictionary; 7.23971 ms. Search is exact until \\vindex build.","vindex":"ivf: 116 lists in a B+ tree, 0.105672 s\nhnsw: M=16, 3 layers, 0.129909 s","similar":"nearest to <http://purl.obolibrary.org/obo/GO_0001523>  \"retinoid metabolic process\" [hnsw, 66.375 us]\n  0.976  <http://purl.obolibrary.org/obo/GO_0042572>  \"retinol metabolic process\"\n  0.925  <http://purl.obolibrary.org/obo/GO_0042573>  \"retinoic acid metabolic process\"\n  0.819  <http://purl.obolibrary.org/obo/GO_0034653>  \"retinoic acid catabolic process\"\n  0.790  <http://purl.obolibrary.org/obo/GO_0042905>  \"9-cis-retinoic acid metabolic process\"\n  0.777  <http://purl.obolibrary.org/obo/GO_0002138>  \"retinoic acid biosynthetic process\"\n  0.766  <http://purl.obolibrary.org/obo/GO_0042574>  \"retinal metabolic process\"","similar_under":"nearest to <http://purl.obolibrary.org/obo/GO_0001523>  \"retinoid metabolic process\", under <http://purl.obolibrary.org/obo/GO_0006631> [pre-filter, 96.167 us]\n  0.570  <http://purl.obolibrary.org/obo/GO_0006692>  \"prostanoid metabolic process\"\n  0.558  <http://purl.obolibrary.org/obo/GO_0019541>  \"propionate metabolic process\"\n  0.523  <http://purl.obolibrary.org/obo/GO_0006631>  \"fatty acid metabolic process\"\n  0.517  <http://purl.obolibrary.org/obo/GO_0006693>  \"prostaglandin metabolic process\"\n  0.497  <http://purl.obolibrary.org/obo/GO_0009106>  \"lipoate metabolic process\"\n  0.478  <http://purl.obolibrary.org/obo/GO_0033559>  \"unsaturated fatty acid metabolic process\""},"bench":{"machine":"Apple M2 Pro, 16 GiB, release builds, 2026-10-22. See [question.md](question.md). Rerun with `benchmarks/compare/run.sh`.","engines":["OntoDB","Oxigraph (RocksDB)","Oxigraph (memory)","Jena TDB2","SQLite"],"load":[{"engine":"OntoDB","triples":"1,316,700","load":"11.41","disk":"133.7","rss":"584"},{"engine":"Oxigraph (RocksDB)","triples":"1,272,953","load":"2.04","disk":"176.3","rss":"78"},{"engine":"Oxigraph (memory)","triples":"1,272,953","load":"2.44","disk":"0.0","rss":"563"},{"engine":"Jena TDB2","triples":"1,272,953","load":"6.13","disk":"363.0","rss":"1447"},{"engine":"SQLite","triples":"1,272,953","load":"8.08","disk":"706.1","rss":"32"}],"queries":[{"name":"q01","rows":4,"us":{"OntoDB":9.0,"Oxigraph (RocksDB)":32.0,"Oxigraph (memory)":12.0,"Jena TDB2":508.0,"SQLite":18.0}},{"name":"q02","rows":28,"us":{"OntoDB":8200.0,"Oxigraph (RocksDB)":275100.0,"Oxigraph (memory)":34100.0,"Jena TDB2":120100.0,"SQLite":4000.0}},{"name":"q03","rows":6,"us":{"OntoDB":11.0,"Oxigraph (RocksDB)":37.0,"Oxigraph (memory)":13.0,"Jena TDB2":234.0,"SQLite":18.0}},{"name":"q04","rows":0,"us":{"OntoDB":4.0,"Oxigraph (RocksDB)":116.0,"Oxigraph (memory)":34.0,"Jena TDB2":250.0,"SQLite":41.0}},{"name":"q05","rows":0,"us":{"OntoDB":1.0,"Oxigraph (RocksDB)":1500.0,"Oxigraph (memory)":185.0,"Jena TDB2":524.0,"SQLite":12.0}},{"name":"q06","rows":0,"us":{"OntoDB":0.0,"Oxigraph (RocksDB)":11.0,"Oxigraph (memory)":8.0,"Jena TDB2":163.0,"SQLite":8.0}},{"name":"q07","rows":0,"us":{"OntoDB":3.0,"Oxigraph (RocksDB)":166.0,"Oxigraph (memory)":28.0,"Jena TDB2":220.0,"SQLite":32.0}},{"name":"q08","rows":0,"us":{"OntoDB":4.0,"Oxigraph (RocksDB)":20600.0,"Oxigraph (memory)":2000.0,"Jena TDB2":3700.0,"SQLite":43.0}},{"name":"q09","rows":0,"us":{"OntoDB":5.0,"Oxigraph (RocksDB)":28.0,"Oxigraph (memory)":18.0,"Jena TDB2":186.0,"SQLite":77.0}},{"name":"q10","rows":0,"us":{"OntoDB":1.0,"Oxigraph (RocksDB)":24.0,"Oxigraph (memory)":10.0,"Jena TDB2":161.0,"SQLite":15.0}},{"name":"q11","rows":0,"us":{"OntoDB":21.0,"Oxigraph (RocksDB)":51.0,"Oxigraph (memory)":14.0,"Jena TDB2":170.0,"SQLite":934.0}},{"name":"q12","rows":0,"us":{"OntoDB":3.0,"Oxigraph (RocksDB)":1300.0,"Oxigraph (memory)":255.0,"Jena TDB2":446.0,"SQLite":336.0}},{"name":"q13","rows":0,"us":{"OntoDB":1.0,"Oxigraph (RocksDB)":16.0,"Oxigraph (memory)":9.0,"Jena TDB2":154.0,"SQLite":16.0}},{"name":"q14","rows":75547,"us":{"OntoDB":46000.0,"Oxigraph (RocksDB)":88100.0,"Oxigraph (memory)":40800.0,"Jena TDB2":138700.0,"SQLite":29300.0}}],"go":[{"bucket":"1","answers":"10","us":{"OntoDB ids":1.0,"OntoDB":11.0,"Oxigraph (RocksDB)":37.0,"Oxigraph (memory)":13.0}},{"bucket":"2-9","answers":"40","us":{"OntoDB ids":3.0,"OntoDB":42.0,"Oxigraph (RocksDB)":91.0,"Oxigraph (memory)":23.0}},{"bucket":"10-99","answers":"278","us":{"OntoDB ids":10.0,"OntoDB":275.0,"Oxigraph (RocksDB)":539.0,"Oxigraph (memory)":110.0}},{"bucket":"100-999","answers":"2954","us":{"OntoDB ids":127.0,"OntoDB":2891.0,"Oxigraph (RocksDB)":5421.0,"Oxigraph (memory)":1135.0}},{"bucket":"1000+","answers":"29904","us":{"OntoDB ids":1742.0,"OntoDB":29077.0,"Oxigraph (RocksDB)":60578.0,"Oxigraph (memory)":21815.0}}],"conc":[{"engine":"OntoDB","lookups":[416050,767222,1250348,1464779],"inserts":[264382,450459,693411,950481]},{"engine":"Oxigraph (RocksDB)","lookups":[43594,91866,137110,208977],"inserts":[90566,51494,99445,105118]},{"engine":"Oxigraph (memory)","lookups":[96048,175432,256917,459776],"inserts":[678869,415591,195710,185828]},{"engine":"Jena TDB2","lookups":[78280,147564,251154,241599],"inserts":[16,15,15,15]},{"engine":"SQLite","lookups":[141488,256339,391720,375194],"inserts":[14949,24719,23373,14418]}]}}</script>
+<script>
+// Small helpers for the showcases: DOM, tabs, bars, a line chart. Everything is drawn from recorded data.
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  if (tag === "button") el.type = "button";
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") el.className = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
+}
+const f2 = (x) => (x == null ? "–" : Number(x).toFixed(2));
+const usd = (x) => (x ? "$" + Number(x).toFixed(2) : "–");
+
+// Tabs: <nav class="tabs"><button data-tab="id">…</button></nav> and <section class="tab" id="tab-id">. The hash picks a tab.
+function tabs(onShow = {}) {
+  const buttons = $$("nav.tabs button");
+  const show = (id) => {
+    buttons.forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === id)));
+    $$("section.tab").forEach((s) => (s.hidden = s.id !== "tab-" + id));
+    if (onShow[id]) onShow[id]();
+    history.replaceState(null, "", "#" + id);
+  };
+  buttons.forEach((b) => b.addEventListener("click", () => show(b.dataset.tab)));
+  window.addEventListener("hashchange", () => {
+    const id = location.hash.slice(1);
+    if (buttons.some((b) => b.dataset.tab === id)) { show(id); scrollTo({ top: 0 }); }
+  });
+  const start = location.hash.slice(1);
+  show(buttons.some((b) => b.dataset.tab === start) ? start : buttons[0].dataset.tab);
+}
+
+// Horizontal bars: rows of {label, value, max?, alt?, text?}. Values are shown as given.
+function bars(el, rows, { max = 1, labelWidth = "7em" } = {}) {
+  el.className = "bars";
+  el.style.setProperty("--lw", labelWidth);
+  el.replaceChildren(
+    ...rows.map((r) => {
+      const row = h("div", { class: "bar" + (r.alt ? " alt" : "") }, h("span", {}, r.label), h("i"), h("b", {}, r.text ?? f2(r.value)));
+      row.children[1].style.setProperty("--w", Math.max(0, Math.min(100, (r.value / (r.max ?? max)) * 100)) + "%");
+      return row;
+    }),
+  );
+}
+
+// Line chart: series of {name, color, points:[[x, y], …]}; x values are the same across series or sorted.
+function lineChart(el, series, { xLabel = "", yLabel = "", yMax = 1, xTicks, width = 560, height = 260 } = {}) {
+  const m = { l: 40, r: 12, t: 26, b: 34 };
+  const xs = [...new Set(series.flatMap((s) => s.points.map((p) => p[0])))].sort((a, b) => a - b);
+  const x0 = xs[0], x1 = xs[xs.length - 1] || 1;
+  const X = (x) => m.l + ((x - x0) / (x1 - x0 || 1)) * (width - m.l - m.r);
+  const Y = (y) => height - m.b - (y / yMax) * (height - m.t - m.b);
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("role", "img");
+  const add = (tag, attrs, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (text != null) n.textContent = text;
+    svg.append(n);
+    return n;
+  };
+  for (let i = 0; i <= 4; i++) {
+    const y = (yMax * i) / 4;
+    add("line", { class: "grid", x1: m.l, x2: width - m.r, y1: Y(y), y2: Y(y) });
+    add("text", { x: m.l - 6, y: Y(y) + 4, "text-anchor": "end" }, +y.toFixed(2));
+  }
+  for (const x of xTicks || xs) {
+    add("text", { x: X(x), y: height - m.b + 16, "text-anchor": "middle" }, x);
+  }
+  add("line", { class: "axis", x1: m.l, x2: width - m.r, y1: Y(0), y2: Y(0) });
+  if (xLabel) add("text", { x: (m.l + width - m.r) / 2, y: height - 4, "text-anchor": "middle" }, xLabel);
+  if (yLabel) add("text", { x: m.l - 34, y: 12, "text-anchor": "start" }, yLabel);
+  for (const s of series) {
+    const d = s.points.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(" ");
+    add("path", { class: "line", d, style: `stroke:${s.color}`, ...(s.dash ? { "stroke-dasharray": s.dash } : {}) });
+    for (const p of s.points) {
+      const dot = add("circle", { class: "dot", cx: X(p[0]), cy: Y(p[1]), r: 3.5, style: `fill:${s.color}` });
+      const title = document.createElementNS(NS, "title");
+      title.textContent = `${s.name}: ${f2(p[1])} at ${p[0]}`;
+      dot.append(title);
+    }
+  }
+  const legend = h("div", { class: "legend" }, series.map((s) => h("span", { style: `--c:${s.color}` }, h("i"), s.name)));
+  el.replaceChildren(svg, legend);
+}
+
+const D = JSON.parse(document.getElementById("data").textContent);
+const W = D.walk;
+const NS = "http://www.w3.org/2000/svg";
+const fmt = (n) => Number(n).toLocaleString("en-US");
+const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#", UB = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
+function short(iri) {
+  iri = String(iri).replace(/^<|>$/g, "");
+  if (iri.startsWith(RDF)) return "rdf:" + iri.slice(RDF.length);
+  if (iri.startsWith(UB)) return "ub:" + iri.slice(UB.length);
+  if (iri.startsWith("http://purl.obolibrary.org/obo/")) return iri.slice(31).replace("_", ":");
+  const m = iri.match(/[#/]([^#/]+)$/);
+  return m ? m[1] : iri;
+}
+const term = (id) => (W.terms[id] ? short(W.terms[id]) : "#" + id);
+function svgEl(tag, attrs = {}, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+const tip = $("#tip");
+function showTip(e, text) { tip.textContent = text; tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 12, innerWidth - 310) + "px"; tip.style.top = e.clientY + 14 + "px"; }
+const hideTip = () => (tip.style.display = "none");
+
+// ---------- hero ----------
+const fetches = W.steps.flatMap((s) => s.visits.flatMap((v) => v.pages));
+const misses = fetches.filter((p) => !p.hit).length;
+const leaves = W.trees.spo.levels.at(-1).length;
+$("#stats").append(
+  ...[
+    [fmt(W.triples), "", "distinct triples, one LUBM university"],
+    ["3", "× " + leaves + " leaves", "B+ trees: SPO, POS, OSP"],
+    [W.plan.plan.actual, "rows", `in ${W.plan.ms.toFixed(3)} ms (\\explain analyze)`],
+    [fmt(fetches.length), "pages", `fetched for query 1, ${misses} from disk`],
+  ].map(([b, s, t]) => h("div", { class: "stat" }, h("b", {}, String(b), s ? h("small", {}, s) : null), h("span", {}, t))),
+);
+$("#meta").append(
+  h("span", {}, "Recorded at commit ", h("b", {}, D.commit)),
+  h("span", {}, "Data ", h("b", {}, "LUBM University0_0"), ", ", h("b", {}, "tiny.ttl"), ", ", h("b", {}, "a Gene Ontology slice")),
+  h("span", {}, "Buffer pool ", h("b", {}, `${W.bpm.frames} frames, LRU-${W.bpm.k}`)),
+);
+
+// ---------- walkthrough: the steps ----------
+const HDR = {}; for (const [p, perm] of Object.entries(W.pages.header)) HDR[p] = perm;
+{ const first = Math.min(...Object.keys(HDR).map(Number)); ["spo", "pos", "osp"].forEach((p, i) => (HDR[first + i] = p)); }
+const NODE = {};
+for (const p of ["spo", "pos", "osp"]) W.trees[p].levels.forEach((lvl, d) => lvl.forEach((n, i) => (NODE[n.page] = { perm: p, depth: d, index: i, node: n })));
+const isIndex = (page) => page in NODE || page in HDR;
+const ROW_OF = {}; // ?X id -> output row index
+const outer = W.steps.find((s) => s.kind === "scan" && s.perm === "pos");
+outer.found.forEach((k, i) => (ROW_OF[k[2]] = i));
+
+const STAGES = ["Query", "Bind", "Statistics", "Plan", "Scan", "Join", "Rows"];
+const steps = [];
+steps.push({ stage: "Query", kind: "query", visits: [] });
+for (const s of W.steps) {
+  if (s.kind === "bind") steps.push({ stage: "Bind", ...s });
+  else if (s.kind === "stats") { steps.push({ stage: "Statistics", ...s }); steps.push({ stage: "Plan", kind: "plan", visits: [] }); }
+  else if (s.kind === "scan" && s.perm === "pos") steps.push({ stage: "Scan", ...s });
+  else steps.push({ stage: "Join", ...s });
+}
+steps.push({ stage: "Rows", kind: "rows", visits: [] });
+
+// Buffer pool state before each step, replayed from \bpm and the trace.
+const pool0 = {}; for (const [f, p] of Object.entries(W.bpm.resident)) pool0[f] = p;
+let pool = { ...pool0 }, tally = { hits: 0, misses: 0, evictions: 0 };
+const seenLeaves = new Set();
+for (const s of steps) {
+  s.poolBefore = { ...pool }; s.seenBefore = new Set(seenLeaves);
+  s.touch = {};
+  for (const v of s.visits) {
+    for (const p of v.pages) {
+      if (p.hit) { tally.hits++; const f = Object.keys(pool).find((k) => pool[k] === p.page); if (f != null) s.touch[f] = s.touch[f] || "hit"; }
+      else { tally.misses++; pool[p.frame] = p.page; s.touch[p.frame] = "miss"; }
+      if (NODE[p.page] && NODE[p.page].node.leaf) seenLeaves.add(p.page);
+    }
+    tally.evictions += v.evictions.length;
+  }
+  s.pool = { ...pool }; s.tally = { ...tally };
+  s.evictions = s.visits.flatMap((v) => v.evictions);
+  s.pages = s.visits.flatMap((v) => v.pages);
+}
+
+// ---------- walkthrough: what each step says ----------
+const pageWord = (p) => (p.hit ? "in the pool" : "read from disk");
+function pagesSummary(s) {
+  const m = s.pages.filter((p) => !p.hit).length;
+  return m === 0 ? `All ${s.pages.length} pages were already in the pool.` : m === s.pages.length ? `None of the ${s.pages.length} pages were in the pool; each was read from disk.` : `${s.pages.length - m} of the ${s.pages.length} pages were in the pool; ${m} ${m === 1 ? "was" : "were"} read from disk.`;
+}
+function note(s, i) {
+  const ids = W.ids;
+  switch (s.kind) {
+    case "query":
+      return ["Two patterns that share ?X",
+        `The query asks for the graduate students who take <b>GraduateCourse0</b>. The store holds <b>${fmt(W.triples)}</b> distinct triples from one LUBM university, and keeps each one three times, in SPO, POS and OSP order, so that any pattern with some positions bound is a range scan in one of them.`,
+        "Each tree has one root over 51 leaves of up to 169 keys. A key is three 64-bit term ids; the strings live in a separate dictionary."];
+    case "bind": {
+      const first = steps.findIndex((x) => x.kind === "bind") === i;
+      return [`${short(s.term)} is id ${s.id}`,
+        first ? `Indexes store ids, so the binder first looks up each IRI in the query. The dictionary hashes the spelling and finds the candidate id in its <b>spelling</b> tree, then finds where that id's text lives in its <b>terms</b> tree, and reads the heap page to check the spelling really matches.` :
+          `The same three lookups for <code>${short(s.term)}</code>: spelling tree, terms tree, heap page. It is id <b>${s.id}</b>.`,
+        pagesSummary(s)];
+    }
+    case "stats": {
+      const m = s.pages.filter((p) => !p.hit).length;
+      return ["The first query after a load counts first",
+        `Before planning, the database collects the optimizer's statistics, because none exist since the load: one pass over every SPO leaf, counting triples per subject, predicate, object and pair. That is a full scan of <b>${s.leaves.length}</b> leaves.`,
+        `${m} of its ${s.pages.length} page fetches missed the pool, and LRU-K evicted <b>${s.evictions.length}</b> pages to make room${s.evictions.every((e) => e.kdist === "inf") ? `: every victim had been used fewer than K = ${W.bpm.k} times, so its backward k-distance was infinite` : ""}. A second query would skip this pass.`];
+    }
+    case "plan": {
+      const [a, b] = W.plan.plan.kids[0].kids;
+      return ["Start from the smaller side",
+        `With the counts in hand, the optimizer estimates each pattern. <code>?X ub:takesCourse GraduateCourse0</code>: <b>${a.est}</b> triples. <code>?X rdf:type ub:GraduateStudent</code>: <b>${b.est}</b>.`,
+        `It chooses an <b>index nested-loop join</b>: scan the ${a.est} triples once, and for each one probe the other pattern with ?X bound, instead of reading all ${b.est} graduate students.`];
+    }
+    case "scan": {
+      const leaf = NODE[s.leaf];
+      return ["A range scan in POS",
+        `The outer pattern binds the predicate and the object, so its triples sit together in POS order, under keys that start with <code>(${s.range.join(", ")})</code>: <code>takesCourse</code> then <code>GraduateCourse0</code>.`,
+        `The scan descends from the header page through root ${W.trees.pos.root} to leaf ${s.leaf}, then reads forward from the first matching key: <b>${s.found.length}</b> keys match, and their third id is ?X. ${pagesSummary(s)}`];
+    }
+    case "decode": {
+      return [`Row ${ROW_OF[s.id] + 1}: ${short(s.term)}`,
+        `The row leaves the plan as id <b>${s.id}</b>, and the shell prints text. The terms tree maps the id to its slot on a heap page, and that page holds the spelling.`,
+        pagesSummary(s)];
+    }
+    case "rows": {
+      const t = s.tally;
+      return [`${W.plan.plan.actual} rows`,
+        `The estimate was ${W.plan.plan.est} rows and the join produced ${W.plan.plan.actual}. Answering took <b>${fmt(t.hits + t.misses)}</b> page fetches: ${fmt(t.hits)} hits and ${fmt(t.misses)} misses, ${s.steps_stats} of them in the statistics pass.`,
+        (() => {
+          const join = steps.filter((x) => x.stage === "Scan" || x.stage === "Join").flatMap((x) => x.pages);
+          const dm = join.filter((p) => !p.hit && !isIndex(p.page)).length, im = join.filter((p) => !p.hit && isIndex(p.page)).length;
+          return `Outside that pass, the scan, the probes and the decodes fetched ${join.length} pages and read ${im} index page${im === 1 ? "" : "s"} from disk; ${dm ? dm + " dictionary pages missed too" : "every dictionary page was already in the pool"}.`;
+        })()];
+    }
+    default: {
+      const x = s.probe[0];
+      const ok = s.found.length > 0;
+      return [`Probe SPO for ${term(x)}`,
+        `For ?X = <code>${term(x)}</code> (id ${x}), the join probes SPO for the exact key <code>(${s.probe.join(", ")})</code>: is this student a GraduateStudent? It descends root ${W.trees.spo.root} to leaf ${s.leaf}.`,
+        `${ok ? "The key is there, so the row survives." : "The key is missing, so the row is dropped."} ${pagesSummary(s)}`];
+    }
+  }
+}
+steps.at(-1).steps_stats = steps.find((s) => s.kind === "stats").pages.filter((p) => !p.hit).length;
+
+// ---------- walkthrough: drawing ----------
+function renderRail(i) {
+  const cur = STAGES.indexOf(steps[i].stage);
+  $("#wrail").replaceChildren(...STAGES.flatMap((name, k) => {
+    const b = h("button", { class: "stg" + (k < cur ? " past" : k === cur ? " on" : ""), onclick: () => go(steps.findIndex((s) => s.stage === name)) }, h("span", { class: "dot" }, String(k + 1)), name);
+    return k ? [h("span", { class: "rail-line" + (k <= cur ? " past" : "") }), b] : [b];
+  }));
+}
+function renderNote(s, i) {
+  const [title, ...ps] = note(s, i);
+  const kids = [h("div", { class: "hd" }, h("span", { class: "wstep" }, `step ${i + 1} / ${steps.length}`), h("span", { class: "wtag" }, s.stage)), h("h3", {}, title), ...ps.map((p) => h("p", { html: p }))];
+  if (s.kind === "query") kids.splice(2, 0, h("div", { class: "qtext", html: prettyQuery(W.query) }));
+  $("#wnote").replaceChildren(...kids);
+}
+function prettyQuery(q) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc(q.replace(/PREFIX \S+ <[^>]+> /g, "").replace(/<http:\/\/www\.Department0\.University0\.edu\/([^>]+)>/, "&lt;…/$1&gt;"))
+    .replace(/&amp;lt;/g, "&lt;").replace(/&amp;gt;/g, "&gt;")
+    .replace(/\b(SELECT|WHERE)\b/g, '<span class="kw">$1</span>').replace(/(\?X)/g, '<span class="v">$1</span>')
+    .replace(" . ", " .<br>&nbsp;&nbsp;").replace("{ ", "{<br>&nbsp;&nbsp;").replace(" }", "<br>}");
+}
+function planNodes(node, d, active, out = []) {
+  const det = node.detail.replace(/<([^>]+)>/g, (_, iri) => short(iri));
+  const nums = [h("span", {}, "est " + node.est), node.actual != null ? h("span", {}, "actual " + node.actual) : h("span", {}, "probed by the join")];
+  out.push(h("div", { class: "pn" + (active.includes(node) ? " on" : ""), style: `--d:${d}` }, h("div", { class: "op" }, node.op), det ? h("div", { class: "det" }, det) : null, h("div", { class: "nums" }, nums)));
+  node.kids.forEach((k) => planNodes(k, d + 1, active, out));
+  return out;
+}
+function renderPlan(s) {
+  const root = W.plan.plan, join = root.kids[0], [a, b] = join.kids;
+  const active = { scan: [a], probe: [join, b], decode: [root], rows: [root, join, a, b], plan: [join] }[s.kind === "scan" && s.perm === "spo" ? "probe" : s.kind] || [];
+  const before = ["query", "bind", "stats"].includes(s.kind);
+  $("#wplan").replaceChildren(...(before ? [h("p", { class: "note", style: "margin:0" }, s.kind === "stats" ? "The optimizer is waiting for these counts." : "Not planned yet: the binder runs first.")] : planNodes(root, 0, active)));
+  $("#plan-m").textContent = before ? "" : `\\explain analyze, ${W.plan.ms.toFixed(3)} ms`;
+}
+function renderPool(s) {
+  const owner = (page) => (isIndex(page) ? "idx" : "");
+  const cells = [];
+  for (let f = 0; f < W.bpm.frames; f++) {
+    const page = s.pool[f], t = s.touch[f];
+    const c = h("div", { class: `fr ${owner(page)} ${t || ""}`, title: `frame ${f}: page ${page}${isIndex(page) ? " (" + (NODE[page] ? NODE[page].perm + (NODE[page].node.leaf ? " leaf" : " root") : HDR[page] + " header") + ")" : " (dictionary)"}${t ? ", " + t : ""}` }, String(page));
+    cells.push(c);
+  }
+  const ev = s.evictions.slice(0, 6).map((e) => `page ${e.page} (k-distance ${e.kdist})`).join(", ");
+  $("#wbpm").replaceChildren(...[
+    h("div", { class: "frames" }, cells),
+    h("div", { class: "bpm-key" },
+      h("span", { style: "--c:var(--primary-10)" }, h("i"), "index page"),
+      h("span", { style: "--c:var(--dict-10)" }, h("i"), "dictionary page"),
+      h("span", { style: "--c:var(--bg);--b:var(--primary)" }, h("i"), "hit this step"),
+      h("span", { style: "--c:var(--warn-bg);--b:var(--warn)" }, h("i"), "read from disk this step")),
+    h("div", { class: "counts" }, [["hits", s.tally.hits], ["misses", s.tally.misses], ["evictions", s.tally.evictions], ["this step", s.pages.length]].map(([k, v]) => h("div", {}, h("b", {}, fmt(v)), h("span", {}, k)))),
+    s.evictions.length ? h("div", { class: "evlist" }, `evicted: ${ev}${s.evictions.length > 6 ? `, and ${s.evictions.length - 6} more` : ""}`) : null,
+  ].filter(Boolean));
+  $("#bpm-m").textContent = "cumulative since the query began";
+}
+function renderStore(s) {
+  const Wd = 700, x0 = 92, x1 = Wd - 8, nL = leaves, lw = (x1 - x0) / nL;
+  const svg = svgEl("svg", { viewBox: `0 0 ${Wd} 330`, role: "img", "aria-label": "The three triple indexes and the dictionary, with the pages this step fetched" });
+  const touched = new Map(s.pages.map((p) => [p.page, p]));
+  ["spo", "pos", "osp"].forEach((perm, r) => {
+    const y = 8 + r * 80, t = W.trees[perm], lvl = t.levels.at(-1);
+    const hdr = Object.keys(HDR).find((k) => HDR[k] === perm);
+    const used = s.pages.some((p) => NODE[p.page]?.perm === perm || HDR[p.page] === perm);
+    const g = svgEl("g", { class: used || !s.pages.length ? "" : "dim" });
+    g.append(svgEl("text", { class: "lbl", x: 0, y: y + 14 }, perm.toUpperCase()));
+    g.append(svgEl("text", { class: "pg", x: 0, y: y + 28 }, "header " + hdr));
+    const hp = touched.get(+hdr);
+    g.append(svgEl("rect", { class: "node" + (hp ? " on" + (hp.hit ? "" : " miss") : ""), x: 40, y: y + 34, width: 40, height: 16, rx: 4 }));
+    g.append(svgEl("text", { class: "pg" + (hp ? " on" : ""), x: 60, y: y + 46, "text-anchor": "middle" }, "hdr"));
+    const rp = touched.get(t.root);
+    g.append(svgEl("rect", { class: "node" + (rp ? " on" + (rp.hit ? "" : " miss") : ""), x: x0, y: y + 2, width: x1 - x0, height: 18, rx: 4 }));
+    t.levels[0][0].seps.forEach((_, k) => g.append(svgEl("line", { class: "sep", x1: x0 + (k + 1) * lw, x2: x0 + (k + 1) * lw, y1: y + 2, y2: y + 20, style: rp ? "stroke:var(--bg)" : "" })));
+    g.append(svgEl("text", { class: "pg" + (rp ? " on" : ""), x: x0 + 6, y: y + 15 }, `root ${t.root} · ${t.levels[0][0].seps.length} separators`));
+    lvl.forEach((leaf, k) => {
+      const lp = touched.get(leaf.page);
+      const lx = x0 + k * lw;
+      if (lp && s.kind !== "stats") g.append(svgEl("path", { class: "path" + (lp.hit ? "" : " miss"), d: `M${lx + lw / 2} ${y + 20} L${lx + lw / 2} ${y + 34}` }));
+      const r2 = svgEl("rect", { class: "leaf" + (s.seenBefore.has(leaf.page) ? " seen" : "") + (lp ? " on" + (lp.hit ? "" : " miss") : ""), x: lx + 0.6, y: y + 34, width: lw - 1.2, height: 26, rx: 2 });
+      const tt = svgEl("title", {}, `${perm} leaf ${leaf.page}: ${leaf.count} keys (${leaf.first.join(",")})..(${leaf.last.join(",")})`);
+      r2.append(tt); g.append(r2);
+    });
+    g.append(svgEl("text", { class: "pg", x: x0, y: y + 72 }, `${lvl.length} leaves, pages ${lvl[0].page}–${lvl.at(-1).page}`));
+    if (hp && rp) g.append(svgEl("path", { class: "path" + (rp.hit ? "" : " miss"), d: `M80 ${y + 42} L${x0} ${y + 11}` }));
+    svg.append(g);
+  });
+  // The dictionary: two trees and a heap, drawn as the pages this step fetched.
+  const y = 250;
+  const dp = s.pages.filter((p) => !isIndex(p.page));
+  const g = svgEl("g", { class: dp.length || !s.pages.length ? "" : "dim" });
+  g.append(svgEl("text", { class: "lbl", x: 0, y: y + 14 }, "DICTIONARY"));
+  g.append(svgEl("text", { class: "pg", x: 0, y: y + 28 }, "term ↔ id"));
+  const parts = [["spelling", W.pages.spelling, "hash → id"], ["terms", W.pages.terms, "id → heap slot"], ["heap", W.pages.heap, "spellings"]];
+  const bw = (x1 - x0 - 20) / 3;
+  const visitOf = (first) => s.visits.find((v) => v.pages[0].page === first);
+  parts.forEach(([name, first, role], k) => {
+    const bx = x0 + k * (bw + 10);
+    const v = name === "heap" ? s.visits.find((v) => v.pages.length === 1 && !isIndex(v.pages[0].page)) : visitOf(first);
+    g.append(svgEl("rect", { class: "dnode" + (v ? " on" : ""), x: bx, y: y + 2, width: bw, height: 44, rx: 6 }));
+    g.append(svgEl("text", { class: v ? "on" : "", x: bx + 10, y: y + 19, style: "font-weight:600" }, name === "heap" ? "term heap" : name + " tree"));
+    g.append(svgEl("text", { class: "pg" + (v ? " on" : ""), x: bx + 10, y: y + 36 }, v ? v.pages.map((p) => p.page).join(" → ") : role));
+  });
+  svg.append(g);
+  $("#wstore").replaceChildren(svg);
+  $("#store-key").replaceChildren(
+    h("span", { style: "--c:var(--primary)" }, h("i"), "fetched, in the pool"),
+    h("span", { style: "--c:var(--warn)" }, h("i"), "fetched, read from disk"),
+    h("span", { style: "--c:var(--primary-15)" }, h("i"), "leaf read earlier"));
+}
+function keyRow(k, perm, n, found) {
+  const order = { spo: "spo", pos: "pos", osp: "osp" }[perm];
+  return h("tr", { class: found ? "found" : "" }, h("td", { class: "n" }, "#" + n), h("td", {}, `(${k.join(", ")})`), ...k.map((id) => h("td", {}, term(id))));
+}
+function renderDetail(s) {
+  const el = $("#wdetail"), H = $("#detail-h"), M = $("#detail-m");
+  M.textContent = "";
+  if (s.kind === "scan") {
+    const leaf = NODE[s.leaf].node, keys = leaf.keys, perm = s.perm;
+    const idx = s.found.map((f) => keys.findIndex((k) => k.join() === f.join()));
+    const lo = Math.max(0, (idx[0] ?? 0) - 3), hi = Math.min(keys.length, (idx.at(-1) ?? 0) + 4);
+    H.textContent = `${perm.toUpperCase()} leaf ${s.leaf}`; M.textContent = `${leaf.count} keys, in ${perm} order`;
+    const rows = [];
+    if (lo > 0) rows.push(h("tr", { class: "gap" }, h("td", { colspan: 5 }, `… ${lo} keys before`)));
+    for (let k = lo; k < hi; k++) rows.push(keyRow(keys[k], perm, k, idx.includes(k)));
+    if (hi < keys.length) rows.push(h("tr", { class: "gap" }, h("td", { colspan: 5 }, `… ${keys.length - hi} keys after`)));
+    const cols = perm.split("").map((c) => ({ s: "subject", p: "predicate", o: "object" })[c]);
+    el.replaceChildren(h("div", { class: "scroll" }, h("table", { class: "keys" }, h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "key"), ...cols.map((c) => h("th", {}, c)))), h("tbody", {}, rows))),
+      h("p", { class: "note", style: "margin:0" }, perm === "pos" ? "Matched keys are green. The scan stops at the first key past the range." : (s.found.length ? "The exact key is in this leaf." : "No such key in this leaf.")));
+    return;
+  }
+  if (s.kind === "bind" || s.kind === "decode") {
+    H.textContent = s.kind === "bind" ? "Dictionary lookup by spelling" : "Dictionary lookup by id";
+    const names = s.kind === "bind" ? ["spelling tree", "terms tree", "heap page"] : ["terms tree", "heap page"];
+    const whats = s.kind === "bind" ? ["hash of the spelling → candidate id", "id → page and slot of its text", "the stored spelling, compared"] : ["id → page and slot of its text", "the stored spelling"];
+    el.replaceChildren(h("div", { class: "chain" }, s.visits.map((v, k) => h("div", { class: "link" },
+      h("div", { class: "what" }, h("b", {}, names[k]), " · " + whats[k]),
+      h("div", { class: "pages" }, v.pages.flatMap((p, j) => [j ? h("span", { class: "arr" }, "→") : null, h("span", { class: "pg d" + (p.hit ? "" : " miss") }, h("small", {}, j === 0 && v.pages.length > 1 ? "header" : j === v.pages.length - 1 && v.pages.length > 1 ? "leaf" : v.pages.length === 1 ? "heap" : "root"), String(p.page))]))))),
+      h("div", { class: "result" }, s.kind === "bind" ? `<${short(s.term)}>  →  id ${s.id}` : `id ${s.id}  →  <${s.term}>`));
+    return;
+  }
+  if (s.kind === "stats") {
+    H.textContent = "The statistics pass"; M.textContent = `SPO, ${s.leaves.length} leaves`;
+    const m = s.pages.filter((p) => !p.hit).length;
+    el.replaceChildren(h("div", { class: "pages" }, s.visits.slice(0, 1).flatMap((v) => v.pages.map((p, j) => h("span", { class: "pg" + (p.hit ? "" : " miss") }, h("small", {}, ["header", "root", "leaf"][j]), String(p.page)))), h("span", { class: "arr" }, "→ next leaf ×" + (s.visits.length - 1))),
+      h("p", { class: "note", style: "margin:0" }, `${s.pages.length} fetches, ${m} misses. Each leaf links to its right sibling, so the scan walks the leaf level without going back through the root. The counts go into tables keyed by subject, predicate, object and each pair; the plan's estimates are read from them.`));
+    return;
+  }
+  if (s.kind === "plan") {
+    H.textContent = "Which index answers each pattern";
+    const [a, b] = W.plan.plan.kids[0].kids;
+    const row = (pat, bound, idx, est, role) => h("tr", {}, h("td", {}, pat), h("td", {}, bound), h("td", {}, idx), h("td", { class: "num" }, String(est)), h("td", {}, role));
+    el.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["pattern", "bound", "index", "est.", "role"].map((c) => h("th", { class: c === "est." ? "num" : "" }, c)))),
+      h("tbody", {}, row("?X takesCourse GraduateCourse0", "p, o", "POS", a.est, "outer, scanned once"), row("?X type GraduateStudent", "p, o, and s from the outer row", "SPO", b.est, "inner, probed per row")))));
+    return;
+  }
+  if (s.kind === "rows") {
+    H.textContent = "Result"; M.textContent = "as the shell printed it";
+    el.replaceChildren(h("pre", {}, W.rows));
+    return;
+  }
+  H.textContent = "Three indexes"; M.textContent = "one per order of (s, p, o)";
+  el.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["index", "root", "leaves", "first key", "last key"].map((c) => h("th", {}, c)))),
+    h("tbody", {}, ["spo", "pos", "osp"].map((p) => { const t = W.trees[p], l = t.levels.at(-1); return h("tr", {}, h("td", {}, p.toUpperCase()), h("td", { class: "num" }, String(t.root)), h("td", { class: "num" }, String(l.length)), h("td", { class: "mono" }, `(${l[0].first.join(",")})`), h("td", { class: "mono" }, `(${l.at(-1).last.join(",")})`)); })))),
+    h("p", { class: "note", style: "margin:0" }, W.loaded + " (8,555 statements in the file, " + fmt(W.triples) + " of them distinct)."));
+}
+let cur = 0, timer = null;
+function go(i) {
+  cur = Math.max(0, Math.min(steps.length - 1, i));
+  const s = steps[cur];
+  renderRail(cur); renderNote(s, cur); renderPlan(s); renderPool(s); renderStore(s); renderDetail(s);
+  $("#wscrub").value = cur;
+  $("#wctr").innerHTML = `<b>${cur + 1}</b> / ${steps.length} · ${s.stage}`;
+  $("#wprev").disabled = cur === 0; $("#wnext").disabled = cur === steps.length - 1;
+}
+$("#wscrub").max = steps.length - 1;
+$("#wscrub").addEventListener("input", (e) => go(+e.target.value));
+$("#wprev").onclick = () => go(cur - 1); $("#wnext").onclick = () => go(cur + 1); $("#wfirst").onclick = () => go(0);
+$("#wplay").onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; $("#wplay").textContent = "Play"; return; }
+  if (cur === steps.length - 1) go(0);
+  $("#wplay").textContent = "Pause";
+  timer = setInterval(() => { if (cur >= steps.length - 1) { $("#wplay").click(); return; } go(cur + 1); }, 2600);
+};
+document.addEventListener("keydown", (e) => {
+  if ($("#tab-walk").hidden || e.target.closest("input, select, textarea")) return;
+  if (e.key === "ArrowRight") { go(cur + 1); e.preventDefault(); } else if (e.key === "ArrowLeft") { go(cur - 1); e.preventDefault(); }
+});
+go(0);
+
+// ---------- plans ----------
+let planSel = 0;
+function renderPlans() {
+  $("#qlist").replaceChildren(...D.plans.map((p, i) => h("button", { class: "qbtn" + (p.plan.actual ? "" : " zero"), "aria-pressed": String(i === planSel), onclick: () => { planSel = i; renderPlans(); } },
+    h("b", {}, p.name), h("span", {}, p.note.replace(/^This query /, "")), h("em", {}, `${p.plan.actual} rows`))));
+  const p = D.plans[planSel];
+  const all = []; (function walk(n) { all.push(n); n.kids.forEach(walk); })(p.plan);
+  $("#qplan").replaceChildren(
+    h("h3", {}, `${p.name} · ${p.plan.actual} rows · ${(p.ms * 1000).toFixed(0)} µs`),
+    h("p", { class: "sub" }, p.note),
+    h("pre", {}, p.query.replace(/PREFIX \S+ <[^>]+> /g, "")),
+    h("div", { class: "plan", style: "padding:14px 0 0" }, planNodes(p.plan, 0, [])),
+    h("p", { class: "note" }, "Joins: " + ([...new Set(all.map((n) => n.op).filter((o) => o.includes("Join")))].join(", ") || "none") + ". Times are from this one-university file, not the benchmark."),
+  );
+}
+renderPlans();
+
+// ---------- crash and restart ----------
+const R = D.recovery.steps;
+const KIND_C = { begin: "var(--faint)", term: "var(--dict)", update: "var(--primary)", commit: "var(--ok)" };
+let rsel = 0;
+const crashAt = R.findIndex((s) => s.kind === "crash"), restartAt = R.findIndex((s) => s.kind === "restart");
+const lostLsn = new Set(R[crashAt].wal.map((r) => r.lsn).filter((l) => !R[restartAt].wal.some((r) => r.lsn === l)));
+const committed = (wal) => new Set(wal.filter((r) => r.kind === "commit").map((r) => r.txn));
+const droppedTxns = new Set(R[restartAt].wal.map((r) => r.txn).filter((t) => !committed(R[restartAt].wal).has(t)));
+const RNOTE = {
+  open: "A new directory. Nothing to recover: no snapshot, an empty log.",
+  load: "The load is one transaction: a begin, a term record for each new term, an update for each triple, a commit. All of it is forced to the log before the prompt comes back.",
+  insert: "Each statement is its own transaction, appended to the log and forced before the shell answers.",
+  checkpoint: "The checkpoint writes every term and triple to the snapshot and resets the log. A restart now reads the snapshot and replays only what came after it.",
+  delete: "A delete is logged the same way, as an update record with the triple's ids.",
+  crash: "<b>\\crash</b> exits without flushing or closing anything. Then the last 10 bytes of the log are cut off, so the final record, the delete's commit, is torn.",
+  restart: "On restart the snapshot is loaded and the log replayed. The torn record fails its length and checksum check, so replay stops there: the delete never committed, and it is dropped.",
+  query: "Fay, Gus and Hal are back, from the snapshot and the log. Alice is still a student, because the delete was never committed.",
+  verify: "<b>\\verify</b> rebuilds the database from the files alone and compares it with the live one.",
+};
+function renderCrash() {
+  const s = R[rsel];
+  $("#rdots").replaceChildren(...R.map((x, i) => h("button", { "aria-pressed": String(i === rsel), class: i < rsel ? "past" : "", onclick: () => { rsel = i; renderCrash(); } }, x.kind)));
+  $("#rprev").disabled = rsel === 0; $("#rnext").disabled = rsel === R.length - 1;
+  $("#rterm").replaceChildren(...R.map((x, i) => h("div", { class: "blk" + (i === rsel ? " on" : i > rsel ? " later" : "") },
+    h("div", { class: "cmd" + (x.cmd.startsWith("ontodb ") ? " sh" : "") }, x.cmd),
+    x.kind === "crash" ? h("div", { class: "out warn" }, `(process gone)\n$ truncate the log by ${x.cut} bytes   # ${x.before.wal_bytes} → ${x.wal_bytes}`) : null,
+    x.out ? h("div", { class: "out" + (/warning/.test(x.out) ? " warn" : "") }, x.out) : null)));
+  $("#rterm").querySelector(".blk.on")?.scrollIntoView({ block: "nearest" });
+  $("#rnote").innerHTML = RNOTE[s.kind] || "";
+  const max = Math.max(...R.map((x) => Math.max(x.wal_bytes, x.snapshot_bytes)));
+  $("#rfiles").replaceChildren(...[["snapshot", s.snapshot_bytes, "var(--dict)"], ["wal", s.wal_bytes, "var(--primary)"]].map(([n, b, c]) => {
+    const row = h("div", { class: "file" }, h("b", {}, n), h("i"), h("span", {}, fmt(b) + " B"));
+    row.children[1].style.setProperty("--w", (b / max) * 100 + "%"); row.children[1].style.setProperty("--c", c);
+    return row;
+  }));
+  const wal = s.wal;
+  const after = rsel >= restartAt;
+  const status = (r) => (s.kind === "crash" && lostLsn.has(r.lsn) ? "cut" : after && droppedTxns.has(r.txn) ? "dropped" : "");
+  const shown = s.kind === "crash" || after ? (after ? R[crashAt].wal : wal) : wal;
+  $("#rwal-sub").textContent = `${wal.length} records in the log${s.kind === "checkpoint" ? " after the reset" : ""}${after ? `; replay kept ${committed(wal).size} committed transactions and dropped ${droppedTxns.size}` : ""}.`;
+  $("#rtape").replaceChildren(...shown.map((r) => {
+    const st = after && lostLsn.has(r.lsn) ? "cut" : status(r);
+    const c = h("span", { class: "rec " + st, style: `--c:${KIND_C[r.kind] || "var(--faint)"}` });
+    c.addEventListener("mousemove", (e) => showTip(e, `lsn ${r.lsn} · txn ${r.txn} · ${r.kind} ${r.body}`)); c.addEventListener("mouseleave", hideTip);
+    return c;
+  }));
+  $("#rkey").replaceChildren(...Object.entries(KIND_C).map(([k, c]) => h("span", { style: `--c:${c}` }, h("i"), k)), ...(s.kind === "crash" || after ? [h("span", { style: "--c:var(--bad)" }, h("i"), "torn or dropped")] : []));
+  $("#rrecs").replaceChildren(...shown.slice(-14).map((r) => h("div", { class: after && (droppedTxns.has(r.txn) || lostLsn.has(r.lsn)) ? "dropped" : s.kind === "crash" && lostLsn.has(r.lsn) ? "dropped" : "" }, h("span", {}, "lsn " + r.lsn), h("span", {}, "txn " + r.txn), h("span", {}, r.kind), h("span", {}, r.body.replace(/<([^>]+)>/g, (_, i) => short(i))))));
+}
+$("#rprev").onclick = () => { rsel = Math.max(0, rsel - 1); renderCrash(); };
+$("#rnext").onclick = () => { rsel = Math.min(R.length - 1, rsel + 1); renderCrash(); };
+renderCrash();
+
+// ---------- hierarchy ----------
+function parseClasses(text) {
+  const [head, ...lines] = text.split("\n");
+  return { head, items: lines.filter((l) => l.startsWith("  ")).map((l) => { const m = l.match(/<([^>]+)>\s+"([^"]*)"/); return m ? { iri: m[1], label: m[2] } : null; }).filter(Boolean), more: (lines.find((l) => l.startsWith("...")) || "").trim() };
+}
+function parseSimilar(text) {
+  const [head, ...lines] = text.split("\n");
+  return { head, items: lines.map((l) => l.match(/^\s+([\d.]+)\s+<([^>]+)>\s+"([^"]*)"/)).filter(Boolean).map((m) => ({ score: +m[1], iri: m[2], label: m[3] })) };
+}
+{
+  const S = D.semantic;
+  const hi = S.hindex.match(/labelled (\d+) classes.*?(\d+) edges.*?(\d+) intervals, at most (\d+) per class; ([\d.]+) ms/);
+  const panels = S.under.map((u) => {
+    const p = parseClasses(u), m = p.head.match(/(\d+) classes at or below <([^>]+)> \((\d+) range scans?, ([\d.]+) ms\)/);
+    const root = p.items.find((x) => x.iri === m[2]);
+    return h("div", { class: "panel" },
+      h("h3", {}, `Under “${root ? root.label : short(m[2])}”`),
+      h("div", { class: "big" }, m[1], h("small", {}, `classes, ${m[3]} range scan${m[3] === "1" ? "" : "s"}, ${(+m[4] * 1000).toFixed(0)} µs`)),
+      h("p", { class: "sub", style: "margin:6px 0 10px" }, h("code", {}, `\\under ${short(m[2])}`), ` · ${m[3]} interval${m[3] === "1" ? "" : "s"} for this class`),
+      h("ul", { class: "cls" }, p.items.map((x) => h("li", {}, h("span", {}, x.label), h("small", {}, short(x.iri))))),
+      h("p", { class: "note" }, p.more));
+  });
+  const sims = [S.similar, S.similar_under].map((t, k) => {
+    const p = parseSimilar(t), m = p.head.match(/nearest to <[^>]+>\s+"([^"]+)"(?:, under <([^>]+)>)? \[([^,\]]+), ([\d.]+) us\]/);
+    const under = parseClasses(S.under[1]).items.find((x) => x.iri === m[2]);
+    return h("div", { class: "panel" },
+      h("h3", {}, k ? `Nearest to “${m[1]}”, under “${under ? under.label : short(m[2])}”` : `Nearest to “${m[1]}”, anywhere`),
+      h("p", { class: "sub" }, h("code", {}, k ? "\\similar … under …" : "\\similar …"), ` · ${m[3]}, ${(+m[4]).toFixed(0)} µs · cosine similarity`),
+      h("div", { class: "hits" }, p.items.map((x) => { const r = h("div", { class: "hit" }, h("span", { class: "sc" }, x.score.toFixed(3)), h("span", { class: "nm" }, x.label, h("small", {}, short(x.iri)))); r.children[1].style.setProperty("--w", x.score * 100 + "%"); return r; })),
+      h("p", { class: "note" }, k ? "The filter keeps only classes inside the fatty-acid branch, so the nearest retinoid terms drop out and the closest fatty-acid processes take their place." : "Retinoid metabolism sits in the lipid branch next to the retinol and retinoic-acid terms, which are the nearest by embedding."));
+  });
+  $("#hgrid").append(
+    h("div", { class: "panel", style: "grid-column:1/-1" }, h("h3", {}, "The index"), h("p", { class: "sub", style: "margin:0" },
+      `${fmt(hi[1])} classes and ${fmt(hi[2])} subclass edges become ${fmt(hi[3])} intervals, at most ${hi[4]} for one class, in ${(+hi[5]).toFixed(2)} ms. ${S.vload.split(";")[0]}; ${S.vindex.replace(/\n/g, "; ")}.`)),
+    ...panels, ...sims);
+}
+
+// ---------- benchmarks ----------
+const B = D.bench;
+const ECOL = { "OntoDB": "var(--e-ontodb)", "OntoDB ids": "var(--e-ontodb)", "Oxigraph (RocksDB)": "var(--e-oxrocks)", "Oxigraph (memory)": "var(--e-oxmem)", "Jena TDB2": "var(--e-jena)", "SQLite": "var(--e-sqlite)" };
+$("#bench-sub").innerHTML = "The numbers are from <code>benchmarks/compare/results.md</code>: " + B.machine.split(". See")[0] + ". Every engine runs the same queries over the same data; OntoDB returns ids or strings, the others strings.";
+const usFmt = (us) => (us == null ? "–" : us >= 1e6 ? (us / 1e6).toFixed(2) + " s" : us >= 1000 ? +(us / 1000).toFixed(1) + " ms" : Math.round(us) + " µs");
+function dotPlot(el, rows, series, { label, zero, ring = [], width = 700 }) {
+  const all = rows.flatMap((r) => series.map((s) => r.us[s])).filter((v) => v != null);
+  const lo = Math.pow(10, Math.floor(Math.log10(Math.max(0.5, Math.min(...all.filter((v) => v > 0)))))), hi = Math.pow(10, Math.ceil(Math.log10(Math.max(...all))));
+  const Wd = width, m = { l: 92, r: 14, t: 24 }, rh = 24, Ht = m.t + rows.length * rh + 8;
+  const X = (v) => m.l + ((Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))) * (Wd - m.l - m.r);
+  const svg = svgEl("svg", { viewBox: `0 0 ${Wd} ${Ht}`, role: "img", "aria-label": "Latency per query and engine, log scale" });
+  for (let d = lo; d <= hi; d *= 10) { svg.append(svgEl("line", { class: "grid", x1: X(d), x2: X(d), y1: m.t - 6, y2: Ht - 6 })); svg.append(svgEl("text", { x: X(d), y: 12, "text-anchor": "middle" }, usFmt(d))); }
+  rows.forEach((r, i) => {
+    const y = m.t + i * rh + rh / 2;
+    svg.append(svgEl("line", { class: "lane", x1: m.l, x2: Wd - m.r, y1: y, y2: y }));
+    svg.append(svgEl("text", { class: "q" + (zero && zero(r) ? " zero" : ""), x: 0, y: y + 4 }, label(r)));
+    for (const s of [...series].reverse()) {
+      const v = r.us[s]; if (v == null) continue;
+      const isRing = ring.includes(s);
+      const c = svgEl("circle", { cx: X(v), cy: y, r: s.startsWith("OntoDB") ? 6.5 : 5, class: isRing ? "ring" : "", style: isRing ? `stroke:${ECOL[s]}` : `fill:${ECOL[s]}` });
+      const hit = svgEl("circle", { cx: X(v), cy: y, r: 11, style: "fill:transparent;stroke:none" });
+      const txt = `${label(r)} · ${s}: ${usFmt(v)}`;
+      for (const n of [c, hit]) { n.addEventListener("mousemove", (e) => showTip(e, txt)); n.addEventListener("mouseleave", hideTip); }
+      svg.append(c, hit);
+    }
+  });
+  el.replaceChildren(svg, h("div", { class: "legend" }, series.map((s) => h("span", { style: `--c:${ECOL[s]}` }, h("i", ring.includes(s) ? { style: `background:var(--bg);box-shadow:inset 0 0 0 2px ${ECOL[s]}` } : {}), s))));
+}
+function table(el, head, rows) { el.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, head.map((c, i) => h("th", { class: i ? "num" : "" }, c)))), h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c, i) => h("td", { class: (i ? "num" : "") + (c && c.best ? " best" : "") }, c && c.t != null ? c.t : c))))))); }
+dotPlot($("#bq"), B.queries, B.engines, { label: (r) => `${r.name} · ${fmt(r.rows)}`, zero: (r) => !r.rows });
+table($("#bq-t"), ["query", "rows", ...B.engines], B.queries.map((r) => { const best = Math.min(...B.engines.map((e) => r.us[e])); return [r.name, fmt(r.rows), ...B.engines.map((e) => ({ t: usFmt(r.us[e]), best: r.us[e] === best }))]; }));
+const goSeries = ["OntoDB ids", "OntoDB", "Oxigraph (RocksDB)", "Oxigraph (memory)"];
+dotPlot($("#bgo"), B.go, goSeries, { label: (r) => `${r.bucket} below`, ring: ["OntoDB ids"], width: 480 });
+table($("#bgo-t"), ["below C", "answers", ...goSeries.map((s) => (s === "OntoDB" ? "OntoDB strings" : s))], B.go.map((r) => [r.bucket, r.answers, ...goSeries.map((s) => usFmt(r.us[s]))]));
+const yMax = Math.ceil(Math.max(...B.conc.flatMap((c) => c.lookups)) / 400000) * 400000;
+lineChart($("#bconc"), B.conc.map((c) => ({ name: c.engine, color: ECOL[c.engine], points: [1, 2, 4, 8].map((t, i) => [t, c.lookups[i] / 1e6]) })), { xLabel: "threads", yLabel: "millions of lookups/s", yMax: yMax / 1e6, xTicks: [1, 2, 4, 8], width: 520, height: 280 });
+table($("#bconc-t"), ["engine", "1", "2", "4", "8 threads"], B.conc.map((c) => [c.engine, ...c.lookups.map(fmt)]));
+table($("#bload"), ["engine", "triples", "load (s)", "on disk (MiB)", "peak RSS (MiB)"], B.load.map((r) => [r.engine, r.triples, r.load, r.disk, r.rss]));
+
+// ---------- tabs and footer ----------
+tabs({ walk: () => {} });
+const syncBar = () => { const on = !$("#tab-walk").hidden; $("#wbar").hidden = !on; document.body.classList.toggle("stepping", on); };
+$$("nav.tabs button").forEach((b) => b.addEventListener("click", syncBar)); window.addEventListener("hashchange", syncBar); syncBar();
+$("#foot").append(
+  h("p", {}, "Recorded with ", h("code", {}, "python3 showcase/record.py"), " from the release build at commit ", h("b", {}, D.commit), ", and built with ", h("code", {}, "python3 showcase/build.py"), ". The page draws what the shell printed; nothing is measured in the browser."),
+  h("p", {}, "OntoDB by Lam Nguyen. ", h("a", { href: "https://lamng3.com/ontodb/" }, "Manual"), " · ", h("a", { href: "https://github.com/lamng3/OntoDB" }, "Source")),
+);
+</script>
+</body>
+</html>

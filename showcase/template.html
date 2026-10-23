@@ -1,0 +1,843 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>OntoDB Showcase</title>
+<meta name="description" content="One SPARQL query through OntoDB, page by page: dictionary lookups, the statistics pass, the plan, B+ tree scans and the buffer pool; then a crash and restart, hierarchy search, and the benchmark against other stores.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%236d28d9'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-family='system-ui' font-weight='700' font-size='15' fill='white'%3EDB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=TikTok+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: the manuals' single page with tabs; the walkthrough is a stepper (notes left, the store's pages right) over a fixed control bar.
+   Engines keep one hue each across every chart: OntoDB violet, then the four stores it is measured against. */
+:root {
+  --primary: #6d28d9; --primary-dark: #a78bfa;
+  --e-ontodb: #6d28d9; --e-oxrocks: #eb6834; --e-oxmem: #2a78d6; --e-jena: #eda100; --e-sqlite: #1baf7a;
+  --dict: #64748b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --e-ontodb: #8b5cf6; --e-oxrocks: #d95926; --e-oxmem: #3987e5; --e-jena: #c98500; --e-sqlite: #199e70; --dict: #94a3b8; }
+}
+/*BASE_CSS*/
+:root[data-theme="dark"] {
+  --primary: var(--primary-dark);
+  --bg: #111214; --fg: #ececec; --muted: #b4b8bf; --subtle: #9096a0; --faint: #6b7280; --border: #2a2d33;
+  --ok: #5fd08f; --ok-bg: rgba(95, 208, 143, 0.12); --bad: #ff8a80; --bad-bg: rgba(255, 138, 128, 0.12);
+  --warn: #f0b252; --warn-bg: rgba(240, 178, 82, 0.12); color-scheme: dark;
+  --e-ontodb: #8b5cf6; --e-oxrocks: #d95926; --e-oxmem: #3987e5; --e-jena: #c98500; --e-sqlite: #199e70; --dict: #94a3b8;
+}
+:root { --cur-tint: color-mix(in srgb, var(--primary) 8%, var(--bg)); --dict-10: color-mix(in srgb, var(--dict) 12%, var(--bg)); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap, header.site, footer.site { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+nav.tabs { top: env(safe-area-inset-top, 0px); }
+h1, h2, h3 { text-wrap: balance; }
+.hero h1 em { font-style: normal; color: var(--primary); }
+.hero .meta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: var(--subtle); margin-top: 6px; }
+.hero .meta b { color: var(--fg); font-weight: 500; }
+.stat b small { font-size: 14px; color: var(--subtle); font-weight: 400; margin-left: 3px; }
+
+/* Walkthrough */
+.wrail { display: flex; align-items: center; margin: 4px 0 22px; overflow-x: auto; padding: 4px 2px 8px; }
+.stg { display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 4px 2px; color: var(--subtle); white-space: nowrap; font-size: 14.5px; }
+.stg .dot { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--border); display: grid; place-items: center; font-size: 12.5px; font-weight: 600; background: var(--bg); }
+.stg.past { color: var(--muted); } .stg.past .dot { background: var(--primary); border-color: var(--primary); color: var(--bg); }
+.stg.on { color: var(--fg); font-weight: 500; } .stg.on .dot { border-color: var(--primary); color: var(--primary); box-shadow: 0 0 0 4px var(--primary-10); }
+.rail-line { flex: 1 0 18px; height: 2px; background: var(--border); margin: 0 8px; } .rail-line.past { background: var(--primary); }
+.wt { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-bottom: 40px; align-items: start; }
+@media (min-width: 1000px) { .wt { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.25fr); } .w-right { position: sticky; top: calc(56px + env(safe-area-inset-top, 0px)); } }
+.wside, .w-right { display: grid; gap: 18px; min-width: 0; }
+.wp { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; min-width: 0; }
+.wph { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+.wph h3 { margin: 0; font-size: 11.5px; line-height: 1; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.wph .meta { font-size: 12.5px; color: var(--subtle); margin: 0; }
+.w-note { padding: 20px 22px 22px; display: grid; gap: 12px; }
+.w-note .hd { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.wstep { font: 600 12px/1 var(--mono); color: var(--primary); background: var(--cur-tint); border: 1px solid var(--primary-50); padding: 5px 9px; border-radius: 6px; }
+.wtag { font: 600 11px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 9px; border-radius: 6px; background: var(--primary-5); color: var(--muted); border: 1px solid var(--border); }
+.w-note h3 { margin: 2px 0 0; font-size: 22px; line-height: 1.25; font-weight: 500; letter-spacing: -0.01em; }
+.w-note p { margin: 0; font-size: 16px; line-height: 1.65; color: var(--muted); }
+.w-note p b { color: var(--fg); font-weight: 600; }
+.w-note code { font-size: 13.5px; color: var(--fg); background: var(--primary-5); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.qtext { font: 13px/1.7 var(--mono); padding: 12px 14px; border-radius: 10px; background: var(--primary-5); border: 1px solid var(--border); overflow-wrap: anywhere; color: var(--fg); }
+.qtext .kw { color: var(--primary); font-weight: 600; } .qtext .v { color: var(--e-oxrocks); }
+
+/* plan tree */
+.plan { padding: 14px 18px 18px; display: grid; gap: 6px; }
+.pn { display: grid; gap: 4px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); margin-left: calc(var(--d) * 22px); position: relative; }
+.pn::before { content: ""; position: absolute; left: -14px; top: -7px; bottom: 50%; width: 12px; border-left: 1.5px solid var(--border); border-bottom: 1.5px solid var(--border); border-bottom-left-radius: 6px; }
+.pn[style*="--d:0"]::before { display: none; }
+.pn .op { font: 600 13.5px var(--mono); } .pn .det { font: 12.5px/1.5 var(--mono); color: var(--subtle); overflow-wrap: anywhere; }
+.pn .nums { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.pn .nums span { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-variant-numeric: tabular-nums; }
+.pn.on { border-color: var(--primary); background: var(--cur-tint); box-shadow: 0 0 0 3px var(--primary-10); }
+.pn.done { border-color: var(--primary-50); }
+
+/* buffer pool */
+.bpm { padding: 14px 18px 18px; display: grid; gap: 10px; }
+.frames { display: grid; grid-template-columns: repeat(16, minmax(0, 1fr)); gap: 3px; }
+@media (max-width: 520px) { .frames { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+.fr { aspect-ratio: 1.25; border-radius: 4px; display: grid; place-items: center; font: 500 10px var(--mono); color: var(--subtle); background: var(--dict-10); border: 1.5px solid transparent; position: relative; max-width: 100%; }
+.fr.idx { background: var(--primary-10); color: var(--muted); }
+.fr.hit { border-color: var(--primary); color: var(--fg); font-weight: 700; }
+.fr.miss { border-color: var(--warn); background: var(--warn-bg); color: var(--fg); font-weight: 700; }
+.bpm-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--subtle); }
+.bpm-key span { display: inline-flex; align-items: center; gap: 6px; }
+.bpm-key i { width: 14px; height: 11px; border-radius: 3px; display: inline-block; background: var(--c); border: 1.5px solid var(--b, transparent); }
+.counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.counts div { border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; }
+.counts b { display: block; font-size: 19px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.counts span { font-size: 12px; color: var(--subtle); }
+.evlist { font: 12px/1.6 var(--mono); color: var(--subtle); }
+
+/* the store */
+.store { padding: 12px 18px 16px; overflow-x: auto; }
+.store svg { display: block; width: 100%; min-width: 560px; height: auto; font-family: var(--font); }
+.store text { font: 500 11px var(--font); fill: var(--subtle); }
+.store text.lbl { font: 600 11.5px var(--font); letter-spacing: 0.08em; fill: var(--muted); }
+.store text.pg { font: 500 10px var(--mono); fill: var(--subtle); }
+.store .node { fill: var(--bg); stroke: var(--border); stroke-width: 1.2; }
+.store .leaf { fill: var(--primary-5); stroke: var(--border); stroke-width: 1; }
+.store .leaf.seen { fill: var(--primary-15); }
+.store .on { fill: var(--primary); stroke: var(--primary); }
+.store .on.miss { fill: var(--warn); stroke: var(--warn); }
+.store .sep { stroke: var(--border); stroke-width: 1; }
+.store .path { fill: none; stroke: var(--primary); stroke-width: 1.8; }
+.store .path.miss { stroke: var(--warn); }
+.store .dim { opacity: 0.45; }
+.store .dnode { fill: var(--dict-10); stroke: var(--border); stroke-width: 1.2; }
+.store .dnode.on { fill: var(--dict); stroke: var(--dict); }
+.store text.on { fill: var(--bg); stroke: none; }
+.detail { padding: 14px 18px 18px; display: grid; gap: 10px; }
+.keys { width: 100%; font: 12.5px/1.45 var(--mono); border-collapse: collapse; }
+.keys td, .keys th { padding: 4px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.keys th { font: 600 11px var(--font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--subtle); }
+.keys tr.found td { background: var(--ok-bg); color: var(--fg); font-weight: 600; }
+.keys tr.gap td { color: var(--faint); font-style: italic; font-family: var(--font); }
+.keys td.n { color: var(--faint); text-align: right; }
+.chain { display: grid; gap: 10px; }
+.link { display: grid; gap: 6px; }
+.link .what { font-size: 13px; color: var(--muted); } .link .what b { color: var(--fg); font-weight: 600; }
+.pages { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font: 12px var(--mono); }
+.pg { padding: 3px 9px; border-radius: 7px; border: 1.5px solid var(--primary); background: var(--cur-tint); color: var(--fg); }
+.pg.miss { border-color: var(--warn); background: var(--warn-bg); }
+.pg.d { border-color: var(--dict); background: var(--dict-10); }
+.pg small { color: var(--subtle); font-family: var(--font); margin-right: 4px; }
+.arr { color: var(--faint); }
+.result { padding: 10px 12px; border-radius: 10px; background: var(--ok-bg); font: 600 13px/1.5 var(--mono); color: var(--fg); overflow-wrap: anywhere; }
+.wlegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--subtle); }
+.wlegend span { display: inline-flex; align-items: center; gap: 6px; }
+.wlegend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--c); }
+
+.wbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--bg); border-top: 1px solid var(--border); padding: 12px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.wbar-in { max-width: 1180px; margin: 0 auto; padding: 0 8px; display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; }
+.wbar .btn { height: 38px; display: inline-flex; align-items: center; padding: 0 18px; border-radius: 999px; }
+#wscrub { flex: 1 1 200px; min-width: 0; accent-color: var(--primary); }
+.wctr { font: 500 13px var(--mono); color: var(--muted); white-space: nowrap; } .wctr b { color: var(--fg); }
+body.stepping { padding-bottom: 80px; }
+
+/* Plans */
+.qlist { display: grid; gap: 6px; align-content: start; }
+.qbtn { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) auto; gap: 10px; align-items: center; text-align: left; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 13.5px; }
+.qbtn b { font: 600 13px var(--mono); } .qbtn span { color: var(--subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qbtn em { font-style: normal; font: 500 12px var(--mono); color: var(--muted); }
+.qbtn[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-5); }
+.qbtn.zero em { color: var(--faint); }
+.plans { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); align-items: start; }
+@media (max-width: 860px) { .plans { grid-template-columns: minmax(0, 1fr); } }
+
+/* Crash and restart */
+.rgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+@media (max-width: 900px) { .rgrid { grid-template-columns: minmax(0, 1fr); } }
+.term { font: 12.5px/1.6 var(--mono); background: var(--primary-5); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; display: grid; gap: 10px; max-height: 560px; overflow: auto; }
+.term .cmd { color: var(--fg); overflow-wrap: anywhere; } .term .cmd::before { content: "OntoDB> "; color: var(--primary); font-weight: 600; }
+.term .cmd.sh::before { content: "$ "; }
+.term .out { color: var(--subtle); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .blk { display: grid; gap: 2px; padding: 6px 8px; border-radius: 8px; }
+.term .blk.on { background: var(--bg); box-shadow: 0 0 0 1.5px var(--primary); }
+.term .blk.later { display: none; }
+.term .out.warn { color: var(--warn); }
+.files { display: grid; gap: 10px; }
+.file { display: grid; grid-template-columns: 6.5em minmax(0, 1fr) 6em; gap: 10px; align-items: center; font-size: 13.5px; }
+.file b { font: 600 13px var(--mono); } .file span { text-align: right; font: 500 12.5px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.file i { display: block; height: 12px; border-radius: 6px; background: var(--primary-10); position: relative; overflow: hidden; }
+.file i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--c, var(--primary)); border-radius: 6px; transition: width 0.3s; }
+.tape { display: flex; flex-wrap: wrap; gap: 3px; }
+.rec { width: 13px; height: 18px; border-radius: 3px; background: var(--c); position: relative; }
+.rec.cut { background: repeating-linear-gradient(135deg, var(--bad) 0 3px, transparent 3px 6px); outline: 1.5px solid var(--bad); }
+.rec.dropped { opacity: 0.35; outline: 1.5px dashed var(--bad); outline-offset: 1px; }
+.recs { font: 12px/1.55 var(--mono); display: grid; gap: 1px; max-height: 260px; overflow: auto; }
+.recs div { display: grid; grid-template-columns: 4.5em 3.5em 5.5em minmax(0, 1fr); gap: 8px; padding: 1px 6px; border-radius: 4px; }
+.recs div span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--subtle); }
+.recs div.dropped { background: var(--bad-bg); text-decoration: line-through; color: var(--bad); }
+.rnav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.rdots { display: flex; gap: 5px; flex-wrap: wrap; }
+.rdots button { border: 1px solid var(--border); background: var(--bg); border-radius: 999px; font-size: 12.5px; padding: 3px 10px; color: var(--muted); }
+.rdots button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-10); color: var(--primary); }
+.rdots button.past { color: var(--fg); }
+
+/* Hierarchy */
+.hits { display: grid; gap: 4px; font-size: 13.5px; }
+.hit { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); gap: 10px; align-items: center; }
+.hit .sc { font: 500 12.5px var(--mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.hit .nm { position: relative; padding: 4px 8px; border-radius: 6px; overflow: hidden; overflow-wrap: anywhere; }
+.hit .nm::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--primary-10); z-index: -1; }
+.hit .nm small { color: var(--faint); font-family: var(--mono); margin-left: 6px; }
+.hit .nm { isolation: isolate; }
+.cls { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13.5px; }
+.cls li { display: flex; gap: 10px; justify-content: space-between; padding: 3px 8px; border-radius: 6px; }
+.cls li:nth-child(odd) { background: var(--primary-5); }
+.cls li small { font: 11.5px var(--mono); color: var(--faint); white-space: nowrap; }
+.big { font-size: 30px; font-weight: 500; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.big small { font-size: 14px; color: var(--subtle); font-weight: 400; margin-left: 6px; }
+
+/* Benchmarks */
+.dots svg { display: block; width: 100%; height: auto; overflow: visible; }
+.dots text { font: 11.5px var(--font); fill: var(--subtle); }
+.dots text.q { font: 600 12px var(--mono); fill: var(--fg); }
+.dots text.q.zero { fill: var(--faint); font-weight: 500; }
+.dots .grid { stroke: var(--border); } .dots .lane { stroke: var(--border); stroke-dasharray: 2 3; }
+.dots circle { stroke: var(--bg); stroke-width: 2; }
+.dots circle.ring { fill: var(--bg); stroke-width: 2; }
+.tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 12.5px; padding: 6px 9px; border-radius: 6px; z-index: 30; display: none; max-width: 300px; }
+details.tbl { margin-top: 12px; } details.tbl summary { cursor: pointer; color: var(--primary); font-size: 14px; }
+details.tbl .scroll { margin-top: 8px; }
+td.best { font-weight: 600; color: var(--fg); }
+.legend i { border-radius: 50%; }
+</style>
+</head>
+<body>
+<header class="site">
+  <a class="logo" href="#walk"><span class="logo-mark">DB</span><span>OntoDB <small>showcase</small></span></a>
+  <nav class="site">
+    <a href="https://lamng3.com/ontodb/playground.html">Playground</a>
+    <a href="https://github.com/lamng3/OntoDB">Source</a>
+    <a href="https://lamng3.com/ontodb/" class="pill">Manual</a>
+  </nav>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <h1>One query, <em>page by page</em>, through a database built for ontologies</h1>
+    <p class="lede">OntoDB stores RDF as 64-bit ids in B+ trees and answers SPARQL with a cost-based optimizer, a buffer pool and a write-ahead log. Everything below was printed by the real shell: its plans, its trees, every page the buffer pool fetched while it answered one LUBM query, and what it did after an abrupt exit.</p>
+    <div class="stats" id="stats"></div>
+    <div class="meta" id="meta"></div>
+  </section>
+  <nav class="tabs" role="tablist">
+    <button type="button" data-tab="walk" role="tab">Walkthrough</button>
+    <button type="button" data-tab="plans" role="tab">Plans</button>
+    <button type="button" data-tab="crash" role="tab">Crash and restart</button>
+    <button type="button" data-tab="hierarchy" role="tab">Hierarchy search</button>
+    <button type="button" data-tab="bench" role="tab">Against other stores</button>
+  </nav>
+
+  <section class="tab" id="tab-walk">
+    <h2>Graduate students in GraduateCourse0, from SPARQL to rows</h2>
+    <p class="sub">LUBM query 1 on one university, recorded with <code>\trace on</code>. Each step is one thing the engine did, in the order it did it, with the pages it pinned. Use the bar at the bottom, or the arrow keys.</p>
+    <nav class="wrail" id="wrail" aria-label="Stages"></nav>
+    <div class="wt">
+      <div class="wside">
+        <section class="wp w-note" id="wnote" aria-live="polite"></section>
+        <section class="wp">
+          <div class="wph"><h3>Plan</h3><span class="meta" id="plan-m"></span></div>
+          <div class="plan" id="wplan"></div>
+        </section>
+        <section class="wp">
+          <div class="wph"><h3>Buffer pool</h3><span class="meta" id="bpm-m"></span></div>
+          <div class="bpm" id="wbpm"></div>
+        </section>
+      </div>
+      <div class="w-right">
+        <section class="wp">
+          <div class="wph"><h3>The store's pages</h3><div class="wlegend" id="store-key"></div></div>
+          <div class="store" id="wstore"></div>
+        </section>
+        <section class="wp">
+          <div class="wph"><h3 id="detail-h">Detail</h3><span class="meta" id="detail-m"></span></div>
+          <div class="detail" id="wdetail"></div>
+        </section>
+      </div>
+    </div>
+    <div class="wbar" id="wbar" hidden><div class="wbar-in">
+      <button class="btn" id="wfirst" aria-label="First step">⏮</button>
+      <button class="btn" id="wprev">← Prev</button>
+      <button class="btn" id="wplay">Play</button>
+      <button class="btn solid" id="wnext">Next →</button>
+      <input type="range" id="wscrub" min="0" max="0" value="0" aria-label="Step">
+      <span class="wctr" id="wctr"></span>
+    </div></div>
+  </section>
+
+  <section class="tab" id="tab-plans" hidden>
+    <h2>What the optimizer chose for each LUBM query</h2>
+    <p class="sub">The fourteen LUBM queries under <code>\explain analyze</code> on the same university: each operator with the rows the optimizer estimated and the rows it produced. OntoDB does not do RDFS inference yet, so queries that rely on the class hierarchy return no rows here; LUBM's own note for each query says what it assumes.</p>
+    <div class="grid plans">
+      <div class="qlist" id="qlist"></div>
+      <div class="panel" id="qplan"></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-crash" hidden>
+    <h2>A database directory survives an abrupt exit</h2>
+    <p class="sub"><code>ontodb mydb</code> runs each statement as a transaction and forces its log records to <code>mydb/wal</code> before the prompt returns. <code>\checkpoint</code> writes a snapshot and resets the log. Here the shell exits with <code>\crash</code>, which flushes nothing, and the last 10 bytes of the log are cut off by hand to stand in for a write the disk never finished.</p>
+    <div class="rnav">
+      <button class="btn" id="rprev">← Prev</button>
+      <button class="btn solid" id="rnext">Next →</button>
+      <div class="rdots" id="rdots"></div>
+    </div>
+    <div class="grid rgrid">
+      <div class="term" id="rterm"></div>
+      <div class="grid">
+        <div class="callout" id="rnote"></div>
+        <div class="panel">
+          <h3>On disk</h3>
+          <p class="sub">The two files in <code>mydb/</code>, to scale.</p>
+          <div class="files" id="rfiles"></div>
+        </div>
+        <div class="panel">
+          <h3>Log records</h3>
+          <p class="sub" id="rwal-sub"></p>
+          <div class="tape" id="rtape"></div>
+          <div class="wlegend" id="rkey" style="margin:10px 0"></div>
+          <div class="recs" id="rrecs"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-hierarchy" hidden>
+    <h2>Everything under a class is a range scan</h2>
+    <p class="sub">On a slice of the Gene Ontology, <code>\hindex build</code> numbers the class hierarchy so that each class owns a few integer intervals, kept in a B+ tree. "Every class at or below C" becomes one range scan per interval. The same intervals can restrict a vector search to the classes under C.</p>
+    <div class="grid cols-2" id="hgrid"></div>
+  </section>
+
+  <section class="tab" id="tab-bench" hidden>
+    <h2>OntoDB against Oxigraph, Jena and SQLite</h2>
+    <p class="sub" id="bench-sub"></p>
+    <div class="grid">
+      <div class="panel">
+        <h3>LUBM(10), query latency</h3>
+        <p class="sub">Mean time per query, log scale; lower is better. 1.3 million triples. Queries that return no rows rely on inference that none of these runs did.</p>
+        <div class="dots" id="bq"></div>
+        <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bq-t"></div></details>
+      </div>
+      <div class="grid cols-2">
+        <div class="panel">
+          <h3>Instances of a class and its subclasses</h3>
+          <p class="sub">Gene Ontology, 200,000 entities; 30 classes per bucket of descendant count. OntoDB as ids (the ring) and as strings, which is what the others return.</p>
+          <div class="dots" id="bgo"></div>
+          <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bgo-t"></div></details>
+        </div>
+        <div class="panel">
+          <h3>Lookups per second, by threads</h3>
+          <p class="sub">The <code>(s,.,.)</code> and <code>(s,p,.)</code> lookups on LUBM(10), 3 seconds per cell. The machine has 8 performance cores.</p>
+          <div id="bconc"></div>
+          <details class="tbl"><summary>Show the table</summary><div class="scroll" id="bconc-t"></div></details>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Loading LUBM(10)</h3>
+        <p class="sub">OntoDB is the slowest to load and the second largest in memory: it builds three B+ trees and the dictionary from one pass over the file.</p>
+        <div class="scroll" id="bload"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<footer class="site" id="foot"></footer>
+<div class="tip" id="tip"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+/*BASE_JS*/
+const D = JSON.parse(document.getElementById("data").textContent);
+const W = D.walk;
+const NS = "http://www.w3.org/2000/svg";
+const fmt = (n) => Number(n).toLocaleString("en-US");
+const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#", UB = "http://www.lehigh.edu/~zhp2/2004/0401/univ-bench.owl#";
+function short(iri) {
+  iri = String(iri).replace(/^<|>$/g, "");
+  if (iri.startsWith(RDF)) return "rdf:" + iri.slice(RDF.length);
+  if (iri.startsWith(UB)) return "ub:" + iri.slice(UB.length);
+  if (iri.startsWith("http://purl.obolibrary.org/obo/")) return iri.slice(31).replace("_", ":");
+  const m = iri.match(/[#/]([^#/]+)$/);
+  return m ? m[1] : iri;
+}
+const term = (id) => (W.terms[id] ? short(W.terms[id]) : "#" + id);
+function svgEl(tag, attrs = {}, text) {
+  const n = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+const tip = $("#tip");
+function showTip(e, text) { tip.textContent = text; tip.style.display = "block"; tip.style.left = Math.min(e.clientX + 12, innerWidth - 310) + "px"; tip.style.top = e.clientY + 14 + "px"; }
+const hideTip = () => (tip.style.display = "none");
+
+// ---------- hero ----------
+const fetches = W.steps.flatMap((s) => s.visits.flatMap((v) => v.pages));
+const misses = fetches.filter((p) => !p.hit).length;
+const leaves = W.trees.spo.levels.at(-1).length;
+$("#stats").append(
+  ...[
+    [fmt(W.triples), "", "distinct triples, one LUBM university"],
+    ["3", "× " + leaves + " leaves", "B+ trees: SPO, POS, OSP"],
+    [W.plan.plan.actual, "rows", `in ${W.plan.ms.toFixed(3)} ms (\\explain analyze)`],
+    [fmt(fetches.length), "pages", `fetched for query 1, ${misses} from disk`],
+  ].map(([b, s, t]) => h("div", { class: "stat" }, h("b", {}, String(b), s ? h("small", {}, s) : null), h("span", {}, t))),
+);
+$("#meta").append(
+  h("span", {}, "Recorded at commit ", h("b", {}, D.commit)),
+  h("span", {}, "Data ", h("b", {}, "LUBM University0_0"), ", ", h("b", {}, "tiny.ttl"), ", ", h("b", {}, "a Gene Ontology slice")),
+  h("span", {}, "Buffer pool ", h("b", {}, `${W.bpm.frames} frames, LRU-${W.bpm.k}`)),
+);
+
+// ---------- walkthrough: the steps ----------
+const HDR = {}; for (const [p, perm] of Object.entries(W.pages.header)) HDR[p] = perm;
+{ const first = Math.min(...Object.keys(HDR).map(Number)); ["spo", "pos", "osp"].forEach((p, i) => (HDR[first + i] = p)); }
+const NODE = {};
+for (const p of ["spo", "pos", "osp"]) W.trees[p].levels.forEach((lvl, d) => lvl.forEach((n, i) => (NODE[n.page] = { perm: p, depth: d, index: i, node: n })));
+const isIndex = (page) => page in NODE || page in HDR;
+const ROW_OF = {}; // ?X id -> output row index
+const outer = W.steps.find((s) => s.kind === "scan" && s.perm === "pos");
+outer.found.forEach((k, i) => (ROW_OF[k[2]] = i));
+
+const STAGES = ["Query", "Bind", "Statistics", "Plan", "Scan", "Join", "Rows"];
+const steps = [];
+steps.push({ stage: "Query", kind: "query", visits: [] });
+for (const s of W.steps) {
+  if (s.kind === "bind") steps.push({ stage: "Bind", ...s });
+  else if (s.kind === "stats") { steps.push({ stage: "Statistics", ...s }); steps.push({ stage: "Plan", kind: "plan", visits: [] }); }
+  else if (s.kind === "scan" && s.perm === "pos") steps.push({ stage: "Scan", ...s });
+  else steps.push({ stage: "Join", ...s });
+}
+steps.push({ stage: "Rows", kind: "rows", visits: [] });
+
+// Buffer pool state before each step, replayed from \bpm and the trace.
+const pool0 = {}; for (const [f, p] of Object.entries(W.bpm.resident)) pool0[f] = p;
+let pool = { ...pool0 }, tally = { hits: 0, misses: 0, evictions: 0 };
+const seenLeaves = new Set();
+for (const s of steps) {
+  s.poolBefore = { ...pool }; s.seenBefore = new Set(seenLeaves);
+  s.touch = {};
+  for (const v of s.visits) {
+    for (const p of v.pages) {
+      if (p.hit) { tally.hits++; const f = Object.keys(pool).find((k) => pool[k] === p.page); if (f != null) s.touch[f] = s.touch[f] || "hit"; }
+      else { tally.misses++; pool[p.frame] = p.page; s.touch[p.frame] = "miss"; }
+      if (NODE[p.page] && NODE[p.page].node.leaf) seenLeaves.add(p.page);
+    }
+    tally.evictions += v.evictions.length;
+  }
+  s.pool = { ...pool }; s.tally = { ...tally };
+  s.evictions = s.visits.flatMap((v) => v.evictions);
+  s.pages = s.visits.flatMap((v) => v.pages);
+}
+
+// ---------- walkthrough: what each step says ----------
+const pageWord = (p) => (p.hit ? "in the pool" : "read from disk");
+function pagesSummary(s) {
+  const m = s.pages.filter((p) => !p.hit).length;
+  return m === 0 ? `All ${s.pages.length} pages were already in the pool.` : m === s.pages.length ? `None of the ${s.pages.length} pages were in the pool; each was read from disk.` : `${s.pages.length - m} of the ${s.pages.length} pages were in the pool; ${m} ${m === 1 ? "was" : "were"} read from disk.`;
+}
+function note(s, i) {
+  const ids = W.ids;
+  switch (s.kind) {
+    case "query":
+      return ["Two patterns that share ?X",
+        `The query asks for the graduate students who take <b>GraduateCourse0</b>. The store holds <b>${fmt(W.triples)}</b> distinct triples from one LUBM university, and keeps each one three times, in SPO, POS and OSP order, so that any pattern with some positions bound is a range scan in one of them.`,
+        "Each tree has one root over 51 leaves of up to 169 keys. A key is three 64-bit term ids; the strings live in a separate dictionary."];
+    case "bind": {
+      const first = steps.findIndex((x) => x.kind === "bind") === i;
+      return [`${short(s.term)} is id ${s.id}`,
+        first ? `Indexes store ids, so the binder first looks up each IRI in the query. The dictionary hashes the spelling and finds the candidate id in its <b>spelling</b> tree, then finds where that id's text lives in its <b>terms</b> tree, and reads the heap page to check the spelling really matches.` :
+          `The same three lookups for <code>${short(s.term)}</code>: spelling tree, terms tree, heap page. It is id <b>${s.id}</b>.`,
+        pagesSummary(s)];
+    }
+    case "stats": {
+      const m = s.pages.filter((p) => !p.hit).length;
+      return ["The first query after a load counts first",
+        `Before planning, the database collects the optimizer's statistics, because none exist since the load: one pass over every SPO leaf, counting triples per subject, predicate, object and pair. That is a full scan of <b>${s.leaves.length}</b> leaves.`,
+        `${m} of its ${s.pages.length} page fetches missed the pool, and LRU-K evicted <b>${s.evictions.length}</b> pages to make room${s.evictions.every((e) => e.kdist === "inf") ? `: every victim had been used fewer than K = ${W.bpm.k} times, so its backward k-distance was infinite` : ""}. A second query would skip this pass.`];
+    }
+    case "plan": {
+      const [a, b] = W.plan.plan.kids[0].kids;
+      return ["Start from the smaller side",
+        `With the counts in hand, the optimizer estimates each pattern. <code>?X ub:takesCourse GraduateCourse0</code>: <b>${a.est}</b> triples. <code>?X rdf:type ub:GraduateStudent</code>: <b>${b.est}</b>.`,
+        `It chooses an <b>index nested-loop join</b>: scan the ${a.est} triples once, and for each one probe the other pattern with ?X bound, instead of reading all ${b.est} graduate students.`];
+    }
+    case "scan": {
+      const leaf = NODE[s.leaf];
+      return ["A range scan in POS",
+        `The outer pattern binds the predicate and the object, so its triples sit together in POS order, under keys that start with <code>(${s.range.join(", ")})</code>: <code>takesCourse</code> then <code>GraduateCourse0</code>.`,
+        `The scan descends from the header page through root ${W.trees.pos.root} to leaf ${s.leaf}, then reads forward from the first matching key: <b>${s.found.length}</b> keys match, and their third id is ?X. ${pagesSummary(s)}`];
+    }
+    case "decode": {
+      return [`Row ${ROW_OF[s.id] + 1}: ${short(s.term)}`,
+        `The row leaves the plan as id <b>${s.id}</b>, and the shell prints text. The terms tree maps the id to its slot on a heap page, and that page holds the spelling.`,
+        pagesSummary(s)];
+    }
+    case "rows": {
+      const t = s.tally;
+      return [`${W.plan.plan.actual} rows`,
+        `The estimate was ${W.plan.plan.est} rows and the join produced ${W.plan.plan.actual}. Answering took <b>${fmt(t.hits + t.misses)}</b> page fetches: ${fmt(t.hits)} hits and ${fmt(t.misses)} misses, ${s.steps_stats} of them in the statistics pass.`,
+        (() => {
+          const join = steps.filter((x) => x.stage === "Scan" || x.stage === "Join").flatMap((x) => x.pages);
+          const dm = join.filter((p) => !p.hit && !isIndex(p.page)).length, im = join.filter((p) => !p.hit && isIndex(p.page)).length;
+          return `Outside that pass, the scan, the probes and the decodes fetched ${join.length} pages and read ${im} index page${im === 1 ? "" : "s"} from disk; ${dm ? dm + " dictionary pages missed too" : "every dictionary page was already in the pool"}.`;
+        })()];
+    }
+    default: {
+      const x = s.probe[0];
+      const ok = s.found.length > 0;
+      return [`Probe SPO for ${term(x)}`,
+        `For ?X = <code>${term(x)}</code> (id ${x}), the join probes SPO for the exact key <code>(${s.probe.join(", ")})</code>: is this student a GraduateStudent? It descends root ${W.trees.spo.root} to leaf ${s.leaf}.`,
+        `${ok ? "The key is there, so the row survives." : "The key is missing, so the row is dropped."} ${pagesSummary(s)}`];
+    }
+  }
+}
+steps.at(-1).steps_stats = steps.find((s) => s.kind === "stats").pages.filter((p) => !p.hit).length;
+
+// ---------- walkthrough: drawing ----------
+function renderRail(i) {
+  const cur = STAGES.indexOf(steps[i].stage);
+  $("#wrail").replaceChildren(...STAGES.flatMap((name, k) => {
+    const b = h("button", { class: "stg" + (k < cur ? " past" : k === cur ? " on" : ""), onclick: () => go(steps.findIndex((s) => s.stage === name)) }, h("span", { class: "dot" }, String(k + 1)), name);
+    return k ? [h("span", { class: "rail-line" + (k <= cur ? " past" : "") }), b] : [b];
+  }));
+}
+function renderNote(s, i) {
+  const [title, ...ps] = note(s, i);
+  const kids = [h("div", { class: "hd" }, h("span", { class: "wstep" }, `step ${i + 1} / ${steps.length}`), h("span", { class: "wtag" }, s.stage)), h("h3", {}, title), ...ps.map((p) => h("p", { html: p }))];
+  if (s.kind === "query") kids.splice(2, 0, h("div", { class: "qtext", html: prettyQuery(W.query) }));
+  $("#wnote").replaceChildren(...kids);
+}
+function prettyQuery(q) {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc(q.replace(/PREFIX \S+ <[^>]+> /g, "").replace(/<http:\/\/www\.Department0\.University0\.edu\/([^>]+)>/, "&lt;…/$1&gt;"))
+    .replace(/&amp;lt;/g, "&lt;").replace(/&amp;gt;/g, "&gt;")
+    .replace(/\b(SELECT|WHERE)\b/g, '<span class="kw">$1</span>').replace(/(\?X)/g, '<span class="v">$1</span>')
+    .replace(" . ", " .<br>&nbsp;&nbsp;").replace("{ ", "{<br>&nbsp;&nbsp;").replace(" }", "<br>}");
+}
+function planNodes(node, d, active, out = []) {
+  const det = node.detail.replace(/<([^>]+)>/g, (_, iri) => short(iri));
+  const nums = [h("span", {}, "est " + node.est), node.actual != null ? h("span", {}, "actual " + node.actual) : h("span", {}, "probed by the join")];
+  out.push(h("div", { class: "pn" + (active.includes(node) ? " on" : ""), style: `--d:${d}` }, h("div", { class: "op" }, node.op), det ? h("div", { class: "det" }, det) : null, h("div", { class: "nums" }, nums)));
+  node.kids.forEach((k) => planNodes(k, d + 1, active, out));
+  return out;
+}
+function renderPlan(s) {
+  const root = W.plan.plan, join = root.kids[0], [a, b] = join.kids;
+  const active = { scan: [a], probe: [join, b], decode: [root], rows: [root, join, a, b], plan: [join] }[s.kind === "scan" && s.perm === "spo" ? "probe" : s.kind] || [];
+  const before = ["query", "bind", "stats"].includes(s.kind);
+  $("#wplan").replaceChildren(...(before ? [h("p", { class: "note", style: "margin:0" }, s.kind === "stats" ? "The optimizer is waiting for these counts." : "Not planned yet: the binder runs first.")] : planNodes(root, 0, active)));
+  $("#plan-m").textContent = before ? "" : `\\explain analyze, ${W.plan.ms.toFixed(3)} ms`;
+}
+function renderPool(s) {
+  const owner = (page) => (isIndex(page) ? "idx" : "");
+  const cells = [];
+  for (let f = 0; f < W.bpm.frames; f++) {
+    const page = s.pool[f], t = s.touch[f];
+    const c = h("div", { class: `fr ${owner(page)} ${t || ""}`, title: `frame ${f}: page ${page}${isIndex(page) ? " (" + (NODE[page] ? NODE[page].perm + (NODE[page].node.leaf ? " leaf" : " root") : HDR[page] + " header") + ")" : " (dictionary)"}${t ? ", " + t : ""}` }, String(page));
+    cells.push(c);
+  }
+  const ev = s.evictions.slice(0, 6).map((e) => `page ${e.page} (k-distance ${e.kdist})`).join(", ");
+  $("#wbpm").replaceChildren(...[
+    h("div", { class: "frames" }, cells),
+    h("div", { class: "bpm-key" },
+      h("span", { style: "--c:var(--primary-10)" }, h("i"), "index page"),
+      h("span", { style: "--c:var(--dict-10)" }, h("i"), "dictionary page"),
+      h("span", { style: "--c:var(--bg);--b:var(--primary)" }, h("i"), "hit this step"),
+      h("span", { style: "--c:var(--warn-bg);--b:var(--warn)" }, h("i"), "read from disk this step")),
+    h("div", { class: "counts" }, [["hits", s.tally.hits], ["misses", s.tally.misses], ["evictions", s.tally.evictions], ["this step", s.pages.length]].map(([k, v]) => h("div", {}, h("b", {}, fmt(v)), h("span", {}, k)))),
+    s.evictions.length ? h("div", { class: "evlist" }, `evicted: ${ev}${s.evictions.length > 6 ? `, and ${s.evictions.length - 6} more` : ""}`) : null,
+  ].filter(Boolean));
+  $("#bpm-m").textContent = "cumulative since the query began";
+}
+function renderStore(s) {
+  const Wd = 700, x0 = 92, x1 = Wd - 8, nL = leaves, lw = (x1 - x0) / nL;
+  const svg = svgEl("svg", { viewBox: `0 0 ${Wd} 330`, role: "img", "aria-label": "The three triple indexes and the dictionary, with the pages this step fetched" });
+  const touched = new Map(s.pages.map((p) => [p.page, p]));
+  ["spo", "pos", "osp"].forEach((perm, r) => {
+    const y = 8 + r * 80, t = W.trees[perm], lvl = t.levels.at(-1);
+    const hdr = Object.keys(HDR).find((k) => HDR[k] === perm);
+    const used = s.pages.some((p) => NODE[p.page]?.perm === perm || HDR[p.page] === perm);
+    const g = svgEl("g", { class: used || !s.pages.length ? "" : "dim" });
+    g.append(svgEl("text", { class: "lbl", x: 0, y: y + 14 }, perm.toUpperCase()));
+    g.append(svgEl("text", { class: "pg", x: 0, y: y + 28 }, "header " + hdr));
+    const hp = touched.get(+hdr);
+    g.append(svgEl("rect", { class: "node" + (hp ? " on" + (hp.hit ? "" : " miss") : ""), x: 40, y: y + 34, width: 40, height: 16, rx: 4 }));
+    g.append(svgEl("text", { class: "pg" + (hp ? " on" : ""), x: 60, y: y + 46, "text-anchor": "middle" }, "hdr"));
+    const rp = touched.get(t.root);
+    g.append(svgEl("rect", { class: "node" + (rp ? " on" + (rp.hit ? "" : " miss") : ""), x: x0, y: y + 2, width: x1 - x0, height: 18, rx: 4 }));
+    t.levels[0][0].seps.forEach((_, k) => g.append(svgEl("line", { class: "sep", x1: x0 + (k + 1) * lw, x2: x0 + (k + 1) * lw, y1: y + 2, y2: y + 20, style: rp ? "stroke:var(--bg)" : "" })));
+    g.append(svgEl("text", { class: "pg" + (rp ? " on" : ""), x: x0 + 6, y: y + 15 }, `root ${t.root} · ${t.levels[0][0].seps.length} separators`));
+    lvl.forEach((leaf, k) => {
+      const lp = touched.get(leaf.page);
+      const lx = x0 + k * lw;
+      if (lp && s.kind !== "stats") g.append(svgEl("path", { class: "path" + (lp.hit ? "" : " miss"), d: `M${lx + lw / 2} ${y + 20} L${lx + lw / 2} ${y + 34}` }));
+      const r2 = svgEl("rect", { class: "leaf" + (s.seenBefore.has(leaf.page) ? " seen" : "") + (lp ? " on" + (lp.hit ? "" : " miss") : ""), x: lx + 0.6, y: y + 34, width: lw - 1.2, height: 26, rx: 2 });
+      const tt = svgEl("title", {}, `${perm} leaf ${leaf.page}: ${leaf.count} keys (${leaf.first.join(",")})..(${leaf.last.join(",")})`);
+      r2.append(tt); g.append(r2);
+    });
+    g.append(svgEl("text", { class: "pg", x: x0, y: y + 72 }, `${lvl.length} leaves, pages ${lvl[0].page}–${lvl.at(-1).page}`));
+    if (hp && rp) g.append(svgEl("path", { class: "path" + (rp.hit ? "" : " miss"), d: `M80 ${y + 42} L${x0} ${y + 11}` }));
+    svg.append(g);
+  });
+  // The dictionary: two trees and a heap, drawn as the pages this step fetched.
+  const y = 250;
+  const dp = s.pages.filter((p) => !isIndex(p.page));
+  const g = svgEl("g", { class: dp.length || !s.pages.length ? "" : "dim" });
+  g.append(svgEl("text", { class: "lbl", x: 0, y: y + 14 }, "DICTIONARY"));
+  g.append(svgEl("text", { class: "pg", x: 0, y: y + 28 }, "term ↔ id"));
+  const parts = [["spelling", W.pages.spelling, "hash → id"], ["terms", W.pages.terms, "id → heap slot"], ["heap", W.pages.heap, "spellings"]];
+  const bw = (x1 - x0 - 20) / 3;
+  const visitOf = (first) => s.visits.find((v) => v.pages[0].page === first);
+  parts.forEach(([name, first, role], k) => {
+    const bx = x0 + k * (bw + 10);
+    const v = name === "heap" ? s.visits.find((v) => v.pages.length === 1 && !isIndex(v.pages[0].page)) : visitOf(first);
+    g.append(svgEl("rect", { class: "dnode" + (v ? " on" : ""), x: bx, y: y + 2, width: bw, height: 44, rx: 6 }));
+    g.append(svgEl("text", { class: v ? "on" : "", x: bx + 10, y: y + 19, style: "font-weight:600" }, name === "heap" ? "term heap" : name + " tree"));
+    g.append(svgEl("text", { class: "pg" + (v ? " on" : ""), x: bx + 10, y: y + 36 }, v ? v.pages.map((p) => p.page).join(" → ") : role));
+  });
+  svg.append(g);
+  $("#wstore").replaceChildren(svg);
+  $("#store-key").replaceChildren(
+    h("span", { style: "--c:var(--primary)" }, h("i"), "fetched, in the pool"),
+    h("span", { style: "--c:var(--warn)" }, h("i"), "fetched, read from disk"),
+    h("span", { style: "--c:var(--primary-15)" }, h("i"), "leaf read earlier"));
+}
+function keyRow(k, perm, n, found) {
+  const order = { spo: "spo", pos: "pos", osp: "osp" }[perm];
+  return h("tr", { class: found ? "found" : "" }, h("td", { class: "n" }, "#" + n), h("td", {}, `(${k.join(", ")})`), ...k.map((id) => h("td", {}, term(id))));
+}
+function renderDetail(s) {
+  const el = $("#wdetail"), H = $("#detail-h"), M = $("#detail-m");
+  M.textContent = "";
+  if (s.kind === "scan") {
+    const leaf = NODE[s.leaf].node, keys = leaf.keys, perm = s.perm;
+    const idx = s.found.map((f) => keys.findIndex((k) => k.join() === f.join()));
+    const lo = Math.max(0, (idx[0] ?? 0) - 3), hi = Math.min(keys.length, (idx.at(-1) ?? 0) + 4);
+    H.textContent = `${perm.toUpperCase()} leaf ${s.leaf}`; M.textContent = `${leaf.count} keys, in ${perm} order`;
+    const rows = [];
+    if (lo > 0) rows.push(h("tr", { class: "gap" }, h("td", { colspan: 5 }, `… ${lo} keys before`)));
+    for (let k = lo; k < hi; k++) rows.push(keyRow(keys[k], perm, k, idx.includes(k)));
+    if (hi < keys.length) rows.push(h("tr", { class: "gap" }, h("td", { colspan: 5 }, `… ${keys.length - hi} keys after`)));
+    const cols = perm.split("").map((c) => ({ s: "subject", p: "predicate", o: "object" })[c]);
+    el.replaceChildren(h("div", { class: "scroll" }, h("table", { class: "keys" }, h("thead", {}, h("tr", {}, h("th", {}, ""), h("th", {}, "key"), ...cols.map((c) => h("th", {}, c)))), h("tbody", {}, rows))),
+      h("p", { class: "note", style: "margin:0" }, perm === "pos" ? "Matched keys are green. The scan stops at the first key past the range." : (s.found.length ? "The exact key is in this leaf." : "No such key in this leaf.")));
+    return;
+  }
+  if (s.kind === "bind" || s.kind === "decode") {
+    H.textContent = s.kind === "bind" ? "Dictionary lookup by spelling" : "Dictionary lookup by id";
+    const names = s.kind === "bind" ? ["spelling tree", "terms tree", "heap page"] : ["terms tree", "heap page"];
+    const whats = s.kind === "bind" ? ["hash of the spelling → candidate id", "id → page and slot of its text", "the stored spelling, compared"] : ["id → page and slot of its text", "the stored spelling"];
+    el.replaceChildren(h("div", { class: "chain" }, s.visits.map((v, k) => h("div", { class: "link" },
+      h("div", { class: "what" }, h("b", {}, names[k]), " · " + whats[k]),
+      h("div", { class: "pages" }, v.pages.flatMap((p, j) => [j ? h("span", { class: "arr" }, "→") : null, h("span", { class: "pg d" + (p.hit ? "" : " miss") }, h("small", {}, j === 0 && v.pages.length > 1 ? "header" : j === v.pages.length - 1 && v.pages.length > 1 ? "leaf" : v.pages.length === 1 ? "heap" : "root"), String(p.page))]))))),
+      h("div", { class: "result" }, s.kind === "bind" ? `<${short(s.term)}>  →  id ${s.id}` : `id ${s.id}  →  <${s.term}>`));
+    return;
+  }
+  if (s.kind === "stats") {
+    H.textContent = "The statistics pass"; M.textContent = `SPO, ${s.leaves.length} leaves`;
+    const m = s.pages.filter((p) => !p.hit).length;
+    el.replaceChildren(h("div", { class: "pages" }, s.visits.slice(0, 1).flatMap((v) => v.pages.map((p, j) => h("span", { class: "pg" + (p.hit ? "" : " miss") }, h("small", {}, ["header", "root", "leaf"][j]), String(p.page)))), h("span", { class: "arr" }, "→ next leaf ×" + (s.visits.length - 1))),
+      h("p", { class: "note", style: "margin:0" }, `${s.pages.length} fetches, ${m} misses. Each leaf links to its right sibling, so the scan walks the leaf level without going back through the root. The counts go into tables keyed by subject, predicate, object and each pair; the plan's estimates are read from them.`));
+    return;
+  }
+  if (s.kind === "plan") {
+    H.textContent = "Which index answers each pattern";
+    const [a, b] = W.plan.plan.kids[0].kids;
+    const row = (pat, bound, idx, est, role) => h("tr", {}, h("td", {}, pat), h("td", {}, bound), h("td", {}, idx), h("td", { class: "num" }, String(est)), h("td", {}, role));
+    el.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["pattern", "bound", "index", "est.", "role"].map((c) => h("th", { class: c === "est." ? "num" : "" }, c)))),
+      h("tbody", {}, row("?X takesCourse GraduateCourse0", "p, o", "POS", a.est, "outer, scanned once"), row("?X type GraduateStudent", "p, o, and s from the outer row", "SPO", b.est, "inner, probed per row")))));
+    return;
+  }
+  if (s.kind === "rows") {
+    H.textContent = "Result"; M.textContent = "as the shell printed it";
+    el.replaceChildren(h("pre", {}, W.rows));
+    return;
+  }
+  H.textContent = "Three indexes"; M.textContent = "one per order of (s, p, o)";
+  el.replaceChildren(h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ["index", "root", "leaves", "first key", "last key"].map((c) => h("th", {}, c)))),
+    h("tbody", {}, ["spo", "pos", "osp"].map((p) => { const t = W.trees[p], l = t.levels.at(-1); return h("tr", {}, h("td", {}, p.toUpperCase()), h("td", { class: "num" }, String(t.root)), h("td", { class: "num" }, String(l.length)), h("td", { class: "mono" }, `(${l[0].first.join(",")})`), h("td", { class: "mono" }, `(${l.at(-1).last.join(",")})`)); })))),
+    h("p", { class: "note", style: "margin:0" }, W.loaded + " (8,555 statements in the file, " + fmt(W.triples) + " of them distinct)."));
+}
+let cur = 0, timer = null;
+function go(i) {
+  cur = Math.max(0, Math.min(steps.length - 1, i));
+  const s = steps[cur];
+  renderRail(cur); renderNote(s, cur); renderPlan(s); renderPool(s); renderStore(s); renderDetail(s);
+  $("#wscrub").value = cur;
+  $("#wctr").innerHTML = `<b>${cur + 1}</b> / ${steps.length} · ${s.stage}`;
+  $("#wprev").disabled = cur === 0; $("#wnext").disabled = cur === steps.length - 1;
+}
+$("#wscrub").max = steps.length - 1;
+$("#wscrub").addEventListener("input", (e) => go(+e.target.value));
+$("#wprev").onclick = () => go(cur - 1); $("#wnext").onclick = () => go(cur + 1); $("#wfirst").onclick = () => go(0);
+$("#wplay").onclick = () => {
+  if (timer) { clearInterval(timer); timer = null; $("#wplay").textContent = "Play"; return; }
+  if (cur === steps.length - 1) go(0);
+  $("#wplay").textContent = "Pause";
+  timer = setInterval(() => { if (cur >= steps.length - 1) { $("#wplay").click(); return; } go(cur + 1); }, 2600);
+};
+document.addEventListener("keydown", (e) => {
+  if ($("#tab-walk").hidden || e.target.closest("input, select, textarea")) return;
+  if (e.key === "ArrowRight") { go(cur + 1); e.preventDefault(); } else if (e.key === "ArrowLeft") { go(cur - 1); e.preventDefault(); }
+});
+go(0);
+
+// ---------- plans ----------
+let planSel = 0;
+function renderPlans() {
+  $("#qlist").replaceChildren(...D.plans.map((p, i) => h("button", { class: "qbtn" + (p.plan.actual ? "" : " zero"), "aria-pressed": String(i === planSel), onclick: () => { planSel = i; renderPlans(); } },
+    h("b", {}, p.name), h("span", {}, p.note.replace(/^This query /, "")), h("em", {}, `${p.plan.actual} rows`))));
+  const p = D.plans[planSel];
+  const all = []; (function walk(n) { all.push(n); n.kids.forEach(walk); })(p.plan);
+  $("#qplan").replaceChildren(
+    h("h3", {}, `${p.name} · ${p.plan.actual} rows · ${(p.ms * 1000).toFixed(0)} µs`),
+    h("p", { class: "sub" }, p.note),
+    h("pre", {}, p.query.replace(/PREFIX \S+ <[^>]+> /g, "")),
+    h("div", { class: "plan", style: "padding:14px 0 0" }, planNodes(p.plan, 0, [])),
+    h("p", { class: "note" }, "Joins: " + ([...new Set(all.map((n) => n.op).filter((o) => o.includes("Join")))].join(", ") || "none") + ". Times are from this one-university file, not the benchmark."),
+  );
+}
+renderPlans();
+
+// ---------- crash and restart ----------
+const R = D.recovery.steps;
+const KIND_C = { begin: "var(--faint)", term: "var(--dict)", update: "var(--primary)", commit: "var(--ok)" };
+let rsel = 0;
+const crashAt = R.findIndex((s) => s.kind === "crash"), restartAt = R.findIndex((s) => s.kind === "restart");
+const lostLsn = new Set(R[crashAt].wal.map((r) => r.lsn).filter((l) => !R[restartAt].wal.some((r) => r.lsn === l)));
+const committed = (wal) => new Set(wal.filter((r) => r.kind === "commit").map((r) => r.txn));
+const droppedTxns = new Set(R[restartAt].wal.map((r) => r.txn).filter((t) => !committed(R[restartAt].wal).has(t)));
+const RNOTE = {
+  open: "A new directory. Nothing to recover: no snapshot, an empty log.",
+  load: "The load is one transaction: a begin, a term record for each new term, an update for each triple, a commit. All of it is forced to the log before the prompt comes back.",
+  insert: "Each statement is its own transaction, appended to the log and forced before the shell answers.",
+  checkpoint: "The checkpoint writes every term and triple to the snapshot and resets the log. A restart now reads the snapshot and replays only what came after it.",
+  delete: "A delete is logged the same way, as an update record with the triple's ids.",
+  crash: "<b>\\crash</b> exits without flushing or closing anything. Then the last 10 bytes of the log are cut off, so the final record, the delete's commit, is torn.",
+  restart: "On restart the snapshot is loaded and the log replayed. The torn record fails its length and checksum check, so replay stops there: the delete never committed, and it is dropped.",
+  query: "Fay, Gus and Hal are back, from the snapshot and the log. Alice is still a student, because the delete was never committed.",
+  verify: "<b>\\verify</b> rebuilds the database from the files alone and compares it with the live one.",
+};
+function renderCrash() {
+  const s = R[rsel];
+  $("#rdots").replaceChildren(...R.map((x, i) => h("button", { "aria-pressed": String(i === rsel), class: i < rsel ? "past" : "", onclick: () => { rsel = i; renderCrash(); } }, x.kind)));
+  $("#rprev").disabled = rsel === 0; $("#rnext").disabled = rsel === R.length - 1;
+  $("#rterm").replaceChildren(...R.map((x, i) => h("div", { class: "blk" + (i === rsel ? " on" : i > rsel ? " later" : "") },
+    h("div", { class: "cmd" + (x.cmd.startsWith("ontodb ") ? " sh" : "") }, x.cmd),
+    x.kind === "crash" ? h("div", { class: "out warn" }, `(process gone)\n$ truncate the log by ${x.cut} bytes   # ${x.before.wal_bytes} → ${x.wal_bytes}`) : null,
+    x.out ? h("div", { class: "out" + (/warning/.test(x.out) ? " warn" : "") }, x.out) : null)));
+  $("#rterm").querySelector(".blk.on")?.scrollIntoView({ block: "nearest" });
+  $("#rnote").innerHTML = RNOTE[s.kind] || "";
+  const max = Math.max(...R.map((x) => Math.max(x.wal_bytes, x.snapshot_bytes)));
+  $("#rfiles").replaceChildren(...[["snapshot", s.snapshot_bytes, "var(--dict)"], ["wal", s.wal_bytes, "var(--primary)"]].map(([n, b, c]) => {
+    const row = h("div", { class: "file" }, h("b", {}, n), h("i"), h("span", {}, fmt(b) + " B"));
+    row.children[1].style.setProperty("--w", (b / max) * 100 + "%"); row.children[1].style.setProperty("--c", c);
+    return row;
+  }));
+  const wal = s.wal;
+  const after = rsel >= restartAt;
+  const status = (r) => (s.kind === "crash" && lostLsn.has(r.lsn) ? "cut" : after && droppedTxns.has(r.txn) ? "dropped" : "");
+  const shown = s.kind === "crash" || after ? (after ? R[crashAt].wal : wal) : wal;
+  $("#rwal-sub").textContent = `${wal.length} records in the log${s.kind === "checkpoint" ? " after the reset" : ""}${after ? `; replay kept ${committed(wal).size} committed transactions and dropped ${droppedTxns.size}` : ""}.`;
+  $("#rtape").replaceChildren(...shown.map((r) => {
+    const st = after && lostLsn.has(r.lsn) ? "cut" : status(r);
+    const c = h("span", { class: "rec " + st, style: `--c:${KIND_C[r.kind] || "var(--faint)"}` });
+    c.addEventListener("mousemove", (e) => showTip(e, `lsn ${r.lsn} · txn ${r.txn} · ${r.kind} ${r.body}`)); c.addEventListener("mouseleave", hideTip);
+    return c;
+  }));
+  $("#rkey").replaceChildren(...Object.entries(KIND_C).map(([k, c]) => h("span", { style: `--c:${c}` }, h("i"), k)), ...(s.kind === "crash" || after ? [h("span", { style: "--c:var(--bad)" }, h("i"), "torn or dropped")] : []));
+  $("#rrecs").replaceChildren(...shown.slice(-14).map((r) => h("div", { class: after && (droppedTxns.has(r.txn) || lostLsn.has(r.lsn)) ? "dropped" : s.kind === "crash" && lostLsn.has(r.lsn) ? "dropped" : "" }, h("span", {}, "lsn " + r.lsn), h("span", {}, "txn " + r.txn), h("span", {}, r.kind), h("span", {}, r.body.replace(/<([^>]+)>/g, (_, i) => short(i))))));
+}
+$("#rprev").onclick = () => { rsel = Math.max(0, rsel - 1); renderCrash(); };
+$("#rnext").onclick = () => { rsel = Math.min(R.length - 1, rsel + 1); renderCrash(); };
+renderCrash();
+
+// ---------- hierarchy ----------
+function parseClasses(text) {
+  const [head, ...lines] = text.split("\n");
+  return { head, items: lines.filter((l) => l.startsWith("  ")).map((l) => { const m = l.match(/<([^>]+)>\s+"([^"]*)"/); return m ? { iri: m[1], label: m[2] } : null; }).filter(Boolean), more: (lines.find((l) => l.startsWith("...")) || "").trim() };
+}
+function parseSimilar(text) {
+  const [head, ...lines] = text.split("\n");
+  return { head, items: lines.map((l) => l.match(/^\s+([\d.]+)\s+<([^>]+)>\s+"([^"]*)"/)).filter(Boolean).map((m) => ({ score: +m[1], iri: m[2], label: m[3] })) };
+}
+{
+  const S = D.semantic;
+  const hi = S.hindex.match(/labelled (\d+) classes.*?(\d+) edges.*?(\d+) intervals, at most (\d+) per class; ([\d.]+) ms/);
+  const panels = S.under.map((u) => {
+    const p = parseClasses(u), m = p.head.match(/(\d+) classes at or below <([^>]+)> \((\d+) range scans?, ([\d.]+) ms\)/);
+    const root = p.items.find((x) => x.iri === m[2]);
+    return h("div", { class: "panel" },
+      h("h3", {}, `Under “${root ? root.label : short(m[2])}”`),
+      h("div", { class: "big" }, m[1], h("small", {}, `classes, ${m[3]} range scan${m[3] === "1" ? "" : "s"}, ${(+m[4] * 1000).toFixed(0)} µs`)),
+      h("p", { class: "sub", style: "margin:6px 0 10px" }, h("code", {}, `\\under ${short(m[2])}`), ` · ${m[3]} interval${m[3] === "1" ? "" : "s"} for this class`),
+      h("ul", { class: "cls" }, p.items.map((x) => h("li", {}, h("span", {}, x.label), h("small", {}, short(x.iri))))),
+      h("p", { class: "note" }, p.more));
+  });
+  const sims = [S.similar, S.similar_under].map((t, k) => {
+    const p = parseSimilar(t), m = p.head.match(/nearest to <[^>]+>\s+"([^"]+)"(?:, under <([^>]+)>)? \[([^,\]]+), ([\d.]+) us\]/);
+    const under = parseClasses(S.under[1]).items.find((x) => x.iri === m[2]);
+    return h("div", { class: "panel" },
+      h("h3", {}, k ? `Nearest to “${m[1]}”, under “${under ? under.label : short(m[2])}”` : `Nearest to “${m[1]}”, anywhere`),
+      h("p", { class: "sub" }, h("code", {}, k ? "\\similar … under …" : "\\similar …"), ` · ${m[3]}, ${(+m[4]).toFixed(0)} µs · cosine similarity`),
+      h("div", { class: "hits" }, p.items.map((x) => { const r = h("div", { class: "hit" }, h("span", { class: "sc" }, x.score.toFixed(3)), h("span", { class: "nm" }, x.label, h("small", {}, short(x.iri)))); r.children[1].style.setProperty("--w", x.score * 100 + "%"); return r; })),
+      h("p", { class: "note" }, k ? "The filter keeps only classes inside the fatty-acid branch, so the nearest retinoid terms drop out and the closest fatty-acid processes take their place." : "Retinoid metabolism sits in the lipid branch next to the retinol and retinoic-acid terms, which are the nearest by embedding."));
+  });
+  $("#hgrid").append(
+    h("div", { class: "panel", style: "grid-column:1/-1" }, h("h3", {}, "The index"), h("p", { class: "sub", style: "margin:0" },
+      `${fmt(hi[1])} classes and ${fmt(hi[2])} subclass edges become ${fmt(hi[3])} intervals, at most ${hi[4]} for one class, in ${(+hi[5]).toFixed(2)} ms. ${S.vload.split(";")[0]}; ${S.vindex.replace(/\n/g, "; ")}.`)),
+    ...panels, ...sims);
+}
+
+// ---------- benchmarks ----------
+const B = D.bench;
+const ECOL = { "OntoDB": "var(--e-ontodb)", "OntoDB ids": "var(--e-ontodb)", "Oxigraph (RocksDB)": "var(--e-oxrocks)", "Oxigraph (memory)": "var(--e-oxmem)", "Jena TDB2": "var(--e-jena)", "SQLite": "var(--e-sqlite)" };
+$("#bench-sub").innerHTML = "The numbers are from <code>benchmarks/compare/results.md</code>: " + B.machine.split(". See")[0] + ". Every engine runs the same queries over the same data; OntoDB returns ids or strings, the others strings.";
+const usFmt = (us) => (us == null ? "–" : us >= 1e6 ? (us / 1e6).toFixed(2) + " s" : us >= 1000 ? +(us / 1000).toFixed(1) + " ms" : Math.round(us) + " µs");
+function dotPlot(el, rows, series, { label, zero, ring = [], width = 700 }) {
+  const all = rows.flatMap((r) => series.map((s) => r.us[s])).filter((v) => v != null);
+  const lo = Math.pow(10, Math.floor(Math.log10(Math.max(0.5, Math.min(...all.filter((v) => v > 0)))))), hi = Math.pow(10, Math.ceil(Math.log10(Math.max(...all))));
+  const Wd = width, m = { l: 92, r: 14, t: 24 }, rh = 24, Ht = m.t + rows.length * rh + 8;
+  const X = (v) => m.l + ((Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))) * (Wd - m.l - m.r);
+  const svg = svgEl("svg", { viewBox: `0 0 ${Wd} ${Ht}`, role: "img", "aria-label": "Latency per query and engine, log scale" });
+  for (let d = lo; d <= hi; d *= 10) { svg.append(svgEl("line", { class: "grid", x1: X(d), x2: X(d), y1: m.t - 6, y2: Ht - 6 })); svg.append(svgEl("text", { x: X(d), y: 12, "text-anchor": "middle" }, usFmt(d))); }
+  rows.forEach((r, i) => {
+    const y = m.t + i * rh + rh / 2;
+    svg.append(svgEl("line", { class: "lane", x1: m.l, x2: Wd - m.r, y1: y, y2: y }));
+    svg.append(svgEl("text", { class: "q" + (zero && zero(r) ? " zero" : ""), x: 0, y: y + 4 }, label(r)));
+    for (const s of [...series].reverse()) {
+      const v = r.us[s]; if (v == null) continue;
+      const isRing = ring.includes(s);
+      const c = svgEl("circle", { cx: X(v), cy: y, r: s.startsWith("OntoDB") ? 6.5 : 5, class: isRing ? "ring" : "", style: isRing ? `stroke:${ECOL[s]}` : `fill:${ECOL[s]}` });
+      const hit = svgEl("circle", { cx: X(v), cy: y, r: 11, style: "fill:transparent;stroke:none" });
+      const txt = `${label(r)} · ${s}: ${usFmt(v)}`;
+      for (const n of [c, hit]) { n.addEventListener("mousemove", (e) => showTip(e, txt)); n.addEventListener("mouseleave", hideTip); }
+      svg.append(c, hit);
+    }
+  });
+  el.replaceChildren(svg, h("div", { class: "legend" }, series.map((s) => h("span", { style: `--c:${ECOL[s]}` }, h("i", ring.includes(s) ? { style: `background:var(--bg);box-shadow:inset 0 0 0 2px ${ECOL[s]}` } : {}), s))));
+}
+function table(el, head, rows) { el.replaceChildren(h("table", {}, h("thead", {}, h("tr", {}, head.map((c, i) => h("th", { class: i ? "num" : "" }, c)))), h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c, i) => h("td", { class: (i ? "num" : "") + (c && c.best ? " best" : "") }, c && c.t != null ? c.t : c))))))); }
+dotPlot($("#bq"), B.queries, B.engines, { label: (r) => `${r.name} · ${fmt(r.rows)}`, zero: (r) => !r.rows });
+table($("#bq-t"), ["query", "rows", ...B.engines], B.queries.map((r) => { const best = Math.min(...B.engines.map((e) => r.us[e])); return [r.name, fmt(r.rows), ...B.engines.map((e) => ({ t: usFmt(r.us[e]), best: r.us[e] === best }))]; }));
+const goSeries = ["OntoDB ids", "OntoDB", "Oxigraph (RocksDB)", "Oxigraph (memory)"];
+dotPlot($("#bgo"), B.go, goSeries, { label: (r) => `${r.bucket} below`, ring: ["OntoDB ids"], width: 480 });
+table($("#bgo-t"), ["below C", "answers", ...goSeries.map((s) => (s === "OntoDB" ? "OntoDB strings" : s))], B.go.map((r) => [r.bucket, r.answers, ...goSeries.map((s) => usFmt(r.us[s]))]));
+const yMax = Math.ceil(Math.max(...B.conc.flatMap((c) => c.lookups)) / 400000) * 400000;
+lineChart($("#bconc"), B.conc.map((c) => ({ name: c.engine, color: ECOL[c.engine], points: [1, 2, 4, 8].map((t, i) => [t, c.lookups[i] / 1e6]) })), { xLabel: "threads", yLabel: "millions of lookups/s", yMax: yMax / 1e6, xTicks: [1, 2, 4, 8], width: 520, height: 280 });
+table($("#bconc-t"), ["engine", "1", "2", "4", "8 threads"], B.conc.map((c) => [c.engine, ...c.lookups.map(fmt)]));
+table($("#bload"), ["engine", "triples", "load (s)", "on disk (MiB)", "peak RSS (MiB)"], B.load.map((r) => [r.engine, r.triples, r.load, r.disk, r.rss]));
+
+// ---------- tabs and footer ----------
+tabs({ walk: () => {} });
+const syncBar = () => { const on = !$("#tab-walk").hidden; $("#wbar").hidden = !on; document.body.classList.toggle("stepping", on); };
+$$("nav.tabs button").forEach((b) => b.addEventListener("click", syncBar)); window.addEventListener("hashchange", syncBar); syncBar();
+$("#foot").append(
+  h("p", {}, "Recorded with ", h("code", {}, "python3 showcase/record.py"), " from the release build at commit ", h("b", {}, D.commit), ", and built with ", h("code", {}, "python3 showcase/build.py"), ". The page draws what the shell printed; nothing is measured in the browser."),
+  h("p", {}, "OntoDB by Lam Nguyen. ", h("a", { href: "https://lamng3.com/ontodb/" }, "Manual"), " · ", h("a", { href: "https://github.com/lamng3/OntoDB" }, "Source")),
+);
+</script>
+</body>
+</html>
