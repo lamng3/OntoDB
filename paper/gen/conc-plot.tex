@@ -1,0 +1,14 @@
+\begin{tikzpicture}
+\begin{axis}[width=\columnwidth,height=5.6cm,xmode=log,ymode=log,log basis x=2,xtick={1,2,4,8},xticklabels={1,2,4,8},xlabel={threads},ylabel={lookups per second},grid=both,legend pos=south east,legend style={font=\scriptsize},tick label style={font=\scriptsize},label style={font=\small}]
+\addplot+[mark=*,color=blue!70!black,thick] coordinates {(1,416050) (2,767222) (4,1250348) (8,1464779)};
+\addlegendentry{\sys{}}
+\addplot+[mark=square*,color=red!70!black,thick] coordinates {(1,43594) (2,91866) (4,137110) (8,208977)};
+\addlegendentry{Ox.\ RocksDB}
+\addplot+[mark=triangle*,color=orange!80!black,thick] coordinates {(1,96048) (2,175432) (4,256917) (8,459776)};
+\addlegendentry{Ox.\ memory}
+\addplot+[mark=diamond*,color=green!50!black,thick] coordinates {(1,78280) (2,147564) (4,251154) (8,241599)};
+\addlegendentry{Jena TDB2}
+\addplot+[mark=pentagon*,color=black!60,thick] coordinates {(1,141488) (2,256339) (4,391720) (8,375194)};
+\addlegendentry{SQLite}
+\end{axis}
+\end{tikzpicture}

@@ -38,6 +38,18 @@ for mode in rocksdb memory; do
 done
 jena $raw/work-jena-go types $raw/classes.tsv 5 ../../data/downloads/go/go.nt ../semantic/raw/work-gotypes/entities.nt > $raw/jena-types.tsv 2>/dev/null
 $py sqlite_bench.py $raw/work-sql-go types $raw/classes.tsv 5 ../../data/downloads/go/go.nt ../semantic/raw/work-gotypes/entities.nt > $raw/sqlite-types.tsv
+# the decode cache off, for the ablation
+ONTODB_TERM_CACHE=0 $od $raw/work-ontodb-nc $raw/queries-lubm10.tsv 5 ../../data/downloads/lubm10/University*.owl > $raw/ontodb-nocache-lubm10.tsv
+(cd ../.. && ONTODB_TERM_CACHE=0 ./build/release/ontodb_bench_semantic types benchmarks/semantic/raw/work-gotypes go data/downloads/go/go.nt 200000 > /dev/null && cp benchmarks/semantic/raw/work-gotypes/classes.tsv benchmarks/compare/raw/classes-nocache.tsv)
+(cd ../.. && ./build/release/ontodb_bench_semantic types benchmarks/semantic/raw/work-gotypes go data/downloads/go/go.nt 200000 > /dev/null && cp benchmarks/semantic/raw/work-gotypes/classes.tsv benchmarks/compare/raw/classes.tsv)
+# concurrency: one to eight threads, three seconds each
+lfiles=(../../data/downloads/lubm10/University*.owl)
+cmake --build ../../build/release --target ontodb_bench_concurrency >/dev/null
+../../build/release/ontodb_bench_concurrency $raw/work-conc $raw/queries-lubm10.tsv 3 "${lfiles[@]}" > $raw/ontodb-conc.tsv
+$ox rocksdb $raw/work-oxi-conc conc $raw/queries-lubm10.tsv 3 "${lfiles[@]}" > $raw/oxigraph-rocksdb-conc.tsv
+$ox memory $raw/work-oxi-conc conc $raw/queries-lubm10.tsv 3 "${lfiles[@]}" > $raw/oxigraph-memory-conc.tsv
+jena $raw/work-jena-conc conc $raw/queries-lubm10.tsv 3 "${lfiles[@]}" > $raw/jena-conc.tsv 2>/dev/null
+$py sqlite_bench.py $raw/work-sql-conc conc $raw/queries-lubm10.tsv 3 "${lfiles[@]}" > $raw/sqlite-conc.tsv
 python3 summarize.py $raw/ontodb-lubm10.tsv $raw/oxigraph-lubm10.tsv $raw/oxigraph-mem-lubm10.tsv $raw/jena-lubm10.tsv $raw/sqlite-lubm10.tsv > $raw/summary-lubm10.md
 python3 summarize.py $raw/ontodb-lubm1.tsv $raw/oxigraph-lubm1.tsv $raw/oxigraph-mem-lubm1.tsv $raw/jena-lubm1.tsv $raw/sqlite-lubm1.tsv > $raw/summary-lubm1.md
 python3 summarize_types.py $raw/oxigraph-rocksdb-types.tsv $raw/oxigraph-memory-types.tsv $raw/jena-types.tsv $raw/sqlite-types.tsv > $raw/summary-types.md

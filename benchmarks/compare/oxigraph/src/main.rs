@@ -13,12 +13,15 @@
 // path: SELECT DISTINCT ?x WHERE { ?c rdfs:subClassOf* <C> . ?x a ?c } (path first: Jena does not reorder it).
 
 use oxigraph::io::{RdfFormat, RdfParser};
+use oxigraph::model::NamedNode;
 use oxigraph::sparql::{PreparedSparqlQuery, QueryResults, SparqlEvaluator};
 use oxigraph::store::Store;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use oxigraph::model::{GraphNameRef, NamedNodeRef, QuadRef};
 
 fn dir_size(path: &Path) -> u64 {
     let mut total = 0;
@@ -67,10 +70,111 @@ fn timed(store: &Store, text: &str, runs: usize) -> (usize, f64) {
     (rows, times[times.len() / 2])
 }
 
+
+// Threads against one store: `lookup` readers, `insert` writers, or one writer beside readers.
+// Queries come from the (s,.,.) and (s,p,.) shapes of the query list; a writer inserts one
+// triple per call (each call is its own transaction) with a scattered new subject.
+fn concurrency(store: &Store, queries: &str, seconds: f64) {
+    let mut prepared = Vec::new();
+    for line in BufReader::new(File::open(queries).unwrap()).lines() {
+        let line = line.unwrap();
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 2 || !(cols[0].starts_with("s--") || cols[0].starts_with("sp-")) {
+            continue;
+        }
+        prepared.push(SparqlEvaluator::new().parse_query(cols[1]).unwrap());
+    }
+    let next = AtomicU64::new(0);
+    let run = |readers: usize, writers: usize| -> (f64, f64) {
+        let stop = AtomicBool::new(false);
+        let reads = AtomicU64::new(0);
+        let inserts = AtomicU64::new(0);
+        let start = Instant::now();
+        std::thread::scope(|scope| {
+            for r in 0..readers {
+                let (stop, reads, prepared) = (&stop, &reads, &prepared);
+                scope.spawn(move || {
+                    let mut at = r * 7;
+                    let mut mine = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        let q = prepared[at % prepared.len()].clone();
+                        if let QueryResults::Solutions(solutions) = q.on_store(store).execute().unwrap() {
+                            for solution in solutions {
+                                let solution = solution.unwrap();
+                                for (_, term) in solution.iter() {
+                                    std::hint::black_box(term.to_string().len());
+                                }
+                            }
+                        }
+                        at += 1;
+                        mine += 1;
+                    }
+                    reads.fetch_add(mine, Ordering::Relaxed);
+                });
+            }
+            for _ in 0..writers {
+                let (stop, inserts, next) = (&stop, &inserts, &next);
+                scope.spawn(move || {
+                    let p = NamedNodeRef::new("http://example.org/new/p").unwrap();
+                    let o = NamedNodeRef::new("http://example.org/new/o").unwrap();
+                    let mut mine = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        let id = next.fetch_add(1, Ordering::Relaxed).wrapping_mul(2654435761) & ((1u64 << 26) - 1);
+                        let s = NamedNode::new(format!("http://example.org/new/s{}", id)).unwrap();
+                        store.insert(QuadRef::new(&s, p, o, GraphNameRef::DefaultGraph)).unwrap();
+                        mine += 1;
+                    }
+                    inserts.fetch_add(mine, Ordering::Relaxed);
+                });
+            }
+            std::thread::sleep(Duration::from_secs_f64(seconds));
+            stop.store(true, Ordering::Relaxed);
+        });
+        let elapsed = start.elapsed().as_secs_f64();
+        (reads.load(Ordering::Relaxed) as f64 / elapsed, inserts.load(Ordering::Relaxed) as f64 / elapsed)
+    };
+    for t in [1usize, 2, 4, 8] {
+        let (r, _) = run(t, 0);
+        println!("read\tlookup\t{}\t{:.0}\t0", t, r);
+    }
+    for t in [1usize, 2, 4, 8] {
+        let (_, w) = run(0, t);
+        println!("insert\t-\t{}\t0\t{:.0}", t, w);
+    }
+    for t in [1usize, 2, 4, 8] {
+        let (r, w) = run(t, 1);
+        println!("mixed\tlookup\t{}\t{:.0}\t{:.0}", t, r, w);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mode = &args[1];
     let work = PathBuf::from(&args[2]);
+    if args[3] == "conc" {
+        let work = PathBuf::from(&args[2]);
+        let (store, _dir) = if args[1] == "memory" {
+            (Store::new().unwrap(), None)
+        } else {
+            let dir = work.join("rocksdb");
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&work).unwrap();
+            (Store::open(&dir).unwrap(), Some(dir))
+        };
+        {
+            let mut loader = store.bulk_loader();
+            for f in &args[6..] {
+                let path = fs::canonicalize(f).unwrap();
+                let parser = RdfParser::from_format(RdfFormat::RdfXml)
+                    .with_base_iri(format!("file://{}", path.display()))
+                    .unwrap();
+                loader.load_from_reader(parser, BufReader::new(File::open(&path).unwrap())).unwrap();
+            }
+            loader.commit().unwrap();
+        }
+        concurrency(&store, &args[4], args[5].parse().unwrap());
+        return;
+    }
     let types = args[3] == "types";
     let queries = &args[if types { 4 } else { 3 }];
     let runs: usize = args[if types { 5 } else { 4 }].parse().unwrap();

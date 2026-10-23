@@ -1,0 +1,133 @@
+\section{Concurrency}
+\label{sec-conc}
+
+An ontology store embedded in a service answers many queries at once while
+facts arrive.
+Strict two-phase locking keeps transactions isolated (Section~\ref{sec-store-log});
+this section is about the \emph{latches} that keep the pages and the trees
+sound, which decide how many threads the engine can use.
+Our first implementation followed the textbook: one latch over the buffer
+pool's tables, a mutex over the dictionary, and a root-to-leaf chain of
+exclusive latches for every insert.
+Sampling a run of eight reader threads showed that four of five samples were
+threads waiting for a lock: 80\% of the waits were on the pool's latch and
+20\% on the dictionary's mutex.
+Once those were gone the next waits were on the shard latch of the pages every
+query touches and on the page latches themselves (a \texttt{shared\_mutex} keeps
+its reader count behind an internal mutex, so readers of one root page queue
+on it).
+We replaced each in turn.
+
+\subsection{An Optimistic Descent for Writers}
+
+A pessimistic insert latches every page on the way down in write mode until
+it reaches a page that cannot split, so every insert latches the root
+exclusively.
+Most inserts split nothing: a leaf holds 169 keys.
+Algorithm~\ref{alg-optimistic} descends with read latches instead, takes the
+write latch of the leaf alone, and finishes if the leaf has room (for a
+delete, if it would stay at least half full).
+Otherwise nothing has been written, and the pessimistic algorithm of
+Section~\ref{sec-store} runs from the start.
+The type of a child is read from its pinned page, which cannot change while it
+is pinned, so the leaf can be write-latched while its parent is still
+read-latched and no thread ever holds a write latch above the leaf unless a
+split or merge needs it.
+
+\begin{algorithm}[t]
+\caption{\textsc{TryLeafOnly}$(x,\mathit{op})$ for an insert or a delete}\label{alg-optimistic}
+\small
+read-latch the header; $P \gets$ the root; \lIf{the tree is empty or $P$ is a leaf}{\Return fail}
+read-latch $P$; release the header\;
+\While{true}{
+  $P' \gets \textsc{ChildFor}(P,x)$; pin $P'$ and read its type\;
+  \lIf{$P'$ is internal}{read-latch $P'$; release $P$; $P \gets P'$; \textbf{continue}}
+  write-latch $P'$ (the leaf); release $P$\;
+  \If{$\mathit{op}$ is insert and $x \in P'$ or $\mathit{op}$ is delete and $x \notin P'$}{\Return done (no change)}
+  \lIf{$\mathit{op}$ is insert and $P'$ is full, or $\mathit{op}$ is delete and $|P'| \le \lfloor B/2\rfloor$}{\Return fail}
+  insert or remove $x$ in $P'$; \Return done\;
+}
+\end{algorithm}
+
+The latch order stays top to bottom, so it cannot deadlock with the
+pessimistic path: a thread that holds a read latch on a parent and waits for
+the leaf is waiting for a thread that either finishes the leaf or, if it
+needs a split, already holds the leaf and does not need the parent again.
+Writers to the same leaf still serialize, as they must.
+
+\subsection{A Sharded Pool with a Latch-Free Hit}
+
+The buffer pool is split into $S$ shards (16 in our measurements).
+A page belongs to shard $\mathit{id} \bmod S$, which owns an equal share of the
+frames, its own page table, free list, and LRU-K replacer, and one latch.
+That alone removes most waiting, but the pages every query touches, the roots
+of the trees, all hash to a few shards, so a latch per shard is still a latch
+every thread takes at every query.
+A hit on a resident page therefore takes no latch.
+The shard keeps its page table also as an open-addressing array of atomic
+words (page id and frame), written under the shard latch and read without it
+(Algorithm~\ref{alg-fetch}).
+A reader finds the frame, adds a pin with a compare-and-swap that fails if the
+frame has been \emph{claimed} (pin count $-1$), and checks that the frame still
+holds the page.
+A frame is evicted or deleted only after its owner swaps a pin count of
+zero to $-1$; from then on no one can pin it, so a pinned frame is never
+evicted under a reader, and a pin that raced with an eviction lands on a frame
+that now holds another page, sees the mismatch, and lets go.
+
+\begin{algorithm}[t]
+\caption{\textsc{Fetch}$(\mathit{id})$ in a shard, and the claim that guards eviction}\label{alg-fetch}
+\small
+$\varphi \gets \textsc{IndexFind}(\mathit{id})$ \tcp*{atomic array, no latch}
+\If{$\varphi \ne \bot$ and \textsc{TryPin}(frame $\varphi$)}{
+  \lIf{frame $\varphi$ holds page $\mathit{id}$}{mark frame $\varphi$ referenced; \Return frame $\varphi$}
+  unpin frame $\varphi$ \tcp*{the frame was refilled}
+}
+latch the shard\;
+\lIf{page $\mathit{id}$ is in the page table}{pin and return its frame}
+$\varphi \gets$ a free frame, or else a victim:\;
+\quad fold the \emph{referenced} marks into the replacer; mark frames with pin count 0 evictable\;
+\quad \Repeat{a victim is claimed}{ask the replacer for the victim $v$; \textsc{TryClaim}$(v)$: swap pin count $0 \to -1$}\;
+\quad write $v$ back if dirty; \textsc{IndexErase}$(v)$; drop $v$ from the page table\;
+read page $\mathit{id}$ into $\varphi$; set its pin count to 1; \textsc{IndexInsert}$(\mathit{id}, \varphi)$; release the shard\;
+\Return frame $\varphi$\;
+\end{algorithm}
+
+Recording every hit in the LRU-K history would put the shard latch back.
+A hit instead sets a \emph{referenced} bit on the frame (a plain load when
+already set); when a shard must evict, it first folds the marked frames into
+the replacer.
+Eviction order is then the LRU-K order of the accesses the replacer has seen
+(every miss, and every marked frame once per eviction), a coarser history than
+the textbook's.
+A pool with one shard, the default, keeps the exact textbook behavior and
+takes none of these paths.
+
+\subsection{The Latch and the Dictionary}
+
+The page latch is one atomic word: 30 bits count readers, one bit says a
+writer is waiting (and keeps new readers out, so writers are not starved), one
+says a writer holds it.
+It spins briefly and then yields; a page latch is held for one page operation
+and never across I/O.
+Decoding a term id reads the dictionary's trees, which latch their own
+pages, and a cache of decoded spellings.
+A dictionary-wide mutex serialized all of it; now only inserts are
+serialized, so that a spelling is never interned twice, and the cache is
+guarded by 64 stripe locks chosen by cache slot, so threads decoding
+different ids do not meet.
+
+\subsection{Correctness}
+
+The invariants are small.
+A frame's pin count is $-1$ only while a thread that holds the shard latch
+owns the frame for eviction or deletion, and is restored on every exit; a page
+is in the atomic index if and only if it is in the page table; a leaf is
+changed only under its write latch; and the order of latches (header, then
+top to bottom, siblings left to right) is the same on every path.
+Two stress tests run eight reader threads against a pool of 64 frames and 400
+pages whose bytes name their page, with hits and evictions mixed, and four
+inserters, two deleters, and two scanners against a tree of tiny nodes,
+checking order, invariants, and contents.
+The whole suite of 185 tests passes in release mode, under ThreadSanitizer,
+and under AddressSanitizer and UndefinedBehaviorSanitizer.

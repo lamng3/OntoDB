@@ -207,11 +207,78 @@ auto BPlusTree::FindFirst(const TripleKey& key, int prefix_len) const -> std::op
 
 // ---------------------------------------------------------------- insert ---
 
+// Optimistic descent. Read-latch the header and each internal page, crabbing as in a lookup; the
+// child's type is read from the pinned page, which cannot change, so the leaf can be write-latched
+// while its parent is still read-latched. A leaf that has room (or, for a remove, more than the
+// minimum) takes the change; otherwise nothing has been touched and the caller starts over.
+auto BPlusTree::TryLeafOnly(const TripleKey& key, bool insert, bool* result) -> bool {
+  ReadPageGuard header = bpm_->FetchPageRead(header_page_id_);
+  const page_id_t root = BPlusTreeHeaderPage(const_cast<Page*>(header.View())).GetRootPageId();
+  if (root == INVALID_PAGE_ID) {
+    return false;
+  }
+  Page* page = bpm_->FetchPage(root);
+  if (page == nullptr) {
+    throw StorageException("cannot fetch page " + std::to_string(root));
+  }
+  if (BPlusTreePage(page).IsLeaf()) {
+    bpm_->UnpinPage(root, false);
+    return false;  // a one-page tree: the pessimistic path knows how to grow and shrink it
+  }
+  ReadPageGuard parent{bpm_, page};
+  header.Drop();
+  for (int depth = 1;; depth++) {
+    CheckDepth(name_, depth);
+    const page_id_t child = ChildFor(ReadInternal(parent), key);
+    Page* next = bpm_->FetchPage(child);
+    if (next == nullptr) {
+      throw StorageException("cannot fetch page " + std::to_string(child));
+    }
+    if (!BPlusTreePage(next).IsLeaf()) {
+      ReadPageGuard guard{bpm_, next};
+      parent = std::move(guard);  // latches the child, then lets go of the parent
+      continue;
+    }
+    WritePageGuard leaf_guard{bpm_, next};
+    parent.Drop();
+    auto keys = LeafKeys(BPlusTreeLeafPage(const_cast<Page*>(leaf_guard.View())));
+    const auto pos = std::lower_bound(keys.begin(), keys.end(), key, Less);
+    const bool present = pos != keys.end() && pos->Compare(key) == 0;
+    if (insert) {
+      if (present) {
+        *result = false;
+        return true;  // nothing written, so the guard leaves the page clean
+      }
+      if (static_cast<int>(keys.size()) >= leaf_max_) {
+        return false;
+      }
+      keys.insert(pos, key);
+    } else {
+      if (!present) {
+        *result = false;
+        return true;
+      }
+      if (static_cast<int>(keys.size()) <= leaf_max_ / 2) {
+        return false;
+      }
+      keys.erase(pos);
+    }
+    BPlusTreeLeafPage leaf(leaf_guard.GetPage());  // marks the page dirty: only now is it written
+    WriteLeafKeys(&leaf, keys);
+    *result = true;
+    return true;
+  }
+}
+
 // Pessimistic crabbing: latch the header, then each page on the way down in
 // write mode, and let go of every latched ancestor (the header included) as
 // soon as the page just latched is safe, meaning it cannot split. What is
 // still latched when the leaf is reached is exactly what a split can touch.
 auto BPlusTree::Insert(const TripleKey& key) -> bool {
+  bool done = false;
+  if (TryLeafOnly(key, true, &done)) {
+    return done;
+  }
   const PageGroup group(bpm_);  // declared first, so it ends after every guard
   WritePageGuard header = bpm_->FetchPageWrite(header_page_id_);
   const page_id_t root = BPlusTreeHeaderPage(const_cast<Page*>(header.View())).GetRootPageId();
@@ -345,6 +412,10 @@ auto BPlusTree::Insert(const TripleKey& key) -> bool {
 // empty page whose sibling link still points on, rather than freed: an
 // iterator may already hold its id, and must find a page it can step through.
 auto BPlusTree::Remove(const TripleKey& key) -> bool {
+  bool done = false;
+  if (TryLeafOnly(key, false, &done)) {
+    return done;
+  }
   const PageGroup group(bpm_);
   WritePageGuard header = bpm_->FetchPageWrite(header_page_id_);
   const page_id_t root = BPlusTreeHeaderPage(const_cast<Page*>(header.View())).GetRootPageId();

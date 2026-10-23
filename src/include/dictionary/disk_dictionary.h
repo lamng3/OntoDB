@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,7 +32,10 @@ namespace ontodb {
 // Decoding an id costs a tree descent and a heap read, so the most recently decoded
 // spellings sit in a direct-mapped cache of `cache_slots` entries (slot = id mod size). Ids are dense and a spelling never
 // changes or moves, so an entry is never stale; ids that are consecutive never share a slot.
-// Thread-safe: one mutex serializes every call.
+// Thread-safe. Inserts are serialized by one mutex, so a spelling is never interned twice.
+// Lookups take no dictionary-wide lock: the trees and the heap latch their own pages, an id is
+// published (the count rises) only after its record is complete, and the decode cache is guarded
+// by 64 stripe locks, so readers that decode different ids do not wait on one another.
 class DiskDictionary : public Dictionary {
  public:
   // `cache_slots` is the size of the decode cache described above; 0 turns it off.
@@ -54,7 +58,9 @@ class DiskDictionary : public Dictionary {
     term_id_t id{0};
     std::string spelling;
   };
-  mutable std::mutex mu_;
+  static constexpr size_t kCacheStripes = 64;
+  std::mutex insert_mu_;
+  mutable std::array<std::mutex, kCacheStripes> cache_mu_;
   mutable std::vector<CacheSlot> cache_;
   std::unique_ptr<TermHeap> heap_;
   std::unique_ptr<BPlusTree> by_id_;

@@ -14,9 +14,9 @@ struct DiskEnv {
   DiskManager disk;
   BufferPoolManager bpm;
 
-  explicit DiskEnv(size_t pool = 8, size_t k = 2, TraceSink* trace = nullptr)
+  explicit DiskEnv(size_t pool = 8, size_t k = 2, TraceSink* trace = nullptr, size_t shards = 1)
       : disk((dir.path() / "db").string(), &stats, trace)
-      , bpm(pool, &disk, k, nullptr, &stats, trace) {}
+      , bpm(pool, &disk, k, nullptr, &stats, trace, shards) {}
 };
 
 struct ArmGuard {
