@@ -109,6 +109,18 @@ auto Database::GetStore() -> TripleStore* {
   return indexed_ ? static_cast<TripleStore*>(&indexed_->store) : store_.get();
 }
 
+auto Database::EntailmentFor(const Config& config) -> TypeEntailment* {
+  if (!config.entail) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> guard(entailment_mu_);
+  if (!entailment_) {
+    entailment_ = std::make_unique<TypeEntailmentIndex>();
+  }
+  entailment_->Refresh(GetStore(), GetDictionary(), data_version_.load());
+  return entailment_.get();
+}
+
 auto Database::Semantic() -> SemanticEngine& {
   if (!semantic_) {
     semantic_ = std::make_unique<SemanticEngine>();
@@ -126,7 +138,10 @@ void Database::SetBackend(BackendKind kind) {
   }
   if ((kind == BackendKind::kIndexed) != (indexed_ != nullptr)) {
     semantic_.reset();  // ids are about to change
+    std::lock_guard<std::mutex> guard(entailment_mu_);
+    entailment_.reset();
   }
+  data_version_++;
   if (kind == BackendKind::kIndexed && !indexed_) {
     if (durability_) {
       throw std::runtime_error(
@@ -189,6 +204,7 @@ auto Database::Load(const std::string& path) -> LoadStats {
     throw;
   }
   txns_->Commit(txn);
+  data_version_++;
   InvalidateStatistics();
   return stats;
 }
@@ -235,6 +251,9 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
     if (!durability_ || !is_update) {
       ExecutorContext ctx(GetStore(), GetDictionary(), &config, txn, txns_.get(), &locks_, bpm_,
                           &stats_, &trace_, session);
+      if (!is_update) {
+        ctx.SetEntailment(EntailmentFor(config));
+      }
       const auto statistics = is_update ? nullptr : CurrentStatistics();
       result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
     } else {
@@ -260,6 +279,9 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   if (implicit) {
     txns_->Commit(txn);
   }
+  if (is_update) {
+    data_version_++;
+  }
   return result;
 }
 
@@ -270,6 +292,7 @@ auto Database::Explain(const std::string& sparql) -> std::string {
   const Config config = GetConfig();
   ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
                       &stats_, &trace_, nullptr);
+  ctx.SetEntailment(EntailmentFor(config));
   const auto statistics = CurrentStatistics();
   return ExecutionEngine(&ctx, statistics.get()).Explain(bound);
 }
@@ -283,6 +306,7 @@ auto Database::ExplainAnalyze(const std::string& sparql) -> std::string {
   const Config config = GetConfig();
   ExecutorContext ctx(GetStore(), GetDictionary(), &config, nullptr, nullptr, nullptr, bpm_,
                       &stats_, &trace_, nullptr);
+  ctx.SetEntailment(EntailmentFor(config));
   const auto statistics = CurrentStatistics();
   return ExecutionEngine(&ctx, statistics.get()).ExplainAnalyze(bound);
 }

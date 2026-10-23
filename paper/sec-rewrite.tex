@@ -1,0 +1,83 @@
+\section{Entailment-Aware Query Planning}
+\label{sec-rewrite}
+
+The interval index answers the instance query $\mathrm{inst}(c)$ of
+Section~\ref{sec-pre}, but a \sparql user writes \texttt{?x rdf:type $c$} and
+receives the stored triples only: ten of the fourteen LUBM queries return no
+rows (Section~\ref{sec-exp}).
+\sys therefore offers RDFS subclass entailment as a \emph{plan rewrite}.
+With \texttt{\textbackslash set entail on}, a type pattern with a constant
+class is answered by the interval index, and the optimizer, the joins, and
+every other operator are unchanged.
+
+\stitle{Semantics}.
+Let $\mathcal{T}^{+}$ be $\mathcal{T}$ together with $(e,\texttt{rdf:type},c')$ for
+every $(e,\texttt{rdf:type},c)\in\mathcal{T}$ and every $c'$ with $c\in\desc(c')$.
+A triple pattern $(s,\texttt{rdf:type},c)$ with a constant class has as
+\emph{entailed answers} its answers over $\mathcal{T}^{+}$; every other pattern
+is evaluated over $\mathcal{T}$.
+A pattern whose class is a variable, a class the hierarchy does not contain,
+and every other predicate are left as they were.
+Only \texttt{rdfs:subClassOf} is read: no \texttt{rdfs:subPropertyOf}, domain,
+range, or OWL axiom, and no inference over the properties of a query.
+
+\stitle{The rewrite}.
+Algorithm~\ref{alg-rewrite} runs on the planner's tree before the optimizer.
+It replaces a qualifying scan by an \emph{interval type scan} and records how
+many rows it expects, which is the number of type triples whose class label
+lies in an interval of $I(c)$, read from prefix sums over the labels in
+$O(|I(c)|)$ time.
+The optimizer then orders the joins with that estimate, as it does for any
+scan.
+This matters: from the stored triples alone, \texttt{?x rdf:type Student}
+looks empty, and a plan that starts from it starts from a pattern that in fact
+returns 75,547 rows.
+
+\begin{algorithm}[t]
+\caption{\textsc{RewriteTypeScans}$(\mathit{plan})$}\label{alg-rewrite}
+\small
+\ForEach{triple-scan leaf $(s,p,o)$ of $\mathit{plan}$}{
+  \If{$p$ is the constant \texttt{rdf:type}, $o$ is a constant class $c$ of the hierarchy $H$}{
+    mark the scan as an interval type scan of $c$\;
+    $\mathit{rows} \gets \sum_{[a,b]\in I(c)} \big(\mathit{cnt}(b)-\mathit{cnt}(a-1)\big)$ \tcp*{prefix sums of type triples by label}
+  }
+}
+\end{algorithm}
+
+\stitle{Execution}.
+An interval type scan is still a scan: it yields triples
+$(e,\texttt{rdf:type},c)$ for the instances of $c$, and the operators above
+it read them as they read stored ones.
+With a free subject it takes one range scan of the label tree per interval of
+$I(c)$ and returns the distinct instances in ascending order.
+With a bound subject, as when an index nested-loop join probes it with each
+outer row, it reads the subject's stored types from the SPO tree and tests
+each label against $I(c)$ by binary search.
+An entailed triple is not stored, so a scan under a transaction locks the
+triple set and not the triple.
+
+\begin{lemma}[Soundness and completeness]\label{lem-rewrite}
+For every class $c$ of the hierarchy, the interval type scan of $c$ returns
+$(e,\texttt{rdf:type},c)$ if and only if this triple belongs to $\mathcal{T}^{+}$.
+\end{lemma}
+\begin{proof}
+The triple is in $\mathcal{T}^{+}$ iff $e$ has a stored type $c''$ with
+$c''\in\desc(c)$.
+The label tree holds $(\po(c''),e)$ for every stored type of every entity, so by
+Lemma~\ref{lem-correct} $e$ is returned by the range scans of $I(c)$ iff
+$\po(c'')$ lies in an interval of $I(c)$ for some stored type $c''$, that is,
+iff $c''\in\desc(c)$.
+A bound subject is tested with the same condition on its stored types.
+\end{proof}
+
+\stitle{Freshness}.
+The hierarchy and the label tree are a snapshot, kept on a private file of the
+same buffer-pool engine.
+Every update, load, and backend switch advances a version number, and the first
+entailed query after a change rebuilds the snapshot from the store: 0.06\,s
+for LUBM(10) and its 43 classes, a few tens of milliseconds for the Gene
+Ontology.
+Incremental maintenance of the labels with gaps~\cite{agrawal1989} would avoid
+the rebuild and is not implemented.
+The snapshot is not part of a transaction, so an entailed query sees the
+committed state at the time it built.

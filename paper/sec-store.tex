@@ -55,7 +55,7 @@ A pattern binds some of $s$, $p$, $o$, and with the permutations SPO, POS,
 and OSP every pattern has one in which its bound positions form a prefix
 (Table~\ref{tab-perms}); it is then one range scan that returns only
 matching triples.
-Algorithm~\ref{alg-pattern} picks the permutation with the longest bound
+Algorithm~\ref{alg-pattern} (Appendix~\ref{apx-alg}) picks the permutation with the longest bound
 prefix.
 The other three permutations would make no pattern cheaper
 (Section~\ref{sec-exp}).
@@ -73,16 +73,6 @@ $\pi$, $\ell(\pi)$ & SPO, 1 & POS, 1 & OSP, 1 & SPO, 2 & POS, 2 & OSP, 2 & SPO, 
 \end{tabular}}
 \end{table}
 
-\begin{algorithm}[t]
-\caption{\textsc{ScanFor}$(s,p,o)$: choose a tree for a triple pattern}\label{alg-pattern}
-\small
-\For{each permutation $\pi \in \{\mathrm{SPO},\mathrm{POS},\mathrm{OSP}\}$}{
-  $\ell(\pi) \gets$ the number of leading positions of $\pi$ that the pattern binds\;
-}
-$\pi^* \gets \arg\max_\pi \ell(\pi)$ (the first on a tie)\;
-$x \gets$ the bound values in the order of $\pi^*$, padded with zeros\;
-\Return $\textsc{Begin}(\mathrm{tree}(\pi^*), x, \ell(\pi^*))$, keeping the triples that match the pattern\;
-\end{algorithm}
 
 \subsection{Search}
 
@@ -197,21 +187,6 @@ the largest key with that prefix.
 \textsc{BeginRange} descends to the leaf for $a$, finds the first key
 $\ge a$ by binary search, and hands the leaf to an iterator.
 
-\begin{algorithm}[t]
-\caption{\textsc{BeginRange}$(a,b)$, \textsc{Take}, and \textsc{Settle}}\label{alg-range}
-\small
-$P \gets \textsc{LeafFor}(a)$; $i \gets$ the first position in $P$ with key $\ge a$\;
-$\textsc{Take}(P, i)$; $\textsc{Settle}()$\;
-\medskip
-\textbf{Take}$(P, i)$: $\mathit{buf} \gets \langle P.\text{keys}[j] : j \ge i,\ \text{key} < b\rangle$; $\mathit{pos} \gets 0$\;
-\quad $\mathit{next} \gets$ nil if some key $\ge b$ was met, else $P.\text{next}$; release $P$ (latch and pin)\;
-\textbf{Settle}$()$: \While{$\mathit{pos} \ge |\mathit{buf}|$}{
-  \lIf{$\mathit{next}$ is nil}{become the end iterator; \Return}
-  $\textsc{Take}(\text{fetch}(\mathit{next}), 0)$ \tcp*{one sibling link, no climb to the root}
-}
-\medskip
-\textbf{Advance}: $\mathit{pos} \gets \mathit{pos}+1$; \textsc{Settle}()\;
-\end{algorithm}
 
 The iterator \emph{copies} the keys of a leaf that lie below $b$, remembers
 the right sibling's id, and releases the leaf.
@@ -245,17 +220,6 @@ and inserting one at a time leaves leaves about half full.
 \sys instead sorts the triples once for each permutation and builds the tree
 bottom-up.
 
-\begin{algorithm}[t]
-\caption{\textsc{BulkLoad}$(X)$ for a sorted set $X$ of unique keys}\label{alg-bulk}
-\small
-cut $X$ into runs of $B$ keys; if the last run has fewer than $\lfloor B/2\rfloor$, it and the run before it share their keys evenly\;
-write each run as a leaf and link it to the previous one; $\Lambda \gets$ the list of (first key, page id)\;
-\While{$|\Lambda| > 1$}{
-  cut $\Lambda$ into runs of $F{+}1$ children, again sharing the last two runs evenly if the last is too short\;
-  write each run as an internal page whose separators are the first keys of children $2,3,\dots$; $\Lambda \gets$ the (first key, id) of the new pages\;
-}
-set the root in the header to the page of $\Lambda[0]$\;
-\end{algorithm}
 
 Each page is written once, in order, and no page is split.
 A bulk-loaded tree is full, which Section~\ref{sec-exp} measures.

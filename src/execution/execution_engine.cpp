@@ -45,6 +45,9 @@ auto ExecutionEngine::Decode(term_id_t id) const -> std::string {
 // exactly this tree.
 auto ExecutionEngine::PlanFor(const BoundQuery& query) const -> PlanNodeRef {
   auto plan = Planner().Plan(query);
+  if (ctx_->GetConfig()->entail && ctx_->GetEntailment() != nullptr) {
+    plan = Optimizer::RewriteTypeScans(std::move(plan), *ctx_->GetEntailment());
+  }
   if (statistics_ == nullptr) {
     return Optimizer::ApplyJoinMethod(std::move(plan), ctx_->GetConfig()->join);
   }

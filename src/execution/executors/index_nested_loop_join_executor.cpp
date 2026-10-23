@@ -4,6 +4,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "execution/entailed_scan.h"
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -41,8 +42,12 @@ auto IndexNestedLoopJoinExecutor::Probe() -> bool {
     }
     return std::nullopt;
   };
-  probe_ = ctx_->GetStore()->Scan(
-      TriplePattern{value(pattern.subject), value(pattern.predicate), value(pattern.object)});
+  if (pattern.entailed && ctx_->GetEntailment() != nullptr) {
+    probe_ = EntailedScan(ctx_, pattern, value(pattern.subject));
+  } else {
+    probe_ = ctx_->GetStore()->Scan(
+        TriplePattern{value(pattern.subject), value(pattern.predicate), value(pattern.object)});
+  }
   probe_->Init();
   return true;
 }

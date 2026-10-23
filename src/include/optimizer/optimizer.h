@@ -4,6 +4,7 @@
 
 #include "common/types.h"
 #include "execution/plans/abstract_plan.h"
+#include "execution/type_entailment.h"
 #include "optimizer/cardinality_estimator.h"
 
 namespace ontodb {
@@ -36,6 +37,13 @@ class Optimizer {
   // side is a single triple scan (other joins stay nested loops). kNestedLoop
   // and kAuto leave the plan as it is. Same rows; only the operator changes.
   static auto ApplyJoinMethod(PlanNodeRef plan, JoinMethod method) -> PlanNodeRef;
+
+  // The RDFS entailment rewrite: every scan of `(x rdf:type C)` with C a class of the hierarchy
+  // becomes an interval scan that returns the instances of C and of its subclasses, and carries the
+  // entailment's estimate of how many that is, so the join order is chosen with the entailed
+  // cardinality. A scan that binds the class by a variable, or binds a class the hierarchy does not
+  // know, is left alone. Run before Optimize.
+  static auto RewriteTypeScans(PlanNodeRef plan, const TypeEntailment& entailment) -> PlanNodeRef;
 
  private:
   auto Reorder(PlanNodeRef plan) -> PlanNodeRef;

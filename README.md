@@ -170,3 +170,8 @@ The [manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the sh
 ## License
 
 [CC BY 4.0](LICENSE). Copyright (c) 2026 Lam Nguyen.
+
+## RDFS subclass entailment of type patterns
+
+`\set entail on` makes `?x rdf:type C` return the instances of C and of every class below it, with the answers a store holding the entailed triples would give and none of its storage. The planner rewrites each such scan into an interval type scan over the class hierarchy's postorder labels (`src/semantic/type_entailment_index.cpp`, `Optimizer::RewriteTypeScans`), costs it with the entailed row count, and joins it like any other scan; `\explain` shows `IntervalTypeScan`. Only `rdfs:subClassOf` is read, and only patterns with a constant class are rewritten. The index is a snapshot, rebuilt on the first entailed query after an update or a load.
+

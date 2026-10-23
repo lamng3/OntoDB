@@ -88,6 +88,8 @@ struct Config {
   size_t pool_size{64};
   size_t lru_k{2};
   bool timing{false};
+  // Answer `(x rdf:type C)` under RDFS subclass entailment, by interval scans (\set entail on).
+  bool entail{false};
 };
 
 }  // namespace ontodb

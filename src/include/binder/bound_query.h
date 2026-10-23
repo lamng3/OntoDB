@@ -22,6 +22,10 @@ struct BoundTriplePattern {
   BoundTerm predicate;
   BoundTerm object;
   std::string text;
+  // Set by the entailment rewrite: this `(x rdf:type C)` scan returns the instances of C and of
+  // its subclasses, and is expected to return `entailed_rows` of them.
+  bool entailed{false};
+  double entailed_rows{0};
 };
 
 struct BoundFilter {

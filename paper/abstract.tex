@@ -17,7 +17,9 @@ inserts and deletes, a sharded buffer pool whose hits take no latch, and a
 one-word page latch.
 (3) A labelling of the class hierarchy with postorder intervals kept in the
 same B+ tree, so that ``everything under a class'' is a few range scans and no
-entailed triple is stored.
+entailed triple is stored, and a plan rewrite that answers RDFS subclass
+entailment of \texttt{rdf:type} patterns with these scans, with the answers of
+materialization, prepared 16 times faster and in 8 times less space.
 (4) Exact, IVF, product-quantized, and HNSW vector indexes in the engine, a
 proof that no linear order of points keeps neighbors close, and the finding
 that in an ontology a class filter is correlated with the vectors, so the

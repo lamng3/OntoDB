@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -19,6 +20,7 @@
 #include "loader/rdf_loader.h"
 #include "recovery/durability.h"
 #include "semantic/semantic_engine.h"
+#include "semantic/type_entailment_index.h"
 #include "stats/statistics.h"
 #include "store/mem_store.h"
 
@@ -108,6 +110,12 @@ class Database {
   std::unique_ptr<Durability> durability_;
   std::unique_ptr<IndexedBackend> indexed_;
   std::unique_ptr<SemanticEngine> semantic_;
+  // The RDFS entailment of rdf:type patterns (\set entail on): a snapshot of the hierarchy and the
+  // instances, rebuilt when data_version_ has moved. Built on first use.
+  auto EntailmentFor(const Config& config) -> TypeEntailment*;
+  std::mutex entailment_mu_;
+  std::unique_ptr<TypeEntailmentIndex> entailment_;
+  std::atomic<uint64_t> data_version_{0};
   std::shared_mutex backend_mu_;  // statements share it; a backend switch takes it alone
   LockManager locks_;
   std::unique_ptr<TransactionManager> txns_;  // over the active store

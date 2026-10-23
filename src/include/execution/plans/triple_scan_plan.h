@@ -13,8 +13,11 @@ class TripleScanPlan : public AbstractPlanNode {
       , row_width_(row_width) {}
 
   auto GetType() const -> PlanType override { return PlanType::kTripleScan; }
-  auto Label() const -> std::string override { return "TripleScan {" + pattern_.text + "}"; }
+  auto Label() const -> std::string override {
+    return std::string(pattern_.entailed ? "IntervalTypeScan {" : "TripleScan {") + pattern_.text + "}";
+  }
   auto Pattern() const -> const BoundTriplePattern& { return pattern_; }
+  auto MutablePattern() -> BoundTriplePattern& { return pattern_; }
   auto RowWidth() const -> size_t { return row_width_; }
 
  private:

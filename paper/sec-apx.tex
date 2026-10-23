@@ -1,0 +1,87 @@
+\section{Further Algorithms}
+\label{apx-alg}
+
+These are the remaining algorithms of Sections~\ref{sec-store} and~\ref{sec-conc}, in the notation of Table~\ref{tab-notation}.
+
+\subsection{Choosing a tree for a pattern}
+
+\begin{algorithm}[h]
+\caption{\textsc{ScanFor}$(s,p,o)$: choose a tree for a triple pattern}\label{alg-pattern}
+\small
+\For{each permutation $\pi \in \{\mathrm{SPO},\mathrm{POS},\mathrm{OSP}\}$}{
+  $\ell(\pi) \gets$ the number of leading positions of $\pi$ that the pattern binds\;
+}
+$\pi^* \gets \arg\max_\pi \ell(\pi)$ (the first on a tie)\;
+$x \gets$ the bound values in the order of $\pi^*$, padded with zeros\;
+\Return $\textsc{Begin}(\mathrm{tree}(\pi^*), x, \ell(\pi^*))$, keeping the triples that match the pattern\;
+\end{algorithm}
+
+\subsection{Range scan}
+
+\begin{algorithm}[h]
+\caption{\textsc{BeginRange}$(a,b)$, \textsc{Take}, and \textsc{Settle}}\label{alg-range}
+\small
+$P \gets \textsc{LeafFor}(a)$; $i \gets$ the first position in $P$ with key $\ge a$\;
+$\textsc{Take}(P, i)$; $\textsc{Settle}()$\;
+\medskip
+\textbf{Take}$(P, i)$: $\mathit{buf} \gets \langle P.\text{keys}[j] : j \ge i,\ \text{key} < b\rangle$; $\mathit{pos} \gets 0$\;
+\quad $\mathit{next} \gets$ nil if some key $\ge b$ was met, else $P.\text{next}$; release $P$ (latch and pin)\;
+\textbf{Settle}$()$: \While{$\mathit{pos} \ge |\mathit{buf}|$}{
+  \lIf{$\mathit{next}$ is nil}{become the end iterator; \Return}
+  $\textsc{Take}(\text{fetch}(\mathit{next}), 0)$ \tcp*{one sibling link, no climb to the root}
+}
+\medskip
+\textbf{Advance}: $\mathit{pos} \gets \mathit{pos}+1$; \textsc{Settle}()\;
+\end{algorithm}
+
+\subsection{Bulk load}
+
+\begin{algorithm}[h]
+\caption{\textsc{BulkLoad}$(X)$ for a sorted set $X$ of unique keys}\label{alg-bulk}
+\small
+cut $X$ into runs of $B$ keys; if the last run has fewer than $\lfloor B/2\rfloor$, it and the run before it share their keys evenly\;
+write each run as a leaf and link it to the previous one; $\Lambda \gets$ the list of (first key, page id)\;
+\While{$|\Lambda| > 1$}{
+  cut $\Lambda$ into runs of $F{+}1$ children, again sharing the last two runs evenly if the last is too short\;
+  write each run as an internal page whose separators are the first keys of children $2,3,\dots$; $\Lambda \gets$ the (first key, id) of the new pages\;
+}
+set the root in the header to the page of $\Lambda[0]$\;
+\end{algorithm}
+
+\subsection{The optimistic descent for writers}
+
+\begin{algorithm}[h]
+\caption{\textsc{TryLeafOnly}$(x,\mathit{op})$ for an insert or a delete}\label{alg-optimistic}
+\small
+read-latch the header; $P \gets$ the root; \lIf{the tree is empty or $P$ is a leaf}{\Return fail}
+read-latch $P$; release the header\;
+\While{true}{
+  $P' \gets \textsc{ChildFor}(P,x)$; pin $P'$ and read its type\;
+  \lIf{$P'$ is internal}{read-latch $P'$; release $P$; $P \gets P'$; \textbf{continue}}
+  write-latch $P'$ (the leaf); release $P$\;
+  \If{$\mathit{op}$ is insert and $x \in P'$ or $\mathit{op}$ is delete and $x \notin P'$}{\Return done (no change)}
+  \lIf{$\mathit{op}$ is insert and $P'$ is full, or $\mathit{op}$ is delete and $|P'| \le \lfloor B/2\rfloor$}{\Return fail}
+  insert or remove $x$ in $P'$; \Return done\;
+}
+\end{algorithm}
+
+\subsection{The latch-free fetch of a resident page}
+
+\begin{algorithm}[h]
+\caption{\textsc{Fetch}$(\mathit{id})$ in a shard, and the claim that guards eviction}\label{alg-fetch}
+\small
+$\varphi \gets \textsc{IndexFind}(\mathit{id})$ \tcp*{atomic array, no latch}
+\If{$\varphi \ne \bot$ and \textsc{TryPin}(frame $\varphi$)}{
+  \lIf{frame $\varphi$ holds page $\mathit{id}$}{mark frame $\varphi$ referenced; \Return frame $\varphi$}
+  unpin frame $\varphi$ \tcp*{the frame was refilled}
+}
+latch the shard\;
+\lIf{page $\mathit{id}$ is in the page table}{pin and return its frame}
+$\varphi \gets$ a free frame, or else a victim:\;
+\quad fold the \emph{referenced} marks into the replacer; mark frames with pin count 0 evictable\;
+\quad \Repeat{a victim is claimed}{ask the replacer for the victim $v$; \textsc{TryClaim}$(v)$: swap pin count $0 \to -1$}\;
+\quad write $v$ back if dirty; \textsc{IndexErase}$(v)$; drop $v$ from the page table\;
+read page $\mathit{id}$ into $\varphi$; set its pin count to 1; \textsc{IndexInsert}$(\mathit{id}, \varphi)$; release the shard\;
+\Return frame $\varphi$\;
+\end{algorithm}
+

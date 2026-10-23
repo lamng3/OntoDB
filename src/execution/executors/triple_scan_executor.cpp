@@ -4,6 +4,7 @@
 
 #include "concurrency/lock_resources.h"
 #include "concurrency/transaction.h"
+#include "execution/entailed_scan.h"
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -66,7 +67,11 @@ void TripleScanExecutor::InitWith(const Row& bindings) {
     const bool range = txn->GetIsolationLevel() == IsolationLevel::kRepeatableRead;
     locks->Lock(txn, TriplesResource(), range ? LockMode::kS : LockMode::kIs, ctx_->GetSession());
   }
-  iter_ = ctx_->GetStore()->Scan(store_pattern);
+  if (pattern.entailed && ctx_->GetEntailment() != nullptr) {
+    iter_ = EntailedScan(ctx_, pattern, store_pattern.subject);
+  } else {
+    iter_ = ctx_->GetStore()->Scan(store_pattern);
+  }
   iter_->Init();
 }
 
@@ -94,7 +99,9 @@ auto TripleScanExecutor::Next(Row* row) -> bool {
         !BindPosition(pattern.object, triple.object, &candidate)) {
       continue;
     }
-    if (!LockRow(triple)) {
+    // An entailed triple is not stored, so there is no triple to lock or to find again; the lock
+    // on the whole triple set taken in InitWith covers what the scan reads.
+    if (!pattern.entailed && !LockRow(triple)) {
       continue;
     }
     *row = std::move(candidate);

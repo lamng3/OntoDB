@@ -29,6 +29,9 @@
 #include "dictionary/disk_dictionary.h"
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
+#include "semantic/class_hierarchy.h"
+#include "semantic/type_closure.h"
+#include "semantic/type_entailment_index.h"
 #include "parser/parser.h"
 #include "stats/statistics.h"
 #include "store/indexed_store.h"
@@ -82,12 +85,37 @@ auto main(int argc, char** argv) -> int {
   const auto loaded = RdfLoader().LoadFiles(paths, dictionary, store);
   pool.FlushAllPages();
   const double load_s = Seconds(load_started);
+  // COMPARE_INFERENCE: "plain" (the default) answers `(x rdf:type C)` from the stored triples;
+  // "entail" adds RDFS subclass entailment by interval scans (\set entail on); "materialize"
+  // stores the entailed type triples first. The ontology must be among the loaded files.
+  const char* inference_env = std::getenv("COMPARE_INFERENCE");
+  const std::string inference = inference_env != nullptr ? inference_env : "plain";
+  TypeEntailmentIndex entailment;
+  double inference_s = 0;
+  uint64_t inferred = 0;
+  if (inference == "entail") {
+    const auto started = Clock::now();
+    entailment.Refresh(&store, &dictionary, 1);
+    inference_s = Seconds(started);
+  } else if (inference == "materialize") {
+    const auto started = Clock::now();
+    const auto type = dictionary.Lookup("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
+    const auto sub = dictionary.Lookup("<http://www.w3.org/2000/01/rdf-schema#subClassOf>");
+    if (type.has_value() && sub.has_value()) {
+      const auto h = ClassHierarchy::Build(CollectSubClassEdges(&store, *sub), ClassHierarchy::TreeParent::kDeepest,
+                                           CollectTypeClasses(&store, *type));
+      inferred = MaterializeTypes(h, &store, *type);
+    }
+    pool.FlushAllPages();
+    inference_s = Seconds(started);
+  }
   const auto stats_started = Clock::now();
   Statistics statistics;
   statistics.Collect(store, dictionary);
   const double stats_s = Seconds(stats_started);
-  std::printf("#load\ttriples=%llu\tload_s=%.2f\tstatistics_s=%.2f\tfile_mib=%.1f\tpeak_rss_mib=%.0f\n",
-              static_cast<unsigned long long>(loaded.triples), load_s, stats_s,
+  std::printf("#load\ttriples=%llu\tload_s=%.2f\tstatistics_s=%.2f\tinference=%s\tinference_s=%.2f\tinferred=%llu\tinference_mib=%.1f\tfile_mib=%.1f\tpeak_rss_mib=%.0f\n",
+              static_cast<unsigned long long>(loaded.triples), load_s, stats_s, inference.c_str(), inference_s,
+              static_cast<unsigned long long>(inferred), static_cast<double>(entailment.IndexBytes()) / (1024.0 * 1024.0),
               static_cast<double>(fs::file_size(file)) / (1024.0 * 1024.0), PeakRssMib());
 
   std::ifstream in(argv[2]);
@@ -104,10 +132,14 @@ auto main(int argc, char** argv) -> int {
       size_t rows = 0;
       const auto once = [&]() {
         Config config;
+        config.entail = inference == "entail";
         IoStats io;
         NullTraceSink trace;
         ExecutorContext ctx(&store, &dictionary, &config, nullptr, nullptr, nullptr, &pool, &io,
                             &trace, nullptr);
+        if (inference == "entail") {
+          ctx.SetEntailment(&entailment);
+        }
         ctx.SetDeadline(Clock::now() + std::chrono::seconds(kTimeoutSeconds));
         ExecutionEngine engine(&ctx, &statistics);
         const auto started = Clock::now();
