@@ -1,6 +1,6 @@
 # Showcase
 
-What the OntoDB shell printed, as a single page that needs no server. It is drawn in the style of [art-visualization](https://lamng3.com/art-visualization/), with the same base as the Agentic Ontologist and Aegis showcases.
+What the OntoDB shell printed, as a single page that needs no server. It is drawn in the style of [art-visualization](https://lamng3.com/art-visualization/).
 
 - **Walkthrough.** LUBM query 1 on one university, recorded with `\trace on` and stepped one engine action at a time. The steps are the binder's dictionary lookups, the statistics pass the first query after a load makes over every SPO leaf, the plan, the POS range scan, and the SPO probes and id-to-string decodes of the index nested-loop join. Beside them are the three B+ trees with the pages each step fetched, the leaf's keys decoded to terms, and the 64 buffer-pool frames with hits, misses and LRU-K evictions.
 - **Plans.** The fourteen LUBM queries under `\explain analyze`, with estimated and actual rows per operator.
@@ -17,4 +17,4 @@ python3 showcase/record.py                      # runs build/release/ontodb, wri
 python3 showcase/build.py                       # writes showcase/index.html
 ```
 
-`base.css` and `base.js` are copies of the shared showcase base in `memcommit-docs/showcase`.
+`base.css` and `base.js` are the shared showcase base.

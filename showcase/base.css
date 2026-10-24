@@ -1,4 +1,4 @@
-/* Shared by the showcases (Aegis, Agentic Ontologist): the manuals' design, as a single page with tabs.
+/* Shared by the showcases: the manuals' design, as a single page with tabs.
    Set --primary per project (and --primary-dark for dark mode) before this file. */
 :root {
   --primary-5: color-mix(in srgb, var(--primary) 5%, transparent);
