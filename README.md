@@ -56,7 +56,6 @@ write-ahead log. A restart is ARIES.
 - **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
 - **In the browser.** The engine compiles to WebAssembly (0.85 MB) and runs in the [manual's playground](https://lamng3.com/ontodb/playground.html), with the B+ tree indexes, real plans and the semantic-search commands. See [docs/web-build.md](docs/web-build.md).
 - **Semantic search.** A class hierarchy becomes a few integer intervals per class, kept in a B+ tree, so "everything under C" is a range scan. Vectors, one per term, are searched by exact, IVF (lists stored in a B+ tree), or HNSW indexes, and a search can be limited to the terms under a class. Theory and measurements: [docs/semantic-search.md](docs/semantic-search.md).
-- **Agent memory.** OntoDB can hold an agent memory log ([MemCommit](https://github.com/lamng3/memcommit)) beside the ontology, as RDF, so provenance is a SPARQL query. See *Store agent memory* below.
 
 Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
 
@@ -120,22 +119,6 @@ INSERT DATA { <http://example.org/materials#Ceramic> <http://www.w3.org/2000/01/
 ```
 
 `\log` prints the last log records, `\checkpoint` writes a snapshot and empties the log, and `\verify` rebuilds the database from the files and compares. If the log ends in a torn or corrupt record, the shell keeps every transaction before it and says what it dropped; `ontodb --strict mydb` refuses to open instead.
-
-</details>
-
-<details>
-<summary><b>Store agent memory</b></summary>
-
-MemCommit's log can be kept in an OntoDB database. Each record is a node with its `lsn`, `op`, and `agent`, and each memory has its `kind`, `key`, `source`, and one `derivedFrom` edge per premise, all under `urn:memcommit:`. MemCommit rebuilds its state by reading the records back; everything else is ordinary RDF. Which memories were built on a poisoned ontology version?
-
-```text
-SELECT ?m ?kind WHERE {
-  ?m <urn:memcommit:derivedFrom> <urn:memcommit:m:216423abbfb4d675> ;
-     <urn:memcommit:kind> ?kind .
-}
-```
-
-A memory engine built on OntoDB keeps the ontology and the memory in one database, both passing `\verify`.
 
 </details>
 
