@@ -58,6 +58,7 @@ These have no stubs. Add one by writing the design next to the code that impleme
 - A query window around the shell. Same engine, a place to type and read rows.
 - Page checksums on the disk store, as PostgreSQL's `data_checksums` and InnoDB do, once pages exist. Checked on read, and by `\verify`.
 - Restore to a chosen LSN: replay the snapshot and the log up to an LSN and stop, to see the database as it was at that point.
+- Logical difference between two versions of an ontology, as OntoLDiff computes it for ELH by uniform interpolation ([Zhao and Schmidt, CIKM 2025](https://doi.org/10.1145/3746252.3761464)): which entailments an update or a `\load` gained or lost, not which triples changed. Use it to review a change before commit and to flag a lost entailment as a likely error; with restore to an LSN, diff any two points in the log. Needs entailment first, and RDFS inference covers only part of ELH.
 
 ## Triple key
 
