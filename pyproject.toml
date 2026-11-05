@@ -40,6 +40,7 @@ sdist.exclude = ["benchmarks", "book", "build", "data", "docs", "paper", "paper-
 
 [tool.cibuildwheel]
 build = "cp312-*"
+archs = ["auto64"]
 skip = "*-musllinux_*"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
