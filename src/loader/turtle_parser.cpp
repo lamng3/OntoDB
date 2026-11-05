@@ -245,16 +245,14 @@ class Parser {
     std::string local;
     while (pos_ < s_.size()) {
       const char c = s_[pos_];
-      if (NameChar(c) || c == ':' || c == '%') {
+      const bool inner_dot =
+          c == '.' && pos_ + 1 < s_.size() && (NameChar(s_[pos_ + 1]) || s_[pos_ + 1] == ':');
+      if (NameChar(c) || c == ':' || c == '%' || inner_dot) {
         local.push_back(c);
         pos_++;
       } else if (c == '\\' && pos_ + 1 < s_.size()) {
         local.push_back(s_[pos_ + 1]);
         pos_ += 2;
-      } else if (c == '.' && pos_ + 1 < s_.size() &&
-                 (NameChar(s_[pos_ + 1]) || s_[pos_ + 1] == ':')) {
-        local.push_back(c);
-        pos_++;
       } else {
         break;
       }

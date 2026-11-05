@@ -59,7 +59,7 @@ write-ahead log. A restart is ARIES.
 
 Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
 
-Every push runs the test suite under AddressSanitizer and UndefinedBehaviorSanitizer and again under ThreadSanitizer, then checks formatting and clang-tidy.
+Every push runs the test suite under AddressSanitizer and UndefinedBehaviorSanitizer and again under ThreadSanitizer, then checks formatting and clang-tidy. To check formatting before you push: `git config core.hooksPath .githooks`, or run `scripts/format`.
 
 ## 🐍 Python
 
