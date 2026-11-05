@@ -43,7 +43,7 @@ Without a directory, the shell starts an empty memory database that keeps nothin
 | SPARQL breadth | `scripts/check sparql` | Planned. `OPTIONAL`, `UNION`, aggregates, `DELETE/INSERT WHERE`. |
 | RDFS inference | `scripts/check rdfs` | Planned. Materialized RDFS entailment, kept up to date on insert and delete. |
 | Web build | `web/build.sh`, `web/smoke.mjs` | Done. The engine compiles to WebAssembly and runs in the manual's playground. Built-in Turtle parser, no threads, no durability. See `docs/web-build.md`. |
-| Semantic search | `scripts/check semantic` | Done. Class hierarchy as intervals in a B+ tree, one vector per term, flat, IVF (lists in a B+ tree), PQ, and HNSW indexes, hierarchy-filtered nearest neighbors, and shell commands. Theory in `docs/semantic-search.md`, measurements in `benchmarks/semantic/results.md`, paper in `paper/`. |
+| Semantic search | `scripts/check semantic` | Done. Class hierarchy as intervals in a B+ tree, one vector per term, flat, IVF (lists in a B+ tree), PQ, and HNSW indexes, hierarchy-filtered nearest neighbors, and shell commands. Theory in `docs/semantic-search.md`, measurements in `benchmarks/semantic/results.md`, paper in `papers/query-engine/`. |
 
 The planned features have no tests or stubs yet. Starting one means adding its tests disabled, its `scripts/check` name, and its `not built yet (PLAN x.y)` messages, in that order, as the earlier features did. They are listed in the order to build them: each later one is more useful once the shell keeps its data on pages.
 
@@ -280,4 +280,4 @@ Done, with the measurements in `benchmarks/semantic/`. Find the terms close in m
 
 **14.8 Shell.** `\hindex build [<predicate>]`, `\under <class> [limit]`, `\vload <file>`, `\vindex build [ivf|hnsw|all]`, `\similar <term> [k] [under <class>] [using <strategy>]`. A term is `<iri>` or the text of its `rdfs:label`. A backend switch drops the engine, because ids change.
 
-**14.9 Measure.** Gene Ontology with real embeddings, LUBM(1), and a synthetic annotation set: does id order give neighbors, how many intervals a DAG needs, three ways to answer a type query, recall against latency for each index, and filtered search against selectivity. Write the findings in `writeups/` and the paper in `paper/`.
+**14.9 Measure.** Gene Ontology with real embeddings, LUBM(1), and a synthetic annotation set: does id order give neighbors, how many intervals a DAG needs, three ways to answer a type query, recall against latency for each index, and filtered search against selectivity. Write the findings in `writeups/` and the paper in `papers/query-engine/`.

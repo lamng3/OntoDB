@@ -9,11 +9,11 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
 [![License: BSD 3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-green.svg)](LICENSE)
 
-[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.com/ontodb/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
+[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.com/ontodb/) · [📚 Book](book/ontodb-book.pdf) · [📄 Papers](papers/)
+
+<b>Lam Nguyen</b>
 
 </div>
-
-<p align="center"><b>Lam Nguyen</b></p>
 
 > [!NOTE]
 > **Data is RDF. The query language is SPARQL.** The shell answers a SPARQL
@@ -41,7 +41,7 @@ OntoDB> \verify
 verify: ok
 ```
 
-Start `./build/dev/ontodb mydb` again and the data is there.
+Start `./build/dev/ontodb mydb` again and the data is still there.
 
 ## ✨ What it is
 
@@ -54,8 +54,9 @@ write-ahead log. A restart is ARIES.
 - **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
 - **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
 - **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
-- **In the browser.** The engine compiles to WebAssembly (0.85 MB) and runs in the [manual's playground](https://lamng3.com/ontodb/playground.html), with the B+ tree indexes, real plans and the semantic-search commands. See [docs/web-build.md](docs/web-build.md).
 - **Semantic search.** A class hierarchy becomes a few integer intervals per class, kept in a B+ tree, so "everything under C" is a range scan. Vectors, one per term, are searched by exact, IVF (lists stored in a B+ tree), or HNSW indexes, and a search can be limited to the terms under a class. Theory and measurements: [docs/semantic-search.md](docs/semantic-search.md).
+- **Entailed type queries.** `\set entail on` makes `?x rdf:type C` return the instances of C and of every class below it, with the answers a store holding the entailed triples would give and none of its storage. The optimizer rewrites the scan into an interval scan over the hierarchy's postorder labels, costs it, and joins it like any other scan; `\explain` shows `IntervalTypeScan`. Only `rdfs:subClassOf` is read, and the index is a snapshot, rebuilt on the first entailed query after an update or a load.
+- **In the browser.** The engine compiles to WebAssembly (0.85 MB) and runs in the [manual's playground](https://lamng3.com/ontodb/playground.html), with the B+ tree indexes, real plans, and the semantic-search commands. See [docs/web-build.md](docs/web-build.md).
 
 Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
 
@@ -148,9 +149,11 @@ One query and one committed statement, followed through the code: [docs/architec
 
 </details>
 
-The book, [*OntoDB: Database Internals by Example*](book/ontodb-book.pdf), explains the theory behind each part: pages and the buffer pool, B+ trees and RDF indexing, query plans and joins, transactions and locking, the write-ahead log, ARIES, and durability.
+## 📚 Reading
 
-The [manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
+- **Book** — [*OntoDB: Database Internals by Example*](book/ontodb-book.pdf) explains the theory behind each part: pages and the buffer pool, B+ trees and RDF indexing, query plans and joins, transactions and locking, the write-ahead log, ARIES, and durability.
+- **Manual** — the [online manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
+- **Papers** — [`papers/query-engine/`](papers/query-engine/), a fast and persistent query engine for ontologies, and [`papers/vector-search/`](papers/vector-search/), hierarchy-filtered vector search inside an ontology store.
 
 ## 📝 Citation
 
@@ -166,8 +169,3 @@ The [manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the sh
 ## License
 
 [BSD 3-Clause](LICENSE). Copyright (c) 2026 Lam Nguyen.
-
-## RDFS subclass entailment of type patterns
-
-`\set entail on` makes `?x rdf:type C` return the instances of C and of every class below it, with the answers a store holding the entailed triples would give and none of its storage. The planner rewrites each such scan into an interval type scan over the class hierarchy's postorder labels (`src/semantic/type_entailment_index.cpp`, `Optimizer::RewriteTypeScans`), costs it with the entailed row count, and joins it like any other scan; `\explain` shows `IntervalTypeScan`. Only `rdfs:subClassOf` is read, and only patterns with a constant class are rewritten. The index is a snapshot, rebuilt on the first entailed query after an update or a load.
-
