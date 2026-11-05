@@ -39,7 +39,8 @@ Pass a directory (`ontodb mydb`) to keep the database on disk: every update stat
 
 - **Manual** — <https://lamng3.com/ontodb/> (installation, tutorial, shell and SPARQL reference, internals), with an in-browser [playground](https://lamng3.com/ontodb/playground.html).
 - **Design notes and roadmap** — the [project wiki](https://github.com/lamng3/OntoDB/wiki).
-- **Book and papers** — in [ontodb-docs](https://github.com/lamng3/ontodb-docs): *OntoDB: Database Internals by Example* and two research papers.
+
+The book, *OntoDB: Database Internals by Example* ([PDF](docs/ontodb-book.pdf)), and two papers — [a fast and persistent query engine](docs/ontodb-query-engine.pdf) and [hierarchy-filtered vector search](docs/ontodb-vector-search.pdf) — are in [`docs/`](docs/).
 
 ## License
 
