@@ -13,21 +13,30 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(RAPTOR2 REQUIRED IMPORTED_TARGET raptor2)
 
-include(FetchContent)
-set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(googletest)
+# scikit-build-core sets SKBUILD when it builds the Python package: only the
+# engine, the shell, and the extension, without warnings as errors, because a
+# wheel builds with compilers the CI matrix does not otherwise see.
+if(SKBUILD)
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+  set(ONTODB_WARNINGS -Wall -Wextra -Wno-unused-private-field)
+else()
+  set(ONTODB_WARNINGS -Wall -Wextra -Werror -Wno-unused-private-field)
+  include(FetchContent)
+  set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.15.2.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(googletest)
+endif()
 
 file(GLOB_RECURSE ONTODB_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.cpp)
 
 add_library(ontodb ${ONTODB_SOURCES})
 target_include_directories(ontodb PUBLIC ${CMAKE_SOURCE_DIR}/src/include)
 target_link_libraries(ontodb PUBLIC PkgConfig::RAPTOR2)
-target_compile_options(ontodb PRIVATE -Wall -Wextra -Werror -Wno-unused-private-field)
+target_compile_options(ontodb PRIVATE ${ONTODB_WARNINGS})
 
 add_library(ontodb_shell
   tools/shell/shell.cpp
@@ -35,7 +44,16 @@ add_library(ontodb_shell
   tools/shell/commands.cpp)
 target_include_directories(ontodb_shell PUBLIC ${CMAKE_SOURCE_DIR}/tools)
 target_link_libraries(ontodb_shell PUBLIC ontodb)
-target_compile_options(ontodb_shell PRIVATE -Wall -Wextra -Werror -Wno-unused-private-field)
+target_compile_options(ontodb_shell PRIVATE ${ONTODB_WARNINGS})
+
+if(SKBUILD)
+  find_package(Python 3.12 REQUIRED COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
+  find_package(nanobind CONFIG REQUIRED)
+  nanobind_add_module(_ontodb NB_STATIC STABLE_ABI python/src/ontodb_ext.cpp)
+  target_link_libraries(_ontodb PRIVATE ontodb_shell)
+  install(TARGETS _ontodb LIBRARY DESTINATION ontodb)
+  return()
+endif()
 
 add_executable(ontodb_cli tools/shell/main.cpp)
 target_link_libraries(ontodb_cli PRIVATE ontodb_shell)

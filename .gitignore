@@ -23,3 +23,10 @@ benchmarks/compare/jena/target/
 benchmarks/compare/jena/cp.txt
 __pycache__/
 benchmarks/vector/.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+dist/
+wheelhouse/
+.venv/
