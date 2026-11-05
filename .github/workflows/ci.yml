@@ -38,12 +38,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install -y clang-format
       - name: Check formatting
-        run: |
-          files=$(find src tools test -type f \( -name '*.h' -o -name '*.cpp' \))
-          clang-format --dry-run -Werror $files
+        run: scripts/format --check
 
   tidy:
     name: tidy

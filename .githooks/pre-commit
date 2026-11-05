@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Turn on with: git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -qE '\.(h|cpp)$'; then
+  scripts/format --check || { echo "Run scripts/format, then stage the changes." >&2; exit 1; }
+fi

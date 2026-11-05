@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Format the C++ sources, or with --check, fail if they are not formatted. CI and the pre-commit hook
+# run this, with one pinned version, so a compiler or runner update cannot change the answer.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+version=18.1.8
+if command -v uvx >/dev/null 2>&1; then
+  tool=(uvx --from "clang-format==$version" clang-format)
+elif command -v pipx >/dev/null 2>&1; then
+  tool=(pipx run --spec "clang-format==$version" clang-format)
+else
+  echo "scripts/format needs uvx or pipx, to run clang-format $version." >&2
+  exit 2
+fi
+mode=(-i)
+[[ "${1:-}" == "--check" ]] && mode=(--dry-run -Werror)
+find src tools test python/src -type f \( -name '*.h' -o -name '*.cpp' \) -print0 | xargs -0 "${tool[@]}" "${mode[@]}"

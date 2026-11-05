@@ -115,8 +115,9 @@ auto MakeTruth(const VectorStore& vs, size_t count, uint64_t seed) -> Truth {
   for (const uint32_t row : t.queries) {
     std::vector<uint32_t> nn;
     for (const auto& n : exact.Search(vs.Vector(row), 11)) {
-      if (*vs.Row(n.id) != row && nn.size() < 10) {
-        nn.push_back(*vs.Row(n.id));
+      const auto neighbor = vs.Row(n.id);
+      if (neighbor.has_value() && *neighbor != row && nn.size() < 10) {
+        nn.push_back(*neighbor);
       }
     }
     t.nn.push_back(std::move(nn));
@@ -129,10 +130,11 @@ auto RecallAt10(const VectorStore& vs, uint32_t query_row, const std::vector<Nei
   std::unordered_set<uint32_t> want(truth.begin(), truth.end());
   size_t hit = 0, seen = 0;
   for (const auto& n : got) {
-    const uint32_t row = *vs.Row(n.id);
-    if (row == query_row) {
+    const auto found = vs.Row(n.id);
+    if (!found.has_value() || *found == query_row) {
       continue;
     }
+    const uint32_t row = *found;
     if (seen++ >= truth.size()) {
       break;
     }

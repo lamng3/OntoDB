@@ -144,7 +144,7 @@ struct SemanticEngine::Impl {
       if (!literal.has_value()) {
         continue;
       }
-      auto scan = store->Scan(TriplePattern{std::nullopt, *label, *literal});
+      auto scan = store->Scan(TriplePattern{std::nullopt, label, literal});
       scan->Init();
       Triple t;
       if (scan->Next(&t)) {
@@ -157,7 +157,7 @@ struct SemanticEngine::Impl {
   auto Describe(TripleStore* store, Dictionary* dict, term_id_t id) -> std::string {
     std::string text = dict->Lookup(id).value_or("?");
     if (const auto label = dict->Lookup(kLabel); label.has_value()) {
-      auto scan = store->Scan(TriplePattern{id, *label, std::nullopt});
+      auto scan = store->Scan(TriplePattern{id, label, std::nullopt});
       scan->Init();
       Triple t;
       if (scan->Next(&t)) {
@@ -349,11 +349,12 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary,
     if (k == 0) {
       return "error: k must be at least 1";
     }
-    const auto id = impl_->Resolve(store, dictionary, term);
-    if (!id.has_value()) {
+    const auto found = impl_->Resolve(store, dictionary, term);
+    if (!found.has_value()) {
       return "error: no term named " + term;
     }
-    const auto row = impl_->vectors->Row(*id);
+    const term_id_t term_id = *found;
+    const auto row = impl_->vectors->Row(term_id);
     if (!row.has_value()) {
       return "error: " + term + " has no vector";
     }
@@ -397,7 +398,7 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary,
                                                 strategy, HybridSearch::Params{});
     const double ms = Ms(started);
     std::ostringstream out;
-    out << "nearest to " << impl_->Describe(store, dictionary, *id);
+    out << "nearest to " << impl_->Describe(store, dictionary, term_id);
     if (under_id != INVALID_TERM_ID) {
       out << ", under " << under;
     }
@@ -410,7 +411,7 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary,
     out << " [" << used << ", " << ms * 1000.0 << " us]";
     size_t shown = 0;
     for (const Neighbor& n : result.neighbors) {
-      if (n.id == *id) {
+      if (n.id == term_id) {
         continue;
       }
       if (shown++ >= k) {

@@ -94,6 +94,7 @@ auto main(int argc, char** argv) -> int {
         auto bound = Binder(dictionary).Bind(Parser(line.substr(tab + 1)).Parse());
         (kind == "-po" ? range : lookup).push_back(std::move(bound));
       } catch (const std::exception&) {
+        continue;  // a query the data cannot bind is not part of this workload
       }
     }
   }

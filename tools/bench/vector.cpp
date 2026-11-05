@@ -211,7 +211,8 @@ auto RunFiltered(int argc, char** argv) -> int {
   const S strategies[] = {S::kPreFilter, S::kPostFilterHnsw, S::kPostFilterIvf,
                           S::kMaskHnsw,  S::kMaskIvf,        S::kAuto};
   // VEC_K sets the number of neighbors asked for (default 10).
-  const size_t kK = std::getenv("VEC_K") != nullptr ? std::stoul(std::getenv("VEC_K")) : 10;
+  const char* const vec_k = std::getenv("VEC_K");
+  const size_t kK = vec_k != nullptr ? std::stoul(vec_k) : 10;
   struct Job {
     term_id_t cls;
     std::vector<float> query;
