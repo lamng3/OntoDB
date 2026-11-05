@@ -1,0 +1,56 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ontodb"
+version = "0.1.0"
+description = "A database management system for ontologies: RDF storage, SPARQL queries, semantic search, and crash recovery."
+readme = "python/README.md"
+requires-python = ">=3.12"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
+authors = [{ name = "Lam Nguyen", email = "lamng3.work@gmail.com" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Database :: Database Engines/Servers",
+]
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+ontodb = "ontodb.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/lamng3/OntoDB"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+wheel.packages = ["python/ontodb"]
+wheel.py-api = "cp312"
+cmake.build-type = "Release"
+sdist.include = ["CMakeLists.txt", "LICENSE", "pyproject.toml", "src", "tools", "python"]
+sdist.exclude = ["benchmarks", "book", "build", "data", "docs", "paper", "paper-vector", "scripts", "showcase", "test", "web", "writeups", "tools/bench"]
+
+[tool.cibuildwheel]
+build = "cp312-*"
+archs = ["auto64"]
+skip = "*-musllinux_*"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+test-extras = ["test"]
+test-command = "python -m pytest -q {project}/python/tests"
+
+[tool.cibuildwheel.linux]
+before-all = "yum install -y libxml2-devel && python/build_raptor.sh /usr/local"
+environment = { PKG_CONFIG_PATH = "/usr/local/lib/pkgconfig", LD_LIBRARY_PATH = "/usr/local/lib" }
+
+[tool.cibuildwheel.macos]
+before-all = "python/build_raptor.sh $HOME/raptor"
+environment = { PKG_CONFIG_PATH = "$HOME/raptor/lib/pkgconfig", MACOSX_DEPLOYMENT_TARGET = "13.3" }
