@@ -20,7 +20,7 @@ struct Interval {
 };
 
 // A class hierarchy (rdfs:subClassOf) labelled so that "everything below C"
-// is a few ranges of integers (docs/semantic-search.md, section 3).
+// is a few ranges of integers (the Semantic-Search wiki page, section 3).
 //
 // Build takes (class, parent) pairs. Classes that sit on a cycle denote the
 // same class and are collapsed: they share one label and one set of

@@ -12,7 +12,7 @@ namespace ontodb {
 
 // Three ways to answer "which x have a type at or below C" (the RDFS reading
 // of `?x rdf:type C`), compared in benchmarks/semantic/ and in
-// docs/semantic-search.md section 3.
+// the Semantic-Search wiki page section 3.
 //
 //   Intervals    index every rdf:type triple once as (label of its class,
 //                instance); a query is one range scan per interval of C.

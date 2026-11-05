@@ -22,4 +22,4 @@ Start a directory when the feature it measures exists. The first questions this 
 
 `scripts/fetch-data lubm` builds the LUBM(1) file used by the indexing and join questions. It needs Java. `data/tiny.ttl` is the smoke dataset, not a benchmark.
 
-A writeup lives in `writeups/` and links to `results.md`. Leave the raw logs out of the writeup.
+The writeups that cite these tables live in the [project wiki](https://github.com/lamng3/OntoDB/wiki). Leave the raw logs out.

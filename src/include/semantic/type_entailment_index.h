@@ -14,7 +14,7 @@
 
 namespace ontodb {
 
-// The RDFS subclass entailment of `(x rdf:type C)` as range scans (docs/semantic-search.md,
+// The RDFS subclass entailment of `(x rdf:type C)` as range scans (the Semantic-Search wiki page,
 // section 3): the class hierarchy from the store's rdfs:subClassOf triples, labelled with
 // postorder intervals, and a B+ tree of (label of a type, instance) for every rdf:type triple.
 // It lives on a private buffer pool over a temporary file, so it works on either backend.
