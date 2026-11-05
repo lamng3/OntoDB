@@ -61,6 +61,19 @@ Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeep
 
 Every push runs the test suite under AddressSanitizer and UndefinedBehaviorSanitizer and again under ThreadSanitizer, then checks formatting and clang-tidy.
 
+## 🐍 Python
+
+```python
+import ontodb                                    # pip install ontodb
+
+con = ontodb.connect("mydb")                     # or ontodb.connect() for memory
+con.load("mouse.owl")
+con.execute("SELECT ?c WHERE { ?c ?p ?o } LIMIT 3").fetchall()
+```
+
+The engine runs in your process, and results are values. Search by meaning takes any vector, so it can start from
+free text. See [`python/README.md`](python/README.md).
+
 ## 🔧 Usage
 
 <details>

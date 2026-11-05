@@ -1,11 +1,14 @@
 #include "semantic/semantic_engine.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <unistd.h>
 
 #include "buffer/buffer_pool_manager.h"
@@ -26,6 +29,7 @@ namespace {
 
 constexpr const char* kSubClassOf = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
 constexpr const char* kLabel = "<http://www.w3.org/2000/01/rdf-schema#label>";
+constexpr const char* kXsdString = "http://www.w3.org/2001/XMLSchema#string";
 constexpr size_t kPoolFrames = 4096;
 constexpr size_t kDefaultK = 10;
 
@@ -125,15 +129,24 @@ struct SemanticEngine::Impl {
     if (lex.size() >= 2 && lex.front() == '"' && lex.back() == '"') {
       lex = lex.substr(1, lex.size() - 2);
     }
-    const auto literal = dict->Lookup(CanonicalLiteral(lex, "", ""));
     const auto label = dict->Lookup(kLabel);
-    if (!literal.has_value() || !label.has_value()) {
+    if (!label.has_value()) {
       return std::nullopt;
     }
-    auto scan = store->Scan(TriplePattern{std::nullopt, *label, *literal});
-    scan->Init();
-    Triple t;
-    return scan->Next(&t) ? std::optional<term_id_t>(t.subject) : std::nullopt;
+    // OWL files often type their labels as xsd:string, which RDF 1.1 treats as the plain literal.
+    for (const char* datatype : {"", kXsdString}) {
+      const auto literal = dict->Lookup(CanonicalLiteral(lex, datatype, ""));
+      if (!literal.has_value()) {
+        continue;
+      }
+      auto scan = store->Scan(TriplePattern{std::nullopt, *label, *literal});
+      scan->Init();
+      Triple t;
+      if (scan->Next(&t)) {
+        return t.subject;
+      }
+    }
+    return std::nullopt;
   }
 
   auto Describe(TripleStore* store, Dictionary* dict, term_id_t id) -> std::string {
@@ -388,6 +401,128 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
   } catch (const std::exception& e) {
     return std::string("error: ") + e.what();
   }
+}
+
+auto SemanticEngine::UnderTerms(TripleStore* store, Dictionary* dictionary, const std::string& cls,
+                                size_t limit) -> std::vector<std::string> {
+  if (impl_->hierarchy->GetStats().classes == 0) {
+    throw std::runtime_error("no hierarchy; build it first");
+  }
+  const auto id = impl_->Resolve(store, dictionary, cls);
+  if (!id.has_value()) {
+    throw std::runtime_error("no term named " + Trim(cls));
+  }
+  if (!impl_->hierarchy->Contains(*id)) {
+    throw std::runtime_error(Trim(cls) + " is not in the hierarchy");
+  }
+  LabelIndex::ScanStats scans;
+  const auto members = impl_->classes->Scan(impl_->hierarchy->Intervals(*id), &scans);
+  std::vector<std::string> terms;
+  terms.reserve(limit == 0 ? members.size() : std::min(limit, members.size()));
+  for (const term_id_t m : members) {
+    if (limit != 0 && terms.size() >= limit) {
+      break;
+    }
+    terms.push_back(dictionary->Lookup(m).value_or("?"));
+  }
+  return terms;
+}
+
+auto SemanticEngine::PutVectors(Dictionary* dictionary, const std::vector<std::string>& terms,
+                                const float* data, uint32_t dim) -> size_t {
+  if (dim == 0) {
+    throw std::runtime_error("vectors need at least one dimension");
+  }
+  auto vectors = std::make_unique<VectorStore>(dim);
+  for (size_t i = 0; i < terms.size(); i++) {
+    if (const auto id = dictionary->Lookup(terms[i]); id.has_value()) {
+      vectors->Put(*id, data + i * dim);
+    }
+  }
+  auto flat = std::make_unique<FlatIndex>(vectors.get(), FlatIndex::Precision::kFloat32);
+  impl_->search.reset();
+  impl_->ivf.reset();
+  impl_->hnsw.reset();
+  impl_->flat = std::move(flat);
+  impl_->vectors = std::move(vectors);
+  return impl_->vectors->Size();
+}
+
+namespace {
+
+auto UnderId(SemanticEngine::Impl& impl, TripleStore* store, Dictionary* dictionary,
+             const std::string& under) -> term_id_t {
+  if (Trim(under).empty()) {
+    return INVALID_TERM_ID;
+  }
+  const auto id = impl.Resolve(store, dictionary, under);
+  if (!id.has_value()) {
+    throw std::runtime_error("no term named " + Trim(under));
+  }
+  if (!impl.hierarchy->Contains(*id)) {
+    throw std::runtime_error(Trim(under) + " is not in the hierarchy; build it first");
+  }
+  return *id;
+}
+
+}  // namespace
+
+auto SemanticEngine::Nearest(TripleStore* store, Dictionary* dictionary, const float* query,
+                             uint32_t dim, size_t k, const std::string& under)
+    -> std::vector<SemanticHit> {
+  if (impl_->vectors == nullptr) {
+    throw std::runtime_error("no vectors; load them first");
+  }
+  if (dim != impl_->vectors->Dim()) {
+    throw std::runtime_error("the query has " + std::to_string(dim) + " dimensions, the vectors " +
+                             std::to_string(impl_->vectors->Dim()));
+  }
+  std::vector<float> unit(query, query + dim);
+  double norm = 0;
+  for (const float x : unit) {
+    norm += static_cast<double>(x) * x;
+  }
+  if (!(norm > 0) || !std::isfinite(norm)) {
+    throw std::runtime_error("the query must be a finite, nonzero vector");
+  }
+  const auto scale = static_cast<float>(1.0 / std::sqrt(norm));
+  for (float& x : unit) {
+    x *= scale;
+  }
+  const auto under_id = UnderId(*impl_, store, dictionary, under);
+  const auto result = impl_->Hybrid().Similar(
+      unit.data(), k, under_id, HybridSearch::Strategy::kAuto, HybridSearch::Params{});
+  std::vector<SemanticHit> hits;
+  hits.reserve(result.neighbors.size());
+  for (const Neighbor& n : result.neighbors) {
+    hits.push_back({dictionary->Lookup(n.id).value_or("?"), n.score});
+  }
+  return hits;
+}
+
+auto SemanticEngine::NearestTerm(TripleStore* store, Dictionary* dictionary,
+                                 const std::string& term, size_t k, const std::string& under)
+    -> std::vector<SemanticHit> {
+  if (impl_->vectors == nullptr) {
+    throw std::runtime_error("no vectors; load them first");
+  }
+  const auto id = impl_->Resolve(store, dictionary, term);
+  if (!id.has_value()) {
+    throw std::runtime_error("no term named " + Trim(term));
+  }
+  const auto row = impl_->vectors->Row(*id);
+  if (!row.has_value()) {
+    throw std::runtime_error(Trim(term) + " has no vector");
+  }
+  const std::string self = dictionary->Lookup(*id).value_or("");
+  // One more than asked, because the term itself is its own nearest neighbor.
+  auto hits =
+      Nearest(store, dictionary, impl_->vectors->Vector(*row), impl_->vectors->Dim(), k + 1, under);
+  std::erase_if(hits, [&](const SemanticHit& hit) { return hit.term == self; });
+  if (hits.size() > k) {
+    hits.resize(k);
+  }
+  return hits;
 }
 
 auto SemanticEngine::Status() const -> std::string {
