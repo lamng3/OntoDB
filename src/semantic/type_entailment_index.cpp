@@ -1,8 +1,9 @@
 #include "semantic/type_entailment_index.h"
 
+#include <unistd.h>
+
 #include <atomic>
 #include <filesystem>
-#include <unistd.h>
 
 #include "semantic/type_closure.h"
 #include "storage/disk/disk_manager.h"
@@ -24,14 +25,16 @@ struct TypeEntailmentIndex::Parts {
   std::unique_ptr<BufferPoolManager> pool;
   std::unique_ptr<ClassHierarchy> hierarchy;
   std::unique_ptr<LabelIndex> instances;
-  std::vector<size_t> count_through;  // count_through[l]: type triples whose class label is at most l
+  std::vector<size_t>
+      count_through;  // count_through[l]: type triples whose class label is at most l
 
   Parts() {
     static std::atomic<int> counter{0};
-    file = std::filesystem::temp_directory_path() /
-           ("ontodb-entail-" + std::to_string(::getpid()) + "-" + std::to_string(counter++) + ".db");
+    file = std::filesystem::temp_directory_path() / ("ontodb-entail-" + std::to_string(::getpid()) +
+                                                     "-" + std::to_string(counter++) + ".db");
     disk = std::make_unique<DiskManager>(file.string());
-    pool = std::make_unique<BufferPoolManager>(kPoolFrames, disk.get(), 2, nullptr, nullptr, nullptr, kPoolShards);
+    pool = std::make_unique<BufferPoolManager>(kPoolFrames, disk.get(), 2, nullptr, nullptr,
+                                               nullptr, kPoolShards);
   }
 
   ~Parts() {
@@ -69,7 +72,8 @@ void TypeEntailmentIndex::Refresh(TripleStore* store, Dictionary* dictionary, ui
   if (type.has_value()) {
     typed = CollectTypeClasses(store, *type);
   }
-  parts->hierarchy = std::make_unique<ClassHierarchy>(ClassHierarchy::Build(edges, ClassHierarchy::TreeParent::kDeepest, typed));
+  parts->hierarchy = std::make_unique<ClassHierarchy>(
+      ClassHierarchy::Build(edges, ClassHierarchy::TreeParent::kDeepest, typed));
   parts->instances = std::make_unique<LabelIndex>(parts->pool.get());
   std::vector<std::pair<uint32_t, term_id_t>> pairs;
   if (type.has_value()) {
@@ -139,7 +143,8 @@ auto TypeEntailmentIndex::IsInstance(term_id_t entity, term_id_t cls) const -> b
   scan->Init();
   Triple t;
   while (scan->Next(&t)) {
-    if (t.object == cls || (parts_->hierarchy->Contains(t.object) && parts_->hierarchy->IsDescendant(t.object, cls))) {
+    if (t.object == cls ||
+        (parts_->hierarchy->Contains(t.object) && parts_->hierarchy->IsDescendant(t.object, cls))) {
       return true;
     }
   }

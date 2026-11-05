@@ -83,8 +83,9 @@ TEST(ShardedPool, ConcurrentInsertRemoveAndScanKeepTheTreeSound) {
       while (!stop.load()) {
         TripleKey previous = TripleKey::Encode(0, 0, 0);
         bool first = true;
-        for (auto it = tree.BeginRange(TripleKey::Encode(2900, 0, 0), TripleKey::Encode(3400, 0, 0)); !it.IsEnd();
-             ++it) {
+        for (auto it =
+                 tree.BeginRange(TripleKey::Encode(2900, 0, 0), TripleKey::Encode(3400, 0, 0));
+             !it.IsEnd(); ++it) {
           if (!first && (*it).Compare(previous) <= 0) {
             unsorted++;
           }
@@ -98,7 +99,8 @@ TEST(ShardedPool, ConcurrentInsertRemoveAndScanKeepTheTreeSound) {
   for (int w = 0; w < 4; w++) {
     writers.emplace_back([&, w] {
       for (int i = 0; i < per_thread; i++) {
-        EXPECT_TRUE(tree.Insert(TripleKey::Encode(static_cast<term_id_t>(3001 + w * per_thread + i), 1, 1)));
+        EXPECT_TRUE(tree.Insert(
+            TripleKey::Encode(static_cast<term_id_t>(3001 + w * per_thread + i), 1, 1)));
       }
     });
   }

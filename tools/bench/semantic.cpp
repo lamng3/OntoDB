@@ -2,20 +2,22 @@
 // experiments, each printing a Markdown table to stdout:
 //
 //   order   <go.nt> <go.ovec>                 does any sort order put neighbors together?
-//   labels  <work> <go.nt>                    how big are the interval labels, and what do they save?
-//   types   <work> go <go.nt> <entities>      three ways to answer rdf:type C (synthetic instances)
-//   types   <work> lubm <univ-bench.owl> <data.owl>...
-//   knn     <go.nt> <go.ovec>                 recall against latency, for each vector index
-//   hybrid  <go.nt> <go.ovec>                 nearest neighbors under a class, four strategies
+//   labels  <work> <go.nt>                    how big are the interval labels, and what do they
+//   save? types   <work> go <go.nt> <entities>      three ways to answer rdf:type C (synthetic
+//   instances) types   <work> lubm <univ-bench.owl> <data.owl>... knn     <go.nt> <go.ovec> recall
+//   against latency, for each vector index hybrid  <go.nt> <go.ovec>                 nearest
+//   neighbors under a class, four strategies
 //
 // Methods and decision rules: benchmarks/semantic/question.md.
+
+#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <filesystem>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -27,8 +29,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-
-#include <unistd.h>
 
 #include "buffer/buffer_pool_manager.h"
 #include "catalog/catalog.h"
@@ -124,7 +124,8 @@ auto MakeTruth(const VectorStore& vs, size_t count, uint64_t seed) -> Truth {
   return t;
 }
 
-auto RecallAt10(const VectorStore& vs, uint32_t query_row, const std::vector<Neighbor>& got, const std::vector<uint32_t>& truth) -> double {
+auto RecallAt10(const VectorStore& vs, uint32_t query_row, const std::vector<Neighbor>& got,
+                const std::vector<uint32_t>& truth) -> double {
   std::unordered_set<uint32_t> want(truth.begin(), truth.end());
   size_t hit = 0, seen = 0;
   for (const auto& n : got) {
@@ -169,15 +170,18 @@ auto RunOrder(int argc, char** argv) -> int {
   std::iota(rows.begin(), rows.end(), 0);
   {
     auto by_id = rows;
-    std::sort(by_id.begin(), by_id.end(), [&](uint32_t a, uint32_t b) { return vs.IdAt(a) < vs.IdAt(b); });
+    std::sort(by_id.begin(), by_id.end(),
+              [&](uint32_t a, uint32_t b) { return vs.IdAt(a) < vs.IdAt(b); });
     pos["dictionary id (first seen)"] = from_order(by_id);
   }
-  for (const auto& [name, rule] : {std::pair{"hierarchy, deepest parent", ClassHierarchy::TreeParent::kDeepest},
-                                   std::pair{"hierarchy, first parent", ClassHierarchy::TreeParent::kFirst}}) {
+  for (const auto& [name, rule] :
+       {std::pair{"hierarchy, deepest parent", ClassHierarchy::TreeParent::kDeepest},
+        std::pair{"hierarchy, first parent", ClassHierarchy::TreeParent::kFirst}}) {
     const auto h = ClassHierarchy::Build(edges, rule);
     auto by_label = rows;
     std::sort(by_label.begin(), by_label.end(), [&](uint32_t a, uint32_t b) {
-      return std::pair(h.Label(vs.IdAt(a)), vs.IdAt(a)) < std::pair(h.Label(vs.IdAt(b)), vs.IdAt(b));
+      return std::pair(h.Label(vs.IdAt(a)), vs.IdAt(a)) <
+             std::pair(h.Label(vs.IdAt(b)), vs.IdAt(b));
     });
     pos[name] = from_order(by_label);
   }
@@ -190,7 +194,8 @@ auto RunOrder(int argc, char** argv) -> int {
       names[t.subject] = *w.dict.Lookup(t.object);
     }
     auto by_name = rows;
-    std::sort(by_name.begin(), by_name.end(), [&](uint32_t a, uint32_t b) { return names[vs.IdAt(a)] < names[vs.IdAt(b)]; });
+    std::sort(by_name.begin(), by_name.end(),
+              [&](uint32_t a, uint32_t b) { return names[vs.IdAt(a)] < names[vs.IdAt(b)]; });
     pos["label, alphabetical"] = from_order(by_name);
   }
   {
@@ -216,7 +221,8 @@ auto RunOrder(int argc, char** argv) -> int {
     for (size_t q = 0; q < truth.queries.size(); q++) {
       const uint32_t qr = truth.queries[q];
       for (size_t j = 0; j < truth.nn[q].size(); j++) {
-        const double d = std::fabs(static_cast<double>(p[truth.nn[q][j]]) - static_cast<double>(p[qr]));
+        const double d =
+            std::fabs(static_cast<double>(p[truth.nn[q][j]]) - static_cast<double>(p[qr]));
         if (j == 0) {
           gap.push_back(d);
         }
@@ -258,9 +264,12 @@ auto RunOrder(int argc, char** argv) -> int {
     }
   }
   const double total = static_cast<double>(truth.queries.size()) * 10.0;
-  std::printf("\n10 nearest neighbors by cosine, 2000 random terms: %.3f are parent or child, %.3f are within two is-a steps (a two-step neighborhood has %.0f terms on average, %.2f%% of all terms).\n",
-              within1 / total, within2 / total, size2 / static_cast<double>(truth.queries.size()),
-              100.0 * size2 / static_cast<double>(truth.queries.size()) / static_cast<double>(n));
+  std::printf(
+      "\n10 nearest neighbors by cosine, 2000 random terms: %.3f are parent or child, %.3f are "
+      "within two is-a steps (a two-step neighborhood has %.0f terms on average, %.2f%% of all "
+      "terms).\n",
+      within1 / total, within2 / total, size2 / static_cast<double>(truth.queries.size()),
+      100.0 * size2 / static_cast<double>(truth.queries.size()) / static_cast<double>(n));
   return 0;
 }
 
@@ -281,11 +290,16 @@ struct Session {
   IndexedStore store;
 
   Session(const fs::path& file, size_t frames)
-      : disk(file.string(), &stats), pool(frames, &disk, 2, nullptr, &stats), catalog(&pool), dict(&pool, &catalog, TermCacheSlots()), store(&catalog, &pool, &dict) {}
+      : disk(file.string(), &stats)
+      , pool(frames, &disk, 2, nullptr, &stats)
+      , catalog(&pool)
+      , dict(&pool, &catalog, TermCacheSlots())
+      , store(&catalog, &pool, &dict) {}
 };
 
 // Loads files into a fresh indexed store file; returns seconds.
-auto BuildStore(const fs::path& file, const std::vector<fs::path>& files, uint64_t* triples) -> double {
+auto BuildStore(const fs::path& file, const std::vector<fs::path>& files,
+                uint64_t* triples) -> double {
   fs::remove(file);
   const auto started = Clock::now();
   DiskManager disk(file.string());
@@ -317,21 +331,36 @@ auto RunLabels(int argc, char** argv) -> int {
   w.Load({argv[3]});
   const auto edges = Edges(w);
 
-  std::cout << "| Spanning-forest rule | classes | edges | non-tree edges | intervals | per class: mean / p50 / p90 / p99 / max | closure pairs | labels (KiB) | closure (MiB) | build (ms) |\n|---|---|---|---|---|---|---|---|---|---|\n";
-  for (const auto& [name, rule] : {std::pair{"deepest parent", ClassHierarchy::TreeParent::kDeepest},
-                                   std::pair{"first parent", ClassHierarchy::TreeParent::kFirst}}) {
+  std::cout << "| Spanning-forest rule | classes | edges | non-tree edges | intervals | per class: "
+               "mean / p50 / p90 / p99 / max | closure pairs | labels (KiB) | closure (MiB) | "
+               "build (ms) |\n|---|---|---|---|---|---|---|---|---|---|\n";
+  for (const auto& [name, rule] :
+       {std::pair{"deepest parent", ClassHierarchy::TreeParent::kDeepest},
+        std::pair{"first parent", ClassHierarchy::TreeParent::kFirst}}) {
     const auto started = Clock::now();
     const auto h = ClassHierarchy::Build(edges, rule);
     const double ms = Seconds(started) * 1000.0;
     const auto& st = h.GetStats();
     std::vector<double> counts;
-    for (const term_id_t c : [&] { std::vector<term_id_t> ids; for (const auto& e : edges) { ids.push_back(e.first); ids.push_back(e.second); } std::sort(ids.begin(), ids.end()); ids.erase(std::unique(ids.begin(), ids.end()), ids.end()); return ids; }()) {
+    for (const term_id_t c : [&] {
+           std::vector<term_id_t> ids;
+           for (const auto& e : edges) {
+             ids.push_back(e.first);
+             ids.push_back(e.second);
+           }
+           std::sort(ids.begin(), ids.end());
+           ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+           return ids;
+         }()) {
       counts.push_back(static_cast<double>(h.Intervals(c).size()));
     }
-    std::printf("| %s | %zu | %zu | %zu | %zu | %.2f / %.0f / %.0f / %.0f / %zu | %zu | %.0f | %.1f | %.1f |\n", name, st.classes, st.edges,
-                st.non_tree_edges, st.intervals, Mean(counts), Percentile(counts, 0.5), Percentile(counts, 0.9),
-                Percentile(counts, 0.99), st.max_intervals, st.closure_pairs, static_cast<double>(st.intervals) * 8 / 1024.0,
-                static_cast<double>(st.closure_pairs) * 24 / (1024.0 * 1024.0), ms);
+    std::printf(
+        "| %s | %zu | %zu | %zu | %zu | %.2f / %.0f / %.0f / %.0f / %zu | %zu | %.0f | %.1f | %.1f "
+        "|\n",
+        name, st.classes, st.edges, st.non_tree_edges, st.intervals, Mean(counts),
+        Percentile(counts, 0.5), Percentile(counts, 0.9), Percentile(counts, 0.99),
+        st.max_intervals, st.closure_pairs, static_cast<double>(st.intervals) * 8 / 1024.0,
+        static_cast<double>(st.closure_pairs) * 24 / (1024.0 * 1024.0), ms);
     if (st.max_intervals > 1 + st.non_tree_edges) {
       std::cout << "BOUND VIOLATED\n";
     }
@@ -388,8 +417,10 @@ auto RunLabels(int argc, char** argv) -> int {
   for (size_t i = 0; i < search_n; i++) {
     agree += h.IsDescendant(pairs[i].first, pairs[i].second) ? 1 : 0;
   }
-  std::printf("\nIs d at or below c, over random class pairs: %.0f ns with intervals, %.0f ns by searching up the parents (%zu of %zu pairs true; the two methods agree: %s).\n",
-              interval_ns, search_ns, yes, pairs.size(), agree == yes2 ? "yes" : "NO");
+  std::printf(
+      "\nIs d at or below c, over random class pairs: %.0f ns with intervals, %.0f ns by searching "
+      "up the parents (%zu of %zu pairs true; the two methods agree: %s).\n",
+      interval_ns, search_ns, yes, pairs.size(), agree == yes2 ? "yes" : "NO");
 
   // Descendants(C) from the database: one range scan per interval, against a
   // breadth-first search with one POS scan per class.
@@ -418,8 +449,10 @@ auto RunLabels(int argc, char** argv) -> int {
     s.pool.FlushAllPages();
     s.disk.ShutDown();
   }
-  std::printf("\nLoaded %llu triples in %.2f s (%.1f MiB). Building the labels and their B+ tree from the stored triples: %.0f ms.\n",
-              static_cast<unsigned long long>(triples), load_s, Mib(file), index_ms);
+  std::printf(
+      "\nLoaded %llu triples in %.2f s (%.1f MiB). Building the labels and their B+ tree from the "
+      "stored triples: %.0f ms.\n",
+      static_cast<unsigned long long>(triples), load_s, Mib(file), index_ms);
   (void)label_pairs;
 
   // Sample classes by subtree size.
@@ -444,7 +477,8 @@ auto RunLabels(int argc, char** argv) -> int {
       }
     }
   }
-  std::cout << "\n| Classes below C | method | answers | range scans | keys read | page reads | µs |\n|---|---|---|---|---|---|---|\n";
+  std::cout << "\n| Classes below C | method | answers | range scans | keys read | page reads | µs "
+               "|\n|---|---|---|---|---|---|---|\n";
   for (const auto& [bucket, classes] : sample) {
     struct Acc {
       std::vector<double> answers, scans, keys, reads, us;
@@ -493,8 +527,11 @@ auto RunLabels(int argc, char** argv) -> int {
         rw.reads.push_back(static_cast<double>(s.stats.page_reads()));
       }
     }
-    std::printf("| %s | intervals | %.1f | %.2f | %.1f | %.1f | %.0f |\n", kBucketName[bucket], Mean(iv.answers), Mean(iv.scans), Mean(iv.keys), Mean(iv.reads), Mean(iv.us));
-    std::printf("| %s | one scan per class | %.1f | %.1f | %.1f | %.1f | %.0f |\n", kBucketName[bucket], Mean(rw.answers), Mean(rw.scans), Mean(rw.keys), Mean(rw.reads), Mean(rw.us));
+    std::printf("| %s | intervals | %.1f | %.2f | %.1f | %.1f | %.0f |\n", kBucketName[bucket],
+                Mean(iv.answers), Mean(iv.scans), Mean(iv.keys), Mean(iv.reads), Mean(iv.us));
+    std::printf("| %s | one scan per class | %.1f | %.1f | %.1f | %.1f | %.0f |\n",
+                kBucketName[bucket], Mean(rw.answers), Mean(rw.scans), Mean(rw.keys),
+                Mean(rw.reads), Mean(rw.us));
   }
   return 0;
 }
@@ -510,7 +547,8 @@ auto WriteNt(const fs::path& path, const std::vector<std::string>& lines) -> voi
 
 auto RunTypes(int argc, char** argv) -> int {
   if (argc < 5) {
-    std::cerr << "usage: types <work> go <go.nt> <entities> | types <work> lubm <ontology> <data>...\n";
+    std::cerr
+        << "usage: types <work> go <go.nt> <entities> | types <work> lubm <ontology> <data>...\n";
     return 2;
   }
   const fs::path work = argv[2];
@@ -552,10 +590,12 @@ auto RunTypes(int argc, char** argv) -> int {
   }
   // The inferred type triples, as N-Triples, so the materialized store bulk-loads too.
   const auto edges = Edges(w);
-  const auto h = ClassHierarchy::Build(edges, ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&w.store, w.type_));
+  const auto h = ClassHierarchy::Build(edges, ClassHierarchy::TreeParent::kDeepest,
+                                       CollectTypeClasses(&w.store, w.type_));
   std::vector<std::string> inferred;
   {
-    std::set<std::pair<term_id_t, term_id_t>> have;  // direct (instance, class) pairs and those already inferred
+    std::set<std::pair<term_id_t, term_id_t>>
+        have;  // direct (instance, class) pairs and those already inferred
     auto scan = w.store.Scan(TriplePattern{std::nullopt, w.type_, std::nullopt});
     scan->Init();
     std::vector<Triple> direct;
@@ -587,7 +627,9 @@ auto RunTypes(int argc, char** argv) -> int {
     const auto type = *s.dict.Lookup(kType);
     const auto sub = *s.dict.Lookup(kSubClassOf);
     const auto started = Clock::now();
-    const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub), ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&s.store, type));
+    const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub),
+                                          ClassHierarchy::TreeParent::kDeepest,
+                                          CollectTypeClasses(&s.store, type));
     LabelIndex idx(&s.pool);
     idx.BulkLoad(TypeLabelPairs(dh, &s.store, type));
     label_ms = Seconds(started) * 1000.0;
@@ -596,10 +638,15 @@ auto RunTypes(int argc, char** argv) -> int {
     s.disk.ShutDown();
   }
   const double with_labels_mib = Mib(work / "base.db");
-  std::cout << "| Strategy | what is stored | triples | file (MiB) | load / index (s) |\n|---|---|---|---|---|\n";
-  std::printf("| rewrite | the data | %llu | %.1f | %.2f |\n", static_cast<unsigned long long>(t_base), base_mib, load_base);
-  std::printf("| intervals | the data + one key per type triple | %llu | %.1f | %.2f + %.2f |\n", static_cast<unsigned long long>(t_base), with_labels_mib, load_base, label_ms / 1000.0);
-  std::printf("| materialize | the data + inferred types | %llu | %.1f | %.2f |\n\n", static_cast<unsigned long long>(t_closed), Mib(work / "closed.db"), load_closed);
+  std::cout << "| Strategy | what is stored | triples | file (MiB) | load / index (s) "
+               "|\n|---|---|---|---|---|\n";
+  std::printf("| rewrite | the data | %llu | %.1f | %.2f |\n",
+              static_cast<unsigned long long>(t_base), base_mib, load_base);
+  std::printf("| intervals | the data + one key per type triple | %llu | %.1f | %.2f + %.2f |\n",
+              static_cast<unsigned long long>(t_base), with_labels_mib, load_base,
+              label_ms / 1000.0);
+  std::printf("| materialize | the data + inferred types | %llu | %.1f | %.2f |\n\n",
+              static_cast<unsigned long long>(t_closed), Mib(work / "closed.db"), load_closed);
 
   // Query classes: those with instances, by subtree size.
   std::map<int, std::vector<std::string>> sample;
@@ -607,7 +654,9 @@ auto RunTypes(int argc, char** argv) -> int {
     Session s(work / "base.db", 4096);
     const auto type = *s.dict.Lookup(kType);
     const auto sub = *s.dict.Lookup(kSubClassOf);
-    const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub), ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&s.store, type));
+    const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub),
+                                          ClassHierarchy::TreeParent::kDeepest,
+                                          CollectTypeClasses(&s.store, type));
     std::vector<term_id_t> all = CollectTypeClasses(&s.store, type);
     for (const auto& e : CollectSubClassEdges(&s.store, sub)) {
       all.push_back(e.second);
@@ -623,9 +672,11 @@ auto RunTypes(int argc, char** argv) -> int {
       }
     }
   }
-  std::cout << "| Classes below C | strategy | answers | scans | keys read | page reads | µs |\n|---|---|---|---|---|---|---|\n";
+  std::cout << "| Classes below C | strategy | answers | scans | keys read | page reads | µs "
+               "|\n|---|---|---|---|---|---|---|\n";
   // The sampled classes, with the interval strategy's answer count and warm time (a pool that
-  // holds the whole file, median of 9 runs, as ids and decoded to strings), for benchmarks/compare to run against other engines.
+  // holds the whole file, median of 9 runs, as ids and decoded to strings), for benchmarks/compare
+  // to run against other engines.
   std::ofstream classes_out(work / "classes.tsv");
   for (const auto& [bucket, spellings] : sample) {
     struct Acc {
@@ -640,7 +691,9 @@ auto RunTypes(int argc, char** argv) -> int {
         const auto type = *s.dict.Lookup(kType);
         const auto sub = *s.dict.Lookup(kSubClassOf);
         const auto c = *s.dict.Lookup(spelling);
-        const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub), ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&s.store, type));
+        const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub),
+                                              ClassHierarchy::TreeParent::kDeepest,
+                                              CollectTypeClasses(&s.store, type));
         LabelIndex idx(&s.pool, header);
         std::vector<double> id_runs, string_runs;
         size_t answers = 0;
@@ -662,14 +715,18 @@ auto RunTypes(int argc, char** argv) -> int {
         string_runs.erase(string_runs.begin());
         std::sort(id_runs.begin(), id_runs.end());
         std::sort(string_runs.begin(), string_runs.end());
-        classes_out << kBucketName[bucket] << '\t' << spelling << '\t' << answers << '\t' << id_runs[id_runs.size() / 2] << '\t' << string_runs[string_runs.size() / 2] << '\n';
+        classes_out << kBucketName[bucket] << '\t' << spelling << '\t' << answers << '\t'
+                    << id_runs[id_runs.size() / 2] << '\t' << string_runs[string_runs.size() / 2]
+                    << '\n';
       }
       {
         Session s(work / "base.db", kColdPool);
         const auto type = *s.dict.Lookup(kType);
         const auto sub = *s.dict.Lookup(kSubClassOf);
         const auto c = *s.dict.Lookup(spelling);
-        const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub), ClassHierarchy::TreeParent::kDeepest, CollectTypeClasses(&s.store, type));
+        const auto dh = ClassHierarchy::Build(CollectSubClassEdges(&s.store, sub),
+                                              ClassHierarchy::TreeParent::kDeepest,
+                                              CollectTypeClasses(&s.store, type));
         LabelIndex idx(&s.pool, header);
         s.stats.Reset();
         auto t = Clock::now();
@@ -689,7 +746,8 @@ auto RunTypes(int argc, char** argv) -> int {
         t = Clock::now();
         size_t scans = 0, keys = 0;
         std::set<term_id_t> out;
-        for (const term_id_t d : dh.Descendants(c).empty() ? std::vector<term_id_t>{c} : dh.Descendants(c)) {
+        for (const term_id_t d :
+             dh.Descendants(c).empty() ? std::vector<term_id_t>{c} : dh.Descendants(c)) {
           auto scan = s.store.Scan(TriplePattern{std::nullopt, type, d});
           scans++;
           Triple tr;
@@ -722,7 +780,8 @@ auto RunTypes(int argc, char** argv) -> int {
         mt.us.push_back(Seconds(t) * 1e6);
         mt.answers.push_back(static_cast<double>(out.size()));
         mt.scans.push_back(1);
-        mt.keys.push_back(static_cast<double>(dynamic_cast<IndexedTripleIterator&>(*scan).KeysExamined()));
+        mt.keys.push_back(
+            static_cast<double>(dynamic_cast<IndexedTripleIterator&>(*scan).KeysExamined()));
         mt.reads.push_back(static_cast<double>(s.stats.page_reads()));
         for (const auto id : out) {
           names_mt.push_back(*s.dict.Lookup(id));
@@ -733,8 +792,12 @@ auto RunTypes(int argc, char** argv) -> int {
       std::sort(names_mt.begin(), names_mt.end());
       agree = agree && names_iv == names_rw && names_rw == names_mt;
     }
-    for (const auto& [name, acc] : {std::pair<const char*, const Acc*>{"intervals", &iv}, {"rewrite", &rw}, {"materialized", &mt}}) {
-      std::printf("| %s | %s | %.1f | %.1f | %.0f | %.1f | %.0f |\n", kBucketName[bucket], name, Mean(acc->answers), Mean(acc->scans), Mean(acc->keys), Mean(acc->reads), Mean(acc->us));
+    for (const auto& [name, acc] : {std::pair<const char*, const Acc*>{"intervals", &iv},
+                                    {"rewrite", &rw},
+                                    {"materialized", &mt}}) {
+      std::printf("| %s | %s | %.1f | %.1f | %.0f | %.1f | %.0f |\n", kBucketName[bucket], name,
+                  Mean(acc->answers), Mean(acc->scans), Mean(acc->keys), Mean(acc->reads),
+                  Mean(acc->us));
     }
     if (!agree) {
       std::printf("ANSWERS DISAGREE in bucket %s\n", kBucketName[bucket]);
@@ -763,7 +826,8 @@ struct PqFlat {
     std::priority_queue<E, std::vector<E>, std::greater<>> heap;
     const size_t keep = std::max(k, rerank);
     for (uint32_t row = 0; row < vs->Size(); row++) {
-      const float s = ProductQuantizer::Score(table, codes.data() + static_cast<size_t>(row) * pq.M(), pq.M());
+      const float s =
+          ProductQuantizer::Score(table, codes.data() + static_cast<size_t>(row) * pq.M(), pq.M());
       if (heap.size() < keep) {
         heap.push({s, row});
       } else if (s > heap.top().first) {
@@ -784,7 +848,8 @@ struct PqFlat {
       out.push_back({vs->IdAt(row), s});
       heap.pop();
     }
-    std::sort(out.begin(), out.end(), [](const Neighbor& a, const Neighbor& b) { return a.score > b.score; });
+    std::sort(out.begin(), out.end(),
+              [](const Neighbor& a, const Neighbor& b) { return a.score > b.score; });
     out.resize(std::min(out.size(), k));
     return out;
   }
@@ -798,8 +863,9 @@ struct Row {
 
 // ---- experiment: knn ----
 
-template <typename Search>
-auto Measure(const VectorStore& vs, const Truth& truth, const Search& search, size_t* scored) -> std::pair<double, double> {
+template<typename Search>
+auto Measure(const VectorStore& vs, const Truth& truth, const Search& search,
+             size_t* scored) -> std::pair<double, double> {
   // One warm pass, then a timed pass over all queries.
   for (size_t i = 0; i < std::min<size_t>(50, truth.queries.size()); i++) {
     (void)search(vs.Vector(truth.queries[i]));
@@ -831,35 +897,43 @@ auto RunKnn(int argc, char** argv) -> int {
   std::cout << "<!-- " << vs.Size() << " vectors of " << vs.Dim() << " floats -->\n";
   const auto truth = MakeTruth(vs, 1000, 1);
   std::vector<std::string> lines;
-  auto row = [&](const std::string& name, const std::string& param, double recall, double us, double mem_mib, double build_s) {
+  auto row = [&](const std::string& name, const std::string& param, double recall, double us,
+                 double mem_mib, double build_s) {
     char buf[256];
-    std::snprintf(buf, sizeof buf, "| %s | %s | %.3f | %.0f | %.1f | %.1f |", name.c_str(), param.c_str(), recall, us, mem_mib, build_s);
+    std::snprintf(buf, sizeof buf, "| %s | %s | %.3f | %.0f | %.1f | %.1f |", name.c_str(),
+                  param.c_str(), recall, us, mem_mib, build_s);
     std::cout << buf << "\n";
   };
-  std::cout << "| Index | setting | recall@10 | µs / query | memory (MiB) | build (s) |\n|---|---|---|---|---|---|\n";
+  std::cout << "| Index | setting | recall@10 | µs / query | memory (MiB) | build (s) "
+               "|\n|---|---|---|---|---|---|\n";
 
   const auto q_scored = [](size_t*) {};
   (void)q_scored;
   size_t sink = 0;
   {
     FlatIndex flat(&vs, FlatIndex::Precision::kFloat32);
-    const auto [r, us] = Measure(vs, truth, [&](const float* q) { return flat.Search(q, 11); }, &sink);
+    const auto [r, us] =
+        Measure(vs, truth, [&](const float* q) { return flat.Search(q, 11); }, &sink);
     row("flat float32", "exact", r, us, static_cast<double>(flat.Bytes()) / 1048576.0, 0);
   }
   {
     const auto t = Clock::now();
     FlatIndex flat(&vs, FlatIndex::Precision::kSq8);
     const double build = Seconds(t);
-    const auto [r, us] = Measure(vs, truth, [&](const float* q) { return flat.Search(q, 11); }, &sink);
-    row("flat sq8", "exact over codes", r, us, static_cast<double>(flat.Bytes()) / 1048576.0, build);
+    const auto [r, us] =
+        Measure(vs, truth, [&](const float* q) { return flat.Search(q, 11); }, &sink);
+    row("flat sq8", "exact over codes", r, us, static_cast<double>(flat.Bytes()) / 1048576.0,
+        build);
   }
   for (const uint32_t m : {48u, 96u}) {
     const auto t = Clock::now();
     PqFlat pq(&vs, m);
     const double build = Seconds(t);
     for (const size_t rerank : {size_t{0}, size_t{100}}) {
-      const auto [r, us] = Measure(vs, truth, [&](const float* q) { return pq.Search(q, 11, rerank); }, &sink);
-      row("flat pq m=" + std::to_string(m), rerank == 0 ? "codes only" : "rerank 100 exactly", r, us, static_cast<double>(pq.Bytes()) / 1048576.0, build);
+      const auto [r, us] =
+          Measure(vs, truth, [&](const float* q) { return pq.Search(q, 11, rerank); }, &sink);
+      row("flat pq m=" + std::to_string(m), rerank == 0 ? "codes only" : "rerank 100 exactly", r,
+          us, static_cast<double>(pq.Bytes()) / 1048576.0, build);
     }
   }
   fs::path tmp = fs::temp_directory_path() / ("ontodb-knn-" + std::to_string(::getpid()) + ".db");
@@ -867,7 +941,8 @@ auto RunKnn(int argc, char** argv) -> int {
   DiskManager disk(tmp.string());
   BufferPoolManager pool(8192, &disk, 2);
   for (const uint32_t lists : {128u, 512u, 2048u}) {
-    for (const auto enc : {IvfIndex::Encoding::kFloat32, IvfIndex::Encoding::kSq8, IvfIndex::Encoding::kPq}) {
+    for (const auto enc :
+         {IvfIndex::Encoding::kFloat32, IvfIndex::Encoding::kSq8, IvfIndex::Encoding::kPq}) {
       if (lists != 512 && enc != IvfIndex::Encoding::kFloat32) {
         continue;
       }
@@ -875,13 +950,17 @@ auto RunKnn(int argc, char** argv) -> int {
       IvfIndex ivf(&vs, &pool, {.lists = lists, .encoding = enc, .pq_m = 96});
       ivf.Build();
       const double build = Seconds(t);
-      const char* ename = enc == IvfIndex::Encoding::kFloat32 ? "float32" : enc == IvfIndex::Encoding::kSq8 ? "sq8" : "pq96";
+      const char* ename = enc == IvfIndex::Encoding::kFloat32 ? "float32"
+                          : enc == IvfIndex::Encoding::kSq8   ? "sq8"
+                                                              : "pq96";
       for (const uint32_t nprobe : {1u, 2u, 4u, 8u, 16u, 32u, 64u}) {
         if (nprobe > lists) {
           continue;
         }
-        const auto [r, us] = Measure(vs, truth, [&](const float* q) { return ivf.Search(q, 11, nprobe); }, &sink);
-        row("ivf L=" + std::to_string(lists) + " " + ename, "nprobe " + std::to_string(nprobe), r, us, static_cast<double>(ivf.Bytes()) / 1048576.0, build);
+        const auto [r, us] =
+            Measure(vs, truth, [&](const float* q) { return ivf.Search(q, 11, nprobe); }, &sink);
+        row("ivf L=" + std::to_string(lists) + " " + ename, "nprobe " + std::to_string(nprobe), r,
+            us, static_cast<double>(ivf.Bytes()) / 1048576.0, build);
       }
     }
   }
@@ -890,12 +969,15 @@ auto RunKnn(int argc, char** argv) -> int {
     HnswIndex hnsw(&vs, {.m = m, .ef_construction = 200});
     hnsw.Build();
     const double build = Seconds(t);
-    const double mem = (static_cast<double>(hnsw.Bytes()) + static_cast<double>(vs.Size() * vs.Dim() * sizeof(float))) / 1048576.0;
+    const double mem = (static_cast<double>(hnsw.Bytes()) +
+                        static_cast<double>(vs.Size() * vs.Dim() * sizeof(float))) /
+                       1048576.0;
     for (const uint32_t ef : {10u, 20u, 40u, 80u, 160u, 320u}) {
       if (m != 16 && ef != 40 && ef != 160) {
         continue;
       }
-      const auto [r, us] = Measure(vs, truth, [&](const float* q) { return hnsw.Search(q, 11, ef); }, &sink);
+      const auto [r, us] =
+          Measure(vs, truth, [&](const float* q) { return hnsw.Search(q, 11, ef); }, &sink);
       row("hnsw M=" + std::to_string(m), "ef " + std::to_string(ef), r, us, mem, build);
     }
   }
@@ -916,7 +998,8 @@ auto RunHybrid(int argc, char** argv) -> int {
   vs.Load(argv[3], &w.dict);
   const auto edges = Edges(w);
   const auto h = ClassHierarchy::Build(edges);
-  fs::path tmp = fs::temp_directory_path() / ("ontodb-hybrid-" + std::to_string(::getpid()) + ".db");
+  fs::path tmp =
+      fs::temp_directory_path() / ("ontodb-hybrid-" + std::to_string(::getpid()) + ".db");
   fs::remove(tmp);
   DiskManager disk(tmp.string());
   BufferPoolManager pool(8192, &disk, 2);
@@ -946,7 +1029,9 @@ auto RunHybrid(int argc, char** argv) -> int {
   }
   std::sort(all.begin(), all.end());
   all.erase(std::unique(all.begin(), all.end()), all.end());
-  auto size_bucket = [](size_t s) { return s <= 10 ? 0 : s <= 100 ? 1 : s <= 1000 ? 2 : s <= 5000 ? 3 : 4; };
+  auto size_bucket = [](size_t s) {
+    return s <= 10 ? 0 : s <= 100 ? 1 : s <= 1000 ? 2 : s <= 5000 ? 3 : 4;
+  };
   const char* names[] = {"<=10", "11-100", "101-1000", "1001-5000", ">5000"};
   std::mt19937_64 rng(7);
   std::shuffle(all.begin(), all.end(), rng);
@@ -960,9 +1045,11 @@ auto RunHybrid(int argc, char** argv) -> int {
       v.push_back(c);
     }
   }
-  std::cout << "| Classes below C | query | strategy | recall@10 | µs / query | vectors scored | class members resolved | index searches |\n|---|---|---|---|---|---|---|---|\n";
+  std::cout << "| Classes below C | query | strategy | recall@10 | µs / query | vectors scored | "
+               "class members resolved | index searches |\n|---|---|---|---|---|---|---|---|\n";
   using S = HybridSearch::Strategy;
-  const S strategies[] = {S::kPreFilter, S::kPostFilterHnsw, S::kPostFilterIvf, S::kMaskHnsw, S::kMaskIvf, S::kAuto};
+  const S strategies[] = {S::kPreFilter, S::kPostFilterHnsw, S::kPostFilterIvf,
+                          S::kMaskHnsw,  S::kMaskIvf,        S::kAuto};
   for (const auto& [bucket, classes_in_bucket] : sample) {
     for (const bool inside : {true, false}) {
       struct Acc {
@@ -1022,7 +1109,8 @@ auto RunHybrid(int argc, char** argv) -> int {
             hit += want.count(n.id);
           }
           auto& a = acc[s];
-          a.recall.push_back(want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size()));
+          a.recall.push_back(
+              want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size()));
           a.us.push_back(us);
           a.scored.push_back(static_cast<double>(res.stats.scored));
           a.members.push_back(static_cast<double>(res.members));
@@ -1031,9 +1119,12 @@ auto RunHybrid(int argc, char** argv) -> int {
       }
       for (const S s : strategies) {
         const auto& a = acc[s];
-        std::printf("| %s | %s | %s | %.3f | %.0f | %.0f | %.0f | %.1f |\n", names[bucket], inside ? "inside C" : "outside C", HybridSearch::Name(s), Mean(a.recall), Mean(a.us), Mean(a.scored), Mean(a.members), Mean(a.rounds));
+        std::printf("| %s | %s | %s | %.3f | %.0f | %.0f | %.0f | %.1f |\n", names[bucket],
+                    inside ? "inside C" : "outside C", HybridSearch::Name(s), Mean(a.recall),
+                    Mean(a.us), Mean(a.scored), Mean(a.members), Mean(a.rounds));
       }
-      std::printf("<!-- bucket %s %s: %.3f of the unfiltered top 100 are under C -->\n", names[bucket], inside ? "inside" : "outside", inside_share / queries);
+      std::printf("<!-- bucket %s %s: %.3f of the unfiltered top 100 are under C -->\n",
+                  names[bucket], inside ? "inside" : "outside", inside_share / queries);
     }
   }
   fs::remove(tmp);
@@ -1048,11 +1139,16 @@ auto main(int argc, char** argv) -> int {
     return 2;
   }
   const std::string cmd = argv[1];
-  if (cmd == "order") return RunOrder(argc, argv);
-  if (cmd == "labels") return RunLabels(argc, argv);
-  if (cmd == "types") return RunTypes(argc, argv);
-  if (cmd == "knn") return RunKnn(argc, argv);
-  if (cmd == "hybrid") return RunHybrid(argc, argv);
+  if (cmd == "order")
+    return RunOrder(argc, argv);
+  if (cmd == "labels")
+    return RunLabels(argc, argv);
+  if (cmd == "types")
+    return RunTypes(argc, argv);
+  if (cmd == "knn")
+    return RunKnn(argc, argv);
+  if (cmd == "hybrid")
+    return RunHybrid(argc, argv);
   std::cerr << "unknown experiment " << cmd << "\n";
   return 2;
 }

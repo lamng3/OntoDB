@@ -76,7 +76,8 @@ auto CardinalityEstimator::EstimateJoin(double left_rows, double right_rows,
   return estimate;
 }
 
-auto Optimizer::RewriteTypeScans(PlanNodeRef plan, const TypeEntailment& entailment) -> PlanNodeRef {
+auto Optimizer::RewriteTypeScans(PlanNodeRef plan,
+                                 const TypeEntailment& entailment) -> PlanNodeRef {
   auto children = plan->ReleaseChildren();
   for (auto& child : children) {
     child = RewriteTypeScans(std::move(child), entailment);

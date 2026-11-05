@@ -1,11 +1,11 @@
 #include "semantic/class_hierarchy.h"
 
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <map>
 #include <random>
 #include <set>
-
-#include <gtest/gtest.h>
 
 namespace ontodb {
 namespace {
@@ -124,7 +124,8 @@ TEST(P14_1_ClassHierarchy, RandomDagsMatchTheTransitiveClosure) {
       }
     }
     std::shuffle(edges.begin(), edges.end(), rng);
-    for (const auto rule : {ClassHierarchy::TreeParent::kDeepest, ClassHierarchy::TreeParent::kFirst}) {
+    for (const auto rule :
+         {ClassHierarchy::TreeParent::kDeepest, ClassHierarchy::TreeParent::kFirst}) {
       const auto h = ClassHierarchy::Build(edges, rule);
       size_t pairs = 0;
       for (const term_id_t c : ids) {

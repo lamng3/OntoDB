@@ -1,8 +1,8 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <random>
 #include <set>
-
-#include <gtest/gtest.h>
 
 #include "dictionary/mem_dictionary.h"
 #include "semantic/hybrid_search.h"
@@ -43,7 +43,8 @@ struct Ontology {
       edges.emplace_back(child, root);
       children.push_back(child);
       for (uint32_t g = 0; g < fan; g++) {
-        const term_id_t leaf = dict.Insert("<c" + std::to_string(c) + "g" + std::to_string(g) + ">");
+        const term_id_t leaf =
+            dict.Insert("<c" + std::to_string(c) + "g" + std::to_string(g) + ">");
         const auto gv = noisy(cv, 0.3f);
         vectors.Put(leaf, gv.data());
         edges.emplace_back(leaf, child);
@@ -99,16 +100,18 @@ TEST(P14_7_HybridSearch, EveryStrategyReturnsOnlyMembersAndPreFilterIsExact) {
   EXPECT_GE(pre.scans.scans, 1u);
   EXPECT_EQ(pre.stats.scored, 13u);
 
-  for (const auto strategy : {HybridSearch::Strategy::kPostFilterHnsw, HybridSearch::Strategy::kPostFilterIvf,
-                              HybridSearch::Strategy::kMaskHnsw, HybridSearch::Strategy::kMaskIvf,
-                              HybridSearch::Strategy::kAuto}) {
+  for (const auto strategy :
+       {HybridSearch::Strategy::kPostFilterHnsw, HybridSearch::Strategy::kPostFilterIvf,
+        HybridSearch::Strategy::kMaskHnsw, HybridSearch::Strategy::kMaskIvf,
+        HybridSearch::Strategy::kAuto}) {
     const auto got = search.Similar(q, 5, under, strategy, params);
     EXPECT_EQ(got.neighbors.size(), 5u) << HybridSearch::Name(strategy);
     for (const auto& n : got.neighbors) {
       EXPECT_EQ(members.count(n.id), 1u) << HybridSearch::Name(strategy);
     }
     // With full probing the mask and post-filter answers are the exact ones.
-    if (strategy == HybridSearch::Strategy::kMaskIvf || strategy == HybridSearch::Strategy::kPostFilterIvf) {
+    if (strategy == HybridSearch::Strategy::kMaskIvf ||
+        strategy == HybridSearch::Strategy::kPostFilterIvf) {
       const auto full = search.Similar(q, 5, under, strategy, {.nprobe = 8});
       EXPECT_EQ(Ids(full.neighbors), Ids(truth)) << HybridSearch::Name(strategy);
     }
@@ -133,9 +136,13 @@ TEST(P14_7_HybridSearch, AutoChoosesBySubtreeSizeAndEdgeCasesAreEmpty) {
   const float* q = o.vectors.Vector(0);
   HybridSearch::Params params{.ef = 64, .pre_threshold = 20};
 
-  EXPECT_EQ(search.Similar(q, 3, o.children[0], HybridSearch::Strategy::kAuto, params).used, HybridSearch::Strategy::kPreFilter);
-  EXPECT_EQ(search.Similar(q, 3, o.root, HybridSearch::Strategy::kAuto, params).used, HybridSearch::Strategy::kMaskHnsw);
-  EXPECT_EQ(search.Similar(q, 3, INVALID_TERM_ID, HybridSearch::Strategy::kAuto, params).neighbors.size(), 3u);
+  EXPECT_EQ(search.Similar(q, 3, o.children[0], HybridSearch::Strategy::kAuto, params).used,
+            HybridSearch::Strategy::kPreFilter);
+  EXPECT_EQ(search.Similar(q, 3, o.root, HybridSearch::Strategy::kAuto, params).used,
+            HybridSearch::Strategy::kMaskHnsw);
+  EXPECT_EQ(
+      search.Similar(q, 3, INVALID_TERM_ID, HybridSearch::Strategy::kAuto, params).neighbors.size(),
+      3u);
 
   // A leaf has only itself below it: fewer than k results, not an error.
   const term_id_t leaf = *o.dict.Lookup("<c0g0>");
@@ -143,7 +150,8 @@ TEST(P14_7_HybridSearch, AutoChoosesBySubtreeSizeAndEdgeCasesAreEmpty) {
   ASSERT_EQ(one.neighbors.size(), 1u);
   EXPECT_EQ(one.neighbors[0].id, leaf);
   // A class the hierarchy does not know has no members.
-  EXPECT_TRUE(search.Similar(q, 5, 424242, HybridSearch::Strategy::kAuto, params).neighbors.empty());
+  EXPECT_TRUE(
+      search.Similar(q, 5, 424242, HybridSearch::Strategy::kAuto, params).neighbors.empty());
 }
 
 }  // namespace

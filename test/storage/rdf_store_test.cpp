@@ -193,7 +193,9 @@ TEST(P3_2_DiskDictionary, DecodeCacheNeverReturnsAnotherIdsSpelling) {
   for (int round = 0; round < 3; round++) {
     for (int i = 1; i <= 4000; i++) {
       for (const int id : {i, i + 65536, n + 1 - i}) {
-        ASSERT_EQ(dict.Lookup(static_cast<term_id_t>(id)), "<http://ex/t" + std::to_string(id) + ">") << id;
+        ASSERT_EQ(dict.Lookup(static_cast<term_id_t>(id)),
+                  "<http://ex/t" + std::to_string(id) + ">")
+            << id;
       }
     }
   }

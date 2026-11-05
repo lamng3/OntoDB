@@ -1,8 +1,8 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <random>
 #include <set>
-
-#include <gtest/gtest.h>
 
 #include "dictionary/mem_dictionary.h"
 #include "semantic/flat_index.h"
@@ -11,7 +11,8 @@
 namespace ontodb {
 namespace {
 
-void Blobs(VectorStore* store, MemDictionary* dict, uint32_t clusters, uint32_t per, float spread, uint64_t seed) {
+void Blobs(VectorStore* store, MemDictionary* dict, uint32_t clusters, uint32_t per, float spread,
+           uint64_t seed) {
   std::mt19937_64 rng(seed);
   std::normal_distribution<float> gauss;
   const uint32_t dim = store->Dim();
@@ -69,7 +70,8 @@ TEST(P14_6_HnswIndex, FindsTheTrueNeighborsOfBlobs) {
   int queries = 0;
   SearchStats stats;
   for (uint32_t row = 0; row < store.Size(); row += 19) {
-    recall += Recall(hnsw.Search(store.Vector(row), 10, 64, nullptr, &stats), exact.Search(store.Vector(row), 10));
+    recall += Recall(hnsw.Search(store.Vector(row), 10, 64, nullptr, &stats),
+                     exact.Search(store.Vector(row), 10));
     queries++;
   }
   EXPECT_GT(recall / queries, 0.95);

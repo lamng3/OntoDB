@@ -1,10 +1,10 @@
 #include "semantic/kmeans.h"
 
-#include "semantic/dot.h"
-
 #include <algorithm>
 #include <cmath>
 #include <random>
+
+#include "semantic/dot.h"
 
 namespace ontodb {
 
@@ -21,8 +21,8 @@ void Unit(float* v, uint32_t dim) {
 
 }  // namespace
 
-auto NearestCenter(const float* centers, uint32_t k, uint32_t dim, const float* v, bool spherical, float* score)
-    -> uint32_t {
+auto NearestCenter(const float* centers, uint32_t k, uint32_t dim, const float* v, bool spherical,
+                   float* score) -> uint32_t {
   uint32_t best = 0;
   float best_score = -INFINITY;
   for (uint32_t c = 0; c < k; c++) {
@@ -48,8 +48,8 @@ auto NearestCenter(const float* centers, uint32_t k, uint32_t dim, const float* 
   return best;
 }
 
-auto KMeans(const float* data, size_t n, uint32_t dim, uint32_t k, uint32_t iterations, uint64_t seed,
-            bool spherical) -> std::vector<float> {
+auto KMeans(const float* data, size_t n, uint32_t dim, uint32_t k, uint32_t iterations,
+            uint64_t seed, bool spherical) -> std::vector<float> {
   std::vector<float> centers(static_cast<size_t>(k) * dim, 0.0f);
   if (n == 0 || k == 0) {
     return centers;
@@ -58,7 +58,8 @@ auto KMeans(const float* data, size_t n, uint32_t dim, uint32_t k, uint32_t iter
   if (n <= k) {
     for (uint32_t c = 0; c < k; c++) {
       const size_t row = std::min<size_t>(c, n - 1);
-      std::copy(data + row * dim, data + (row + 1) * dim, centers.begin() + static_cast<size_t>(c) * dim);
+      std::copy(data + row * dim, data + (row + 1) * dim,
+                centers.begin() + static_cast<size_t>(c) * dim);
     }
     return centers;
   }

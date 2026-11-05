@@ -1,9 +1,9 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <map>
 #include <random>
 #include <set>
-
-#include <gtest/gtest.h>
 
 #include "dictionary/mem_dictionary.h"
 #include "semantic/label_index.h"
@@ -86,7 +86,8 @@ TEST(P14_2_TypeClosure, ThreeStrategiesAgree) {
   for (const auto& [c, p] : w.edges) {
     w.store.Insert(Triple{c, w.sub_, p});
   }
-  const std::vector<std::pair<term_id_t, term_id_t>> typed{{100, 13}, {101, 14}, {102, 12}, {103, 10}, {104, 13}, {104, 14}, {105, 99}};
+  const std::vector<std::pair<term_id_t, term_id_t>> typed{
+      {100, 13}, {101, 14}, {102, 12}, {103, 10}, {104, 13}, {104, 14}, {105, 99}};
   for (const auto& [x, c] : typed) {
     w.store.Insert(Triple{x, w.type_, c});
   }
@@ -126,17 +127,20 @@ TEST(P14_2_TypeClosure, RandomOntologiesAgree) {
     for (int i = 1; i < n; i++) {
       const int parents = 1 + static_cast<int>(rng() % 2);
       for (int k = 0; k < parents; k++) {
-        w.store.Insert(Triple{static_cast<term_id_t>(100 + i), w.sub_, static_cast<term_id_t>(100 + rng() % i)});
+        w.store.Insert(Triple{static_cast<term_id_t>(100 + i), w.sub_,
+                              static_cast<term_id_t>(100 + rng() % i)});
       }
     }
     const int instances = 50 + static_cast<int>(rng() % 100);
     for (int x = 0; x < instances; x++) {
       const int types = 1 + static_cast<int>(rng() % 3);
       for (int k = 0; k < types; k++) {
-        w.store.Insert(Triple{static_cast<term_id_t>(5000 + x), w.type_, static_cast<term_id_t>(100 + rng() % n)});
+        w.store.Insert(Triple{static_cast<term_id_t>(5000 + x), w.type_,
+                              static_cast<term_id_t>(100 + rng() % n)});
       }
     }
-    const auto h = ClassHierarchy::Build(CollectSubClassEdges(&w.store, w.sub_), ClassHierarchy::TreeParent::kDeepest,
+    const auto h = ClassHierarchy::Build(CollectSubClassEdges(&w.store, w.sub_),
+                                         ClassHierarchy::TreeParent::kDeepest,
                                          CollectTypeClasses(&w.store, w.type_));
     LabelIndex index(&env.bpm);
     index.BulkLoad(TypeLabelPairs(h, &w.store, w.type_));

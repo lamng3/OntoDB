@@ -145,7 +145,8 @@ auto RdfLoader::Parse(const std::filesystem::path& path, Dictionary& dictionary,
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
   if (ext == ".owl" || ext == ".rdf") {
-    throw std::runtime_error("RDF/XML is not supported in this build; use Turtle (.ttl) or N-Triples (.nt)");
+    throw std::runtime_error(
+        "RDF/XML is not supported in this build; use Turtle (.ttl) or N-Triples (.nt)");
   }
   if (ext != ".ttl" && ext != ".nt") {
     throw std::runtime_error("unsupported RDF extension for " + path.string() +

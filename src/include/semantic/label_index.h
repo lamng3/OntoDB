@@ -36,7 +36,8 @@ class LabelIndex {
   auto Tree() -> BPlusTree* { return &tree_; }
 
   // The distinct members whose label lies in any of `intervals`, ascending.
-  auto Scan(const std::vector<Interval>& intervals, ScanStats* stats = nullptr) -> std::vector<term_id_t>;
+  auto Scan(const std::vector<Interval>& intervals,
+            ScanStats* stats = nullptr) -> std::vector<term_id_t>;
 
  private:
   static auto Key(uint32_t label, term_id_t member) -> TripleKey;

@@ -32,16 +32,21 @@ IvfIndex::IvfIndex(const VectorStore* store, BufferPoolManager* bpm, const Optio
     , options_(options)
     , header_(NewHeader(bpm))
     , tree_("ivf", header_, bpm)
-    , flat_(store, options.encoding == Encoding::kSq8 ? FlatIndex::Precision::kSq8 : FlatIndex::Precision::kFloat32)
+    , flat_(store, options.encoding == Encoding::kSq8 ? FlatIndex::Precision::kSq8
+                                                      : FlatIndex::Precision::kFloat32)
     , pq_(store->Dim(), options.encoding == Encoding::kPq ? options.pq_m : 1) {}
 
 void IvfIndex::Build() {
   const size_t n = store_->Size();
   const uint32_t dim = store_->Dim();
-  lists_ = options_.lists != 0 ? options_.lists
-                               : std::max<uint32_t>(1, static_cast<uint32_t>(std::lround(4.0 * std::sqrt(static_cast<double>(n)))));
+  lists_ =
+      options_.lists != 0
+          ? options_.lists
+          : std::max<uint32_t>(
+                1, static_cast<uint32_t>(std::lround(4.0 * std::sqrt(static_cast<double>(n)))));
   lists_ = static_cast<uint32_t>(std::min<size_t>(lists_, std::max<size_t>(n, 1)));
-  const size_t want = options_.max_train != 0 ? options_.max_train : static_cast<size_t>(lists_) * 64;
+  const size_t want =
+      options_.max_train != 0 ? options_.max_train : static_cast<size_t>(lists_) * 64;
   const size_t train = std::min(n, want);
   std::vector<float> sample(train * dim);
   {
@@ -50,7 +55,8 @@ void IvfIndex::Build() {
     std::mt19937_64 rng(options_.seed);
     std::shuffle(rows.begin(), rows.end(), rng);
     for (size_t i = 0; i < train; i++) {
-      std::copy(store_->Vector(rows[i]), store_->Vector(rows[i]) + dim, sample.begin() + static_cast<long>(i * dim));
+      std::copy(store_->Vector(rows[i]), store_->Vector(rows[i]) + dim,
+                sample.begin() + static_cast<long>(i * dim));
     }
   }
   centroids_ = KMeans(sample.data(), train, dim, lists_, options_.iterations, options_.seed, true);
@@ -84,8 +90,8 @@ auto IvfIndex::Bytes() const -> size_t {
   }
 }
 
-auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowFilter* allowed, SearchStats* stats)
-    -> std::vector<Neighbor> {
+auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowFilter* allowed,
+                      SearchStats* stats) -> std::vector<Neighbor> {
   const uint32_t dim = store_->Dim();
   const auto q = Normalized(query, dim);
   nprobe = std::min(std::max<uint32_t>(nprobe, 1), lists_);
@@ -123,7 +129,8 @@ auto IvfIndex::Search(const float* query, size_t k, uint32_t nprobe, const RowFi
         continue;
       }
       const float s = options_.encoding == Encoding::kPq
-                          ? ProductQuantizer::Score(table, codes_.data() + static_cast<size_t>(row) * pq_.M(), pq_.M())
+                          ? ProductQuantizer::Score(
+                                table, codes_.data() + static_cast<size_t>(row) * pq_.M(), pq_.M())
                           : flat_.Score(q.data(), row);
       scored++;
       if (heap.size() < k) {

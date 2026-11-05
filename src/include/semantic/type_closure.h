@@ -24,19 +24,21 @@ namespace ontodb {
 
 // The (class, parent) pairs of every `predicate` triple in the store, and the
 // classes that are the object of an `rdf:type` triple but sit in no edge.
-auto CollectSubClassEdges(TripleStore* store, term_id_t sub_class_of) -> std::vector<std::pair<term_id_t, term_id_t>>;
+auto CollectSubClassEdges(TripleStore* store,
+                          term_id_t sub_class_of) -> std::vector<std::pair<term_id_t, term_id_t>>;
 auto CollectTypeClasses(TripleStore* store, term_id_t rdf_type) -> std::vector<term_id_t>;
 
 // Every (label(C), x) for a triple (x rdf:type C) whose class is in `h`.
-auto TypeLabelPairs(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type)
-    -> std::vector<std::pair<uint32_t, term_id_t>>;
+auto TypeLabelPairs(const ClassHierarchy& h, TripleStore* store,
+                    term_id_t rdf_type) -> std::vector<std::pair<uint32_t, term_id_t>>;
 
 auto InstancesByIntervals(const ClassHierarchy& h, LabelIndex* index, term_id_t cls,
                           LabelIndex::ScanStats* stats = nullptr) -> std::vector<term_id_t>;
-auto InstancesByRewrite(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type, term_id_t cls,
-                        size_t* scans = nullptr) -> std::vector<term_id_t>;
+auto InstancesByRewrite(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type,
+                        term_id_t cls, size_t* scans = nullptr) -> std::vector<term_id_t>;
 // Inserts the entailed type triples; returns how many were new.
 auto MaterializeTypes(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type) -> size_t;
-auto InstancesByScan(TripleStore* store, term_id_t rdf_type, term_id_t cls) -> std::vector<term_id_t>;
+auto InstancesByScan(TripleStore* store, term_id_t rdf_type,
+                     term_id_t cls) -> std::vector<term_id_t>;
 
 }  // namespace ontodb

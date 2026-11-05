@@ -43,7 +43,9 @@ class VectorStore {
   // for a zero or non-finite vector.
   void Put(term_id_t id, const float* v);
   auto Row(term_id_t id) const -> std::optional<uint32_t>;
-  auto Vector(uint32_t row) const -> const float* { return data_.data() + static_cast<size_t>(row) * dim_; }
+  auto Vector(uint32_t row) const -> const float* {
+    return data_.data() + static_cast<size_t>(row) * dim_;
+  }
   auto IdAt(uint32_t row) const -> term_id_t { return ids_[row]; }
 
   // Writes every vector, naming each term through `dictionary`. A term the

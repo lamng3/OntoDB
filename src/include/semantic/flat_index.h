@@ -36,7 +36,8 @@ struct RowFilter {
 
   RowFilter() = default;
   RowFilter(const RowMask* m) : mask(m) {}  // NOLINT: a mask is the common case
-  RowFilter(const std::vector<uint32_t>* labels, const std::vector<Interval>* ivs) : row_label(labels), intervals(ivs) {}
+  RowFilter(const std::vector<uint32_t>* labels, const std::vector<Interval>* ivs)
+      : row_label(labels), intervals(ivs) {}
 
   auto Allows(uint32_t row) const -> bool {
     if (mask != nullptr) {
@@ -46,8 +47,9 @@ struct RowFilter {
     if (label == 0) {
       return false;
     }
-    const auto it = std::upper_bound(intervals->begin(), intervals->end(), label,
-                                     [](uint32_t value, const Interval& iv) { return value < iv.lo; });
+    const auto it =
+        std::upper_bound(intervals->begin(), intervals->end(), label,
+                         [](uint32_t value, const Interval& iv) { return value < iv.lo; });
     return it != intervals->begin() && label <= (it - 1)->hi;
   }
 };
@@ -70,7 +72,8 @@ class FlatIndex {
 
   // The k best by score, best first. `query` has Dim() floats and need not be
   // normalized.
-  auto Search(const float* query, size_t k, SearchStats* stats = nullptr) const -> std::vector<Neighbor>;
+  auto Search(const float* query, size_t k,
+              SearchStats* stats = nullptr) const -> std::vector<Neighbor>;
   // The same, among the given rows only.
   auto SearchRows(const float* query, size_t k, const std::vector<uint32_t>& rows,
                   SearchStats* stats = nullptr) const -> std::vector<Neighbor>;

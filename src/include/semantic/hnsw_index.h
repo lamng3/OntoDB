@@ -57,9 +57,11 @@ class HnswIndex {
   auto SimQ(const float* q, uint32_t row) const -> float;
   auto MaxLinks(int layer) const -> size_t { return layer == 0 ? 2 * options_.m : options_.m; }
   // Best-first search on one layer; returns up to ef candidates, best first.
-  auto SearchLayer(const float* q, std::vector<Cand> entries, uint32_t ef, int layer, const RowFilter* allowed,
-                   SearchStats* stats, size_t max_visits) const -> std::vector<Cand>;
-  auto Select(const std::vector<Cand>& sorted_best_first, size_t limit) const -> std::vector<uint32_t>;
+  auto SearchLayer(const float* q, std::vector<Cand> entries, uint32_t ef, int layer,
+                   const RowFilter* allowed, SearchStats* stats,
+                   size_t max_visits) const -> std::vector<Cand>;
+  auto Select(const std::vector<Cand>& sorted_best_first,
+              size_t limit) const -> std::vector<uint32_t>;
   void Insert(uint32_t row);
 
   const VectorStore* store_;

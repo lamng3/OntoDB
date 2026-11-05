@@ -65,8 +65,8 @@ class HybridSearch {
 
   // `under == INVALID_TERM_ID` means no filter. A class that is not in the
   // hierarchy has no members, so the answer is empty.
-  auto Similar(const float* query, size_t k, term_id_t under, Strategy strategy, const Params& params) const
-      -> Result;
+  auto Similar(const float* query, size_t k, term_id_t under, Strategy strategy,
+               const Params& params) const -> Result;
 
   static auto Name(Strategy s) -> const char*;
 

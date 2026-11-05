@@ -1,10 +1,10 @@
 #include "semantic/flat_index.h"
 
-#include "semantic/dot.h"
-
 #include <algorithm>
 #include <cmath>
 #include <queue>
+
+#include "semantic/dot.h"
 
 namespace ontodb {
 
@@ -23,7 +23,8 @@ auto Normalized(const float* v, uint32_t dim) -> std::vector<float> {
   return out;
 }
 
-FlatIndex::FlatIndex(const VectorStore* store, Precision precision) : store_(store), precision_(precision) {
+FlatIndex::FlatIndex(const VectorStore* store, Precision precision)
+    : store_(store), precision_(precision) {
   if (precision_ != Precision::kSq8) {
     return;
   }
@@ -69,9 +70,9 @@ struct Entry {
 
 }  // namespace
 
-template <typename Rows>
-static auto Best(const FlatIndex& index, const VectorStore* store, const float* q, size_t k, const Rows& rows,
-                 SearchStats* stats) -> std::vector<Neighbor> {
+template<typename Rows>
+static auto Best(const FlatIndex& index, const VectorStore* store, const float* q, size_t k,
+                 const Rows& rows, SearchStats* stats) -> std::vector<Neighbor> {
   std::priority_queue<Entry, std::vector<Entry>, std::greater<>> heap;
   if (k == 0) {
     return {};
@@ -98,24 +99,31 @@ static auto Best(const FlatIndex& index, const VectorStore* store, const float* 
   return out;
 }
 
-auto FlatIndex::Search(const float* query, size_t k, SearchStats* stats) const -> std::vector<Neighbor> {
+auto FlatIndex::Search(const float* query, size_t k,
+                       SearchStats* stats) const -> std::vector<Neighbor> {
   const auto q = Normalized(query, store_->Dim());
   const uint32_t n = static_cast<uint32_t>(store_->Size());
-  return Best(*this, store_, q.data(), k, [n](auto&& visit) {
-    for (uint32_t row = 0; row < n; row++) {
-      visit(row);
-    }
-  }, stats);
+  return Best(
+      *this, store_, q.data(), k,
+      [n](auto&& visit) {
+        for (uint32_t row = 0; row < n; row++) {
+          visit(row);
+        }
+      },
+      stats);
 }
 
 auto FlatIndex::SearchRows(const float* query, size_t k, const std::vector<uint32_t>& rows,
                            SearchStats* stats) const -> std::vector<Neighbor> {
   const auto q = Normalized(query, store_->Dim());
-  return Best(*this, store_, q.data(), k, [&rows](auto&& visit) {
-    for (const uint32_t row : rows) {
-      visit(row);
-    }
-  }, stats);
+  return Best(
+      *this, store_, q.data(), k,
+      [&rows](auto&& visit) {
+        for (const uint32_t row : rows) {
+          visit(row);
+        }
+      },
+      stats);
 }
 
 }  // namespace ontodb

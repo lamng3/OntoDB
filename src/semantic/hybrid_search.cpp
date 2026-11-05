@@ -13,12 +13,18 @@ HybridSearch::HybridSearch(const Parts& parts) : parts_(parts) {
 
 auto HybridSearch::Name(Strategy s) -> const char* {
   switch (s) {
-    case Strategy::kAuto: return "auto";
-    case Strategy::kPreFilter: return "pre-filter";
-    case Strategy::kPostFilterHnsw: return "post-filter/hnsw";
-    case Strategy::kPostFilterIvf: return "post-filter/ivf";
-    case Strategy::kMaskHnsw: return "mask/hnsw";
-    case Strategy::kMaskIvf: return "mask/ivf";
+    case Strategy::kAuto:
+      return "auto";
+    case Strategy::kPreFilter:
+      return "pre-filter";
+    case Strategy::kPostFilterHnsw:
+      return "post-filter/hnsw";
+    case Strategy::kPostFilterIvf:
+      return "post-filter/ivf";
+    case Strategy::kMaskHnsw:
+      return "mask/hnsw";
+    case Strategy::kMaskIvf:
+      return "mask/ivf";
   }
   return "?";
 }
@@ -36,8 +42,8 @@ auto HybridSearch::Members(term_id_t under, Result* out) const -> std::vector<ui
   return rows;
 }
 
-auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strategy strategy, const Params& params) const
-    -> Result {
+auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strategy strategy,
+                           const Params& params) const -> Result {
   Result out;
   const size_t n = parts_.vectors->Size();
   const bool filtered = under != INVALID_TERM_ID;
@@ -47,8 +53,11 @@ auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strate
   }
   if (strategy == Strategy::kAuto) {
     if (!filtered) {
-      strategy = parts_.hnsw != nullptr ? Strategy::kMaskHnsw : parts_.ivf != nullptr ? Strategy::kMaskIvf : Strategy::kPreFilter;
-    } else if (parts_.hierarchy->DescendantCount(under) <= params.pre_threshold || (parts_.hnsw == nullptr && parts_.ivf == nullptr)) {
+      strategy = parts_.hnsw != nullptr  ? Strategy::kMaskHnsw
+                 : parts_.ivf != nullptr ? Strategy::kMaskIvf
+                                         : Strategy::kPreFilter;
+    } else if (parts_.hierarchy->DescendantCount(under) <= params.pre_threshold ||
+               (parts_.hnsw == nullptr && parts_.ivf == nullptr)) {
       strategy = Strategy::kPreFilter;
     } else {
       strategy = parts_.hnsw != nullptr ? Strategy::kMaskHnsw : Strategy::kMaskIvf;
@@ -60,10 +69,12 @@ auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strate
     out.rounds = 1;
     if (strategy == Strategy::kPreFilter || (parts_.hnsw == nullptr && parts_.ivf == nullptr)) {
       out.neighbors = parts_.flat->Search(query, k, &out.stats);
-    } else if (strategy == Strategy::kMaskIvf || strategy == Strategy::kPostFilterIvf || parts_.hnsw == nullptr) {
+    } else if (strategy == Strategy::kMaskIvf || strategy == Strategy::kPostFilterIvf ||
+               parts_.hnsw == nullptr) {
       out.neighbors = parts_.ivf->Search(query, k, params.nprobe, nullptr, &out.stats);
     } else {
-      out.neighbors = parts_.hnsw->Search(query, k, params.ef, nullptr, &out.stats, params.max_visits);
+      out.neighbors =
+          parts_.hnsw->Search(query, k, params.ef, nullptr, &out.stats, params.max_visits);
     }
     return out;
   }
@@ -79,7 +90,8 @@ auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strate
       const RowFilter filter(&row_label_, &parts_.hierarchy->Intervals(under));
       out.rounds = 1;
       if (strategy == Strategy::kMaskHnsw) {
-        out.neighbors = parts_.hnsw->Search(query, k, params.ef, &filter, &out.stats, params.max_visits);
+        out.neighbors =
+            parts_.hnsw->Search(query, k, params.ef, &filter, &out.stats, params.max_visits);
       } else {
         out.neighbors = parts_.ivf->Search(query, k, params.nprobe, &filter, &out.stats);
       }
@@ -93,7 +105,9 @@ auto HybridSearch::Similar(const float* query, size_t k, term_id_t under, Strate
         out.rounds++;
         std::vector<Neighbor> got;
         if (strategy == Strategy::kPostFilterHnsw) {
-          got = parts_.hnsw->Search(query, want, std::max<uint32_t>(params.ef, static_cast<uint32_t>(want)), nullptr, &out.stats);
+          got = parts_.hnsw->Search(query, want,
+                                    std::max<uint32_t>(params.ef, static_cast<uint32_t>(want)),
+                                    nullptr, &out.stats);
         } else {
           got = parts_.ivf->Search(query, want, params.nprobe, nullptr, &out.stats);
         }

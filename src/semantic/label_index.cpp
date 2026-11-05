@@ -45,7 +45,8 @@ void LabelIndex::BulkLoad(std::vector<std::pair<uint32_t, term_id_t>> pairs) {
   tree_.BulkLoad(keys);
 }
 
-auto LabelIndex::Scan(const std::vector<Interval>& intervals, ScanStats* stats) -> std::vector<term_id_t> {
+auto LabelIndex::Scan(const std::vector<Interval>& intervals,
+                      ScanStats* stats) -> std::vector<term_id_t> {
   std::vector<term_id_t> out;
   for (const Interval& iv : intervals) {
     // [ (lo, 0, 0), (hi + 1, 0, 0) ): every key whose label is in [lo, hi].

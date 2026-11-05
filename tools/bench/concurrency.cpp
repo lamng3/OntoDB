@@ -12,9 +12,9 @@
 // (.,p,o). Writers insert through the store (three B+ trees, latch crabbing) without the log.
 
 #include <atomic>
-#include <cstdlib>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -38,7 +38,8 @@ using namespace ontodb;  // NOLINT
 namespace {
 
 using Clock = std::chrono::steady_clock;
-constexpr size_t kPool = 262144;  // 1 GiB of frames: the data and the inserted triples stay resident
+constexpr size_t kPool =
+    262144;  // 1 GiB of frames: the data and the inserted triples stay resident
 
 struct Run {
   double reads_per_s{0};
@@ -49,7 +50,8 @@ struct Run {
 
 auto main(int argc, char** argv) -> int {
   if (argc < 5) {
-    std::cerr << "usage: ontodb_bench_concurrency <work dir> <queries.tsv> <seconds> <rdf file>...\n";
+    std::cerr
+        << "usage: ontodb_bench_concurrency <work dir> <queries.tsv> <seconds> <rdf file>...\n";
     return 2;
   }
   const fs::path work = argv[1];
@@ -116,8 +118,8 @@ auto main(int argc, char** argv) -> int {
           Config config;
           IoStats io;
           NullTraceSink trace;
-          ExecutorContext ctx(&store, &dictionary, &config, nullptr, nullptr, nullptr, &pool, &io, &trace,
-                              nullptr);
+          ExecutorContext ctx(&store, &dictionary, &config, nullptr, nullptr, nullptr, &pool, &io,
+                              &trace, nullptr);
           ExecutionEngine engine(&ctx, &statistics);
           engine.Execute(queries[at % queries.size()]);
           at++;
@@ -134,7 +136,8 @@ auto main(int argc, char** argv) -> int {
         while (!stop.load()) {
           // Multiplying by an odd constant modulo 2^26 is a bijection, so the new subjects are
           // distinct and arrive in scattered order, as keys of a real workload do.
-          const term_id_t id = fresh_base + ((next_fresh.fetch_add(1) * 2654435761ULL) & ((1ULL << 26) - 1));
+          const term_id_t id =
+              fresh_base + ((next_fresh.fetch_add(1) * 2654435761ULL) & ((1ULL << 26) - 1));
           store.Insert(Triple{id, 1, id % 977 + 1});
           mine++;
         }
@@ -156,27 +159,32 @@ auto main(int argc, char** argv) -> int {
   const std::string only = only_env != nullptr ? only_env : "";
   const auto wanted = [&](const std::string& name) { return only.empty() || only == name; };
   std::printf("#load\ttriples=%llu\tlookup_queries=%zu\trange_queries=%zu\n",
-              static_cast<unsigned long long>(statistics.TripleCount()), lookup.size(), range.size());
+              static_cast<unsigned long long>(statistics.TripleCount()), lookup.size(),
+              range.size());
   for (const int t : {1, 2, 4, 8}) {
-    if (!wanted("read-lookup")) break;
+    if (!wanted("read-lookup"))
+      break;
     const Run a = run(lookup, t, 0);
     std::printf("read\tlookup\t%d\t%.0f\t0\n", t, a.reads_per_s);
     std::fflush(stdout);
   }
   for (const int t : {1, 2, 4, 8}) {
-    if (!wanted("read-range")) break;
+    if (!wanted("read-range"))
+      break;
     const Run a = run(range, t, 0);
     std::printf("read\trange\t%d\t%.0f\t0\n", t, a.reads_per_s);
     std::fflush(stdout);
   }
   for (const int t : {1, 2, 4, 8}) {
-    if (!wanted("insert")) break;
+    if (!wanted("insert"))
+      break;
     const Run a = run(lookup, 0, t);
     std::printf("insert\t-\t%d\t0\t%.0f\n", t, a.inserts_per_s);
     std::fflush(stdout);
   }
   for (const int t : {1, 2, 4, 8}) {
-    if (!wanted("mixed")) break;
+    if (!wanted("mixed"))
+      break;
     const Run a = run(lookup, t, 1);
     std::printf("mixed\tlookup\t%d\t%.0f\t%.0f\n", t, a.reads_per_s, a.inserts_per_s);
     std::fflush(stdout);

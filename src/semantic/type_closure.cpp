@@ -25,7 +25,8 @@ void SortUnique(std::vector<term_id_t>* v) {
 
 }  // namespace
 
-auto CollectSubClassEdges(TripleStore* store, term_id_t sub_class_of) -> std::vector<std::pair<term_id_t, term_id_t>> {
+auto CollectSubClassEdges(TripleStore* store,
+                          term_id_t sub_class_of) -> std::vector<std::pair<term_id_t, term_id_t>> {
   std::vector<std::pair<term_id_t, term_id_t>> edges;
   for (const Triple& t : Drain(store, TriplePattern{std::nullopt, sub_class_of, std::nullopt})) {
     edges.emplace_back(t.subject, t.object);
@@ -42,8 +43,8 @@ auto CollectTypeClasses(TripleStore* store, term_id_t rdf_type) -> std::vector<t
   return classes;
 }
 
-auto TypeLabelPairs(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type)
-    -> std::vector<std::pair<uint32_t, term_id_t>> {
+auto TypeLabelPairs(const ClassHierarchy& h, TripleStore* store,
+                    term_id_t rdf_type) -> std::vector<std::pair<uint32_t, term_id_t>> {
   std::vector<std::pair<uint32_t, term_id_t>> pairs;
   for (const Triple& t : Drain(store, TriplePattern{std::nullopt, rdf_type, std::nullopt})) {
     if (const uint32_t label = h.Label(t.object); label != 0) {
@@ -58,8 +59,8 @@ auto InstancesByIntervals(const ClassHierarchy& h, LabelIndex* index, term_id_t 
   return index->Scan(h.Intervals(cls), stats);
 }
 
-auto InstancesByRewrite(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type, term_id_t cls,
-                        size_t* scans) -> std::vector<term_id_t> {
+auto InstancesByRewrite(const ClassHierarchy& h, TripleStore* store, term_id_t rdf_type,
+                        term_id_t cls, size_t* scans) -> std::vector<term_id_t> {
   std::vector<term_id_t> out;
   // A class that is in no edge still has itself as instances.
   std::vector<term_id_t> below = h.Descendants(cls);
@@ -92,7 +93,8 @@ auto MaterializeTypes(const ClassHierarchy& h, TripleStore* store, term_id_t rdf
   return store->InsertBatch(add);
 }
 
-auto InstancesByScan(TripleStore* store, term_id_t rdf_type, term_id_t cls) -> std::vector<term_id_t> {
+auto InstancesByScan(TripleStore* store, term_id_t rdf_type,
+                     term_id_t cls) -> std::vector<term_id_t> {
   std::vector<term_id_t> out;
   for (const Triple& t : Drain(store, TriplePattern{std::nullopt, rdf_type, cls})) {
     out.push_back(t.subject);

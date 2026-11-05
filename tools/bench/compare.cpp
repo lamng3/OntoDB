@@ -29,10 +29,10 @@
 #include "dictionary/disk_dictionary.h"
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
+#include "parser/parser.h"
 #include "semantic/class_hierarchy.h"
 #include "semantic/type_closure.h"
 #include "semantic/type_entailment_index.h"
-#include "parser/parser.h"
 #include "stats/statistics.h"
 #include "store/indexed_store.h"
 
@@ -43,7 +43,8 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-constexpr size_t kPool = 65536;  // 256 MiB of frames: holds LUBM(10), so this measures the engine, not the disk
+constexpr size_t kPool =
+    65536;  // 256 MiB of frames: holds LUBM(10), so this measures the engine, not the disk
 constexpr int kTimeoutSeconds = 60;
 
 auto Seconds(Clock::time_point since) -> double {
@@ -74,8 +75,9 @@ auto main(int argc, char** argv) -> int {
   Catalog catalog(&pool);
   // ONTODB_TERM_CACHE sets the dictionary's decode cache in entries; 0 turns it off.
   const char* cache_env = std::getenv("ONTODB_TERM_CACHE");
-  DiskDictionary dictionary(&pool, &catalog,
-                            cache_env != nullptr ? std::stoul(cache_env) : DiskDictionary::kDefaultCacheSlots);
+  DiskDictionary dictionary(
+      &pool, &catalog,
+      cache_env != nullptr ? std::stoul(cache_env) : DiskDictionary::kDefaultCacheSlots);
   IndexedStore store(&catalog, &pool, &dictionary);
   std::vector<fs::path> paths;
   for (int i = 4; i < argc; i++) {
@@ -102,7 +104,8 @@ auto main(int argc, char** argv) -> int {
     const auto type = dictionary.Lookup("<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>");
     const auto sub = dictionary.Lookup("<http://www.w3.org/2000/01/rdf-schema#subClassOf>");
     if (type.has_value() && sub.has_value()) {
-      const auto h = ClassHierarchy::Build(CollectSubClassEdges(&store, *sub), ClassHierarchy::TreeParent::kDeepest,
+      const auto h = ClassHierarchy::Build(CollectSubClassEdges(&store, *sub),
+                                           ClassHierarchy::TreeParent::kDeepest,
                                            CollectTypeClasses(&store, *type));
       inferred = MaterializeTypes(h, &store, *type);
     }
@@ -113,10 +116,13 @@ auto main(int argc, char** argv) -> int {
   Statistics statistics;
   statistics.Collect(store, dictionary);
   const double stats_s = Seconds(stats_started);
-  std::printf("#load\ttriples=%llu\tload_s=%.2f\tstatistics_s=%.2f\tinference=%s\tinference_s=%.2f\tinferred=%llu\tinference_mib=%.1f\tfile_mib=%.1f\tpeak_rss_mib=%.0f\n",
-              static_cast<unsigned long long>(loaded.triples), load_s, stats_s, inference.c_str(), inference_s,
-              static_cast<unsigned long long>(inferred), static_cast<double>(entailment.IndexBytes()) / (1024.0 * 1024.0),
-              static_cast<double>(fs::file_size(file)) / (1024.0 * 1024.0), PeakRssMib());
+  std::printf(
+      "#load\ttriples=%llu\tload_s=%.2f\tstatistics_s=%.2f\tinference=%s\tinference_s=%."
+      "2f\tinferred=%llu\tinference_mib=%.1f\tfile_mib=%.1f\tpeak_rss_mib=%.0f\n",
+      static_cast<unsigned long long>(loaded.triples), load_s, stats_s, inference.c_str(),
+      inference_s, static_cast<unsigned long long>(inferred),
+      static_cast<double>(entailment.IndexBytes()) / (1024.0 * 1024.0),
+      static_cast<double>(fs::file_size(file)) / (1024.0 * 1024.0), PeakRssMib());
 
   std::ifstream in(argv[2]);
   std::string line;
