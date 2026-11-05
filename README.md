@@ -1,34 +1,27 @@
-<div align="center">
-
-# 🗄️ OntoDB
-
-**A database management system for ontologies**
+# OntoDB
 
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
-[![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.com/ontodb/)
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
 [![License: BSD 3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-green.svg)](LICENSE)
 
-[⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.com/ontodb/) · [📚 Book](book/ontodb-book.pdf) · [📄 Papers](papers/)
+A database management system for ontologies. Data is RDF and the query language is SPARQL. The shell answers a SPARQL subset over B+ tree indexes with a cost-based optimizer, runs statements under strict two-phase locking, and recovers pages with ARIES after a crash. It also does semantic search: a class hierarchy becomes integer intervals in a B+ tree, and vectors are searched by exact, IVF, or HNSW indexes, optionally limited to the terms under a class.
 
-<b>Lam Nguyen</b>
-
-</div>
-
-> [!NOTE]
-> **Data is RDF. The query language is SPARQL.** The shell answers a SPARQL
-> subset over B+ tree indexes with a cost-based optimizer, runs statements
-> under strict two-phase locking, and recovers pages with ARIES after a crash.
-
-## ⚡ Quick start
+## Build
 
 ```bash
-brew install pkgconf raptor cmake ninja        # Ubuntu: see Usage
+# Ubuntu
+sudo apt-get install -y clang cmake ninja-build pkg-config libraptor2-dev
+# macOS
+brew install pkgconf raptor cmake ninja
+
 cmake --preset dev && cmake --build --preset dev
-./build/dev/ontodb mydb
 ```
 
+Presets are `dev` (AddressSanitizer and UndefinedBehaviorSanitizer), `tsan`, and `release`. `./build/dev/ontodb_test` runs the tests. Every push runs the suite under ASan/UBSan and ThreadSanitizer, then checks formatting and clang-tidy.
+
+## Run
+
 ```text
+$ ./build/dev/ontodb mydb
 OntoDB> \load data/tiny.owl
 loaded 14 triples in 5.2 ms
 OntoDB> SELECT ?kind WHERE { ?kind <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/materials#Material> . }
@@ -37,134 +30,16 @@ OntoDB> SELECT ?kind WHERE { ?kind <http://www.w3.org/2000/01/rdf-schema#subClas
 <http://example.org/materials#Polymer>
 (2 rows)
 OntoDB> \verify
-...
 verify: ok
 ```
 
-Start `./build/dev/ontodb mydb` again and the data is still there.
+Pass a directory (`ontodb mydb`) to keep the database on disk: every update statement and every `\load` is a transaction, forced to a checksummed write-ahead log before the prompt returns, and reopening the directory replays the committed ones. Without a directory the shell is an in-memory database. A query may span lines and runs when its braces close; `\help` lists the commands and `\explain` prints the plan.
 
-## ✨ What it is
+## Documentation
 
-OntoDB loads an ontology, stores each triple as three dictionary ids, and
-answers a query with a planner, an optimizer, and a B+ tree. A commit is a
-write-ahead log. A restart is ARIES.
-
-- **SPARQL.** Basic graph patterns, filters, and `INSERT DATA` / `DELETE DATA`. Turtle, N-Triples, and RDF/XML load as triples. OWL is stored as RDF.
-- **Persistent databases.** `ontodb <dir>` makes every update statement and every `\load` a transaction, forced to a checksummed log before the prompt returns. `\checkpoint` writes a snapshot, and `\verify` rebuilds from the files and compares.
-- **Indexes.** Subject, predicate, and object are 64-bit ids. A triple is a 24-byte key in a B+ tree, kept in more than one order so a bound position is a range scan.
-- **Query engine.** Volcano operators, nested-loop join, hash join, index nested-loop join, and an optimizer that picks the join order and the algorithm.
-- **Storage and recovery.** A buffer pool with LRU-K, strict two-phase locking, write-ahead logging, and ARIES, checked by a crash harness that kills a real store inside splits and merges.
-- **Semantic search.** A class hierarchy becomes a few integer intervals per class, kept in a B+ tree, so "everything under C" is a range scan. Vectors, one per term, are searched by exact, IVF (lists stored in a B+ tree), or HNSW indexes, and a search can be limited to the terms under a class. Theory and measurements: [docs/semantic-search.md](docs/semantic-search.md).
-- **Entailed type queries.** `\set entail on` makes `?x rdf:type C` return the instances of C and of every class below it, with the answers a store holding the entailed triples would give and none of its storage. The optimizer rewrites the scan into an interval scan over the hierarchy's postorder labels, costs it, and joins it like any other scan; `\explain` shows `IntervalTypeScan`. Only `rdfs:subClassOf` is read, and the index is a snapshot, rebuilt on the first entailed query after an update or a load.
-- **In the browser.** The engine compiles to WebAssembly (0.85 MB) and runs in the [manual's playground](https://lamng3.com/ontodb/playground.html), with the B+ tree indexes, real plans, and the semantic-search commands. See [docs/web-build.md](docs/web-build.md).
-
-Next, in [PLAN.md](PLAN.md): the page store behind `ontodb <dir>`, log housekeeping, more of SPARQL, and RDFS inference.
-
-Every push runs the test suite under AddressSanitizer and UndefinedBehaviorSanitizer and again under ThreadSanitizer, then checks formatting and clang-tidy. To check formatting before you push: `git config core.hooksPath .githooks`, or run `scripts/format`.
-
-## 🐍 Python
-
-```python
-import ontodb                                    # pip install ontodb
-
-con = ontodb.connect("mydb")                     # or ontodb.connect() for memory
-con.load("mouse.owl")
-con.execute("SELECT ?c WHERE { ?c ?p ?o } LIMIT 3").fetchall()
-```
-
-The engine runs in your process, and results are values. Search by meaning takes any vector, so it can start from
-free text. See [`python/README.md`](python/README.md).
-
-## 🔧 Usage
-
-<details>
-<summary><b>Build on Ubuntu or macOS</b></summary>
-
-Ubuntu:
-
-```bash
-sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libraptor2-dev
-cmake --preset dev && cmake --build --preset dev
-./build/dev/ontodb
-```
-
-macOS:
-
-```bash
-brew install pkgconf raptor cmake ninja
-cmake --preset dev && cmake --build --preset dev
-./build/dev/ontodb
-```
-
-Presets are `dev` (ASan and UBSan), `tsan`, and `release`. `./build/dev/ontodb_test` runs the tests.
-
-</details>
-
-<details>
-<summary><b>Query</b></summary>
-
-At the `OntoDB>` prompt, a query may span lines. It runs when the braces close.
-
-```text
-\load data/tiny.ttl
-PREFIX ub: <http://example.edu/univ#>
-SELECT ?name WHERE {
-  ?s a ub:Student ; ub:name ?name .
-}
-\quit
-```
-
-The load reports 53 triples. The names are Alice, Bob, and Cara. `\help` lists the commands. `\explain` prints the plan.
-
-</details>
-
-<details>
-<summary><b>Keep a database on disk</b></summary>
-
-Give the shell a directory. Every update statement and every `\load` is a transaction, and the commit is on disk before the prompt returns.
-
-```text
-./build/dev/ontodb mydb
-\load data/tiny.owl
-INSERT DATA { <http://example.org/materials#Ceramic> <http://www.w3.org/2000/01/rdf-schema#subClassOf> <http://example.org/materials#Material> . }
-\checkpoint
-\verify
-\quit
-```
-
-`\log` prints the last log records, `\checkpoint` writes a snapshot and empties the log, and `\verify` rebuilds the database from the files and compares. If the log ends in a torn or corrupt record, the shell keeps every transaction before it and says what it dropped; `ontodb --strict mydb` refuses to open instead.
-
-</details>
-
-<details>
-<summary><b>Development</b></summary>
-
-```bash
-scripts/check durable        # build and run one feature, print the next slice
-scripts/status               # every slice and the progress
-scripts/crashtest --seeds 4  # the crash harness
-```
-
-One query and one committed statement, followed through the code: [docs/architecture.md](docs/architecture.md), which also lists the design patterns the code uses. Benchmarks go in `benchmarks/`, and the writeup that cites them in `writeups/`.
-
-</details>
-
-## 📚 Reading
-
-- **Book** — [*OntoDB: Database Internals by Example*](book/ontodb-book.pdf) explains the theory behind each part: pages and the buffer pool, B+ trees and RDF indexing, query plans and joins, transactions and locking, the write-ahead log, ARIES, and durability.
-- **Manual** — the [online manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the shell and SPARQL references, persistent databases, file formats, troubleshooting, and internals.
-- **Papers** — [`papers/query-engine/`](papers/query-engine/), a fast and persistent query engine for ontologies, and [`papers/vector-search/`](papers/vector-search/), hierarchy-filtered vector search inside an ontology store.
-
-## 📝 Citation
-
-```bibtex
-@misc{nguyen2026ontodb,
-  title  = {OntoDB: A Database Management System for Ontologies},
-  author = {Nguyen, Lam},
-  year   = {2026},
-  url    = {https://github.com/lamng3/OntoDB}
-}
-```
+- **Manual** — <https://lamng3.com/ontodb/> (installation, tutorial, shell and SPARQL reference, internals), with an in-browser [playground](https://lamng3.com/ontodb/playground.html).
+- **Design notes and roadmap** — the [project wiki](https://github.com/lamng3/OntoDB/wiki).
+- **Book and papers** — in [ontodb-docs](https://github.com/lamng3/ontodb-docs): *OntoDB: Database Internals by Example* and two research papers.
 
 ## License
 

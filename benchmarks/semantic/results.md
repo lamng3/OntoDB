@@ -17,7 +17,7 @@ For 2,000 random terms, the 10 nearest by cosine; each cell is the share of them
 10 nearest neighbors by cosine, 2000 random terms: 0.119 are parent or child, 0.322 are within two is-a steps (a two-step neighborhood has 45 terms on average, 0.12% of all terms).
 
 - **The hierarchy's postorder is the best order and the dictionary's first-seen order is not.** The nearest neighbor is a median of 45 positions away in postorder and 1,739 in id order.
-- **No order is enough.** Within ±100 positions the best order finds 38% of the ten neighbors; within ±1000 (2.6% of the ontology), 56%. This is what the bandwidth lemma in `docs/semantic-search.md` says to expect.
+- **No order is enough.** Within ±100 positions the best order finds 38% of the ten neighbors; within ±1000 (2.6% of the ontology), 56%. This is what the bandwidth lemma in `the Semantic-Search wiki page` says to expect.
 - **Ids are not random here.** GO minted its ids in related batches, so id order has some locality (0.21 at ±100) that comes from the file, not from the engine.
 - **The hierarchy is informative, not sufficient.** A neighbor is a parent or child in 12% of cases and within two `is_a` steps in 32%, in a two-step neighborhood of 45 terms (0.12% of all terms).
 

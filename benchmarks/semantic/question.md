@@ -1,6 +1,6 @@
 # Does a hierarchy help find meaning, and what do intervals and vectors each cost?
 
-Five questions, one program (`tools/bench/semantic.cpp`), run by `benchmarks/semantic/run.sh`. Theory: `docs/semantic-search.md`.
+Five questions, one program (`tools/bench/semantic.cpp`), run by `benchmarks/semantic/run.sh`. Theory: `the Semantic-Search wiki page`.
 
 **Data.**
 

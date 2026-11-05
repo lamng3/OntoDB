@@ -12,7 +12,7 @@
 namespace ontodb {
 
 // "The k terms nearest q that lie at or under class C": a vector search
-// filtered by a subtree of the hierarchy. docs/semantic-search.md section 4.
+// filtered by a subtree of the hierarchy. the Semantic-Search wiki page section 4.
 //
 // Let s be the share of the vectors that lie under C.
 //   kPreFilter      Resolve C to its members first (one B+ tree range scan per

@@ -13,7 +13,7 @@ namespace ontodb {
 // An index from a postorder label to the members that carry it, kept as a
 // B+ tree of keys (label, member, 0). The members of a class's subtree are
 // then a few range scans, one per interval of the class
-// (docs/semantic-search.md, section 3). Used two ways: with the classes
+// (the Semantic-Search wiki page, section 3). Used two ways: with the classes
 // themselves as members, and with the instances, labelled by the label of an
 // rdf:type they have.
 class LabelIndex {

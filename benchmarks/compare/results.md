@@ -95,4 +95,4 @@ Lookups are the `(s,.,.)` and `(s,p,.)` queries. Inserts are one new triple with
 
 ## What it says
 
-See the paper's Section 9 (Experimental Study) and `papers/query-engine/make-compare.py` for how every number is derived from `raw/`.
+See the paper's Section 9 (Experimental Study) and the paper's `make-compare.py` (in the [ontodb-docs](https://github.com/lamng3/ontodb-docs) repository) for how every number is derived from `raw/`.

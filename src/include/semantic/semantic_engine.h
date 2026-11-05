@@ -12,7 +12,7 @@ namespace ontodb {
 
 // What the shell's semantic commands drive: a class hierarchy labelled from
 // the store's rdfs:subClassOf triples, one vector per term, and the indexes
-// over them (docs/semantic-search.md). It owns a private buffer pool on a
+// over them (the Semantic-Search wiki page). It owns a private buffer pool on a
 // temporary file for the label tree and the IVF lists, so it works on either
 // backend. Every method returns the text the shell prints; failures are
 // reported as "error: ..." lines, not exceptions.
