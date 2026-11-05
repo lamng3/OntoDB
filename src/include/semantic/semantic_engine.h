@@ -65,7 +65,6 @@ class SemanticEngine {
   auto NearestTerm(TripleStore* store, Dictionary* dictionary, const std::string& term, size_t k,
                    const std::string& under) -> std::vector<SemanticHit>;
 
-
  private:
   std::unique_ptr<Impl> impl_;
 };
