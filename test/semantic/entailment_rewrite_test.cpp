@@ -20,14 +20,18 @@ namespace {
 constexpr char kType[] = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
 constexpr char kSub[] = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
 
-auto Cls(int i) -> std::string { return "<http://ex/C" + std::to_string(i) + ">"; }
-auto Ent(int i) -> std::string { return "<http://ex/e" + std::to_string(i) + ">"; }
+auto Cls(int i) -> std::string {
+  return "<http://ex/C" + std::to_string(i) + ">";
+}
+auto Ent(int i) -> std::string {
+  return "<http://ex/e" + std::to_string(i) + ">";
+}
 
 struct Ontology {
   int classes{0};
-  std::set<std::pair<int, int>> edges;                // (class, parent)
-  std::map<int, std::set<int>> types;                 // entity -> direct types
-  std::map<int, std::vector<int>> knows;              // entity -> friends
+  std::set<std::pair<int, int>> edges;    // (class, parent)
+  std::map<int, std::set<int>> types;     // entity -> direct types
+  std::map<int, std::vector<int>> knows;  // entity -> friends
 
   auto Ancestors(int c) const -> std::set<int> {
     std::set<int> seen{c};
@@ -78,7 +82,8 @@ auto RandomOntology(unsigned seed) -> Ontology {
   for (int c = 1; c < o.classes; c++) {
     const int parents = 1 + static_cast<int>(rng() % 2);
     for (int k = 0; k < parents; k++) {
-      o.edges.insert({c, static_cast<int>(rng() % static_cast<unsigned>(c))});  // parents precede: a DAG
+      o.edges.insert(
+          {c, static_cast<int>(rng() % static_cast<unsigned>(c))});  // parents precede: a DAG
     }
   }
   if (seed % 3 == 0) {
@@ -126,9 +131,11 @@ void CompareAll(Database& entail, Database& oracle, const Ontology& o, unsigned 
     const int e = static_cast<int>(rng() % static_cast<unsigned>(o.types.size()));
     queries.push_back("SELECT ?x WHERE { ?x a " + Cls(c) + " }");
     queries.push_back("SELECT ?x ?y WHERE { ?x a " + Cls(c) + " . ?x <http://ex/knows> ?y }");
-    queries.push_back("SELECT ?x ?y WHERE { ?x a " + Cls(c) + " . ?x <http://ex/knows> ?y . ?y a " + Cls(d) + " }");
+    queries.push_back("SELECT ?x ?y WHERE { ?x a " + Cls(c) + " . ?x <http://ex/knows> ?y . ?y a " +
+                      Cls(d) + " }");
     queries.push_back("SELECT ?x WHERE { ?x a " + Cls(c) + " . ?x a " + Cls(d) + " }");
-    queries.push_back("SELECT ?y WHERE { " + Ent(e) + " a " + Cls(c) + " . " + Ent(e) + " <http://ex/knows> ?y }");
+    queries.push_back("SELECT ?y WHERE { " + Ent(e) + " a " + Cls(c) + " . " + Ent(e) +
+                      " <http://ex/knows> ?y }");
     queries.push_back("SELECT DISTINCT ?y WHERE { ?x <http://ex/knows> ?y . ?y a " + Cls(c) + " }");
   }
   queries.push_back("SELECT ?x WHERE { ?x a <http://ex/NoSuchClass> }");
@@ -167,7 +174,9 @@ TEST(EntailmentRewrite, FollowsUpdatesToInstancesAndToTheHierarchy) {
   const std::string everything = "SELECT ?x WHERE { ?x a " + Cls(0) + " }";
   Rows(entail, everything);  // builds the index
   // A new instance of a leaf class, then a new subclass edge that moves a class under C0.
-  entail.Execute("INSERT DATA { <http://ex/e9999> " + std::string(kType) + " " + Cls(o.classes - 2) + " }", nullptr);
+  entail.Execute(
+      "INSERT DATA { <http://ex/e9999> " + std::string(kType) + " " + Cls(o.classes - 2) + " }",
+      nullptr);
   o.types[9999].insert(o.classes - 2);
   entail.Execute("INSERT DATA { " + Cls(o.classes - 2) + " " + kSub + " " + Cls(0) + " }", nullptr);
   o.edges.insert({o.classes - 2, 0});

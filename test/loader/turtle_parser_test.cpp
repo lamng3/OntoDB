@@ -31,11 +31,16 @@ TEST(TurtleParser, PrefixesPredicateListsAndObjectLists) {
       "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n"
       "ex:a a ex:C ; rdfs:label \"A\"@en , \"a\" ;\n ex:n 3 , 2.5 , 1e3 , true .\n");
   EXPECT_EQ(rows.size(), 7u);
-  EXPECT_TRUE(rows.count({"<http://e/a>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "<http://e/C>"}));
-  EXPECT_TRUE(rows.count({"<http://e/a>", "<http://www.w3.org/2000/01/rdf-schema#label>", "\"A\"@en"}));
-  EXPECT_TRUE(rows.count({"<http://e/a>", "<http://e/n>", "\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>"}));
-  EXPECT_TRUE(rows.count({"<http://e/a>", "<http://e/n>", "\"2.5\"^^<http://www.w3.org/2001/XMLSchema#decimal>"}));
-  EXPECT_TRUE(rows.count({"<http://e/a>", "<http://e/n>", "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>"}));
+  EXPECT_TRUE(rows.count(
+      {"<http://e/a>", "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>", "<http://e/C>"}));
+  EXPECT_TRUE(
+      rows.count({"<http://e/a>", "<http://www.w3.org/2000/01/rdf-schema#label>", "\"A\"@en"}));
+  EXPECT_TRUE(rows.count(
+      {"<http://e/a>", "<http://e/n>", "\"3\"^^<http://www.w3.org/2001/XMLSchema#integer>"}));
+  EXPECT_TRUE(rows.count(
+      {"<http://e/a>", "<http://e/n>", "\"2.5\"^^<http://www.w3.org/2001/XMLSchema#decimal>"}));
+  EXPECT_TRUE(rows.count(
+      {"<http://e/a>", "<http://e/n>", "\"true\"^^<http://www.w3.org/2001/XMLSchema#boolean>"}));
 }
 
 TEST(TurtleParser, BlankNodesAndCollections) {
@@ -45,8 +50,8 @@ TEST(TurtleParser, BlankNodesAndCollections) {
 }
 
 TEST(TurtleParser, EscapesLongStringsAndBase) {
-  const auto rows = Parse(
-      "@base <http://e/dir/> .\n<x> <#p> \"\"\"two\nlines \"quoted\" \\u00e9\"\"\" .\n");
+  const auto rows =
+      Parse("@base <http://e/dir/> .\n<x> <#p> \"\"\"two\nlines \"quoted\" \\u00e9\"\"\" .\n");
   ASSERT_EQ(rows.size(), 1u);
   const auto& row = *rows.begin();
   EXPECT_EQ(row[0], "<http://e/dir/x>");

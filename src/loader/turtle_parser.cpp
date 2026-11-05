@@ -37,7 +37,9 @@ class Parser {
   }
 
   auto Peek() const -> char { return pos_ < s_.size() ? s_[pos_] : '\0'; }
-  auto StartsWith(const char* word) const -> bool { return s_.compare(pos_, std::char_traits<char>::length(word), word) == 0; }
+  auto StartsWith(const char* word) const -> bool {
+    return s_.compare(pos_, std::char_traits<char>::length(word), word) == 0;
+  }
 
   void Skip() {
     while (pos_ < s_.size()) {
@@ -151,7 +153,8 @@ class Parser {
     }
     if (iri[0] == '/') {
       const size_t scheme = base_.find("://");
-      const size_t slash = scheme == std::string::npos ? std::string::npos : base_.find('/', scheme + 3);
+      const size_t slash =
+          scheme == std::string::npos ? std::string::npos : base_.find('/', scheme + 3);
       return base_.substr(0, slash) + iri;
     }
     const size_t slash = base_.rfind('/');
@@ -192,7 +195,9 @@ class Parser {
         if (!std::isxdigit(static_cast<unsigned char>(h))) {
           Fail("bad \\u escape");
         }
-        cp = cp * 16 + static_cast<uint32_t>(std::isdigit(static_cast<unsigned char>(h)) ? h - '0' : std::tolower(h) - 'a' + 10);
+        cp = cp * 16 + static_cast<uint32_t>(std::isdigit(static_cast<unsigned char>(h))
+                                                 ? h - '0'
+                                                 : std::tolower(h) - 'a' + 10);
       }
       std::string out;
       AppendUtf8(&out, cp);
@@ -202,20 +207,30 @@ class Parser {
       Fail("bad escape in IRI");
     }
     switch (c) {
-      case 't': return "\t";
-      case 'n': return "\n";
-      case 'r': return "\r";
-      case 'b': return "\b";
-      case 'f': return "\f";
-      case '"': return "\"";
-      case '\'': return "'";
-      case '\\': return "\\";
-      default: Fail("bad escape");
+      case 't':
+        return "\t";
+      case 'n':
+        return "\n";
+      case 'r':
+        return "\r";
+      case 'b':
+        return "\b";
+      case 'f':
+        return "\f";
+      case '"':
+        return "\"";
+      case '\'':
+        return "'";
+      case '\\':
+        return "\\";
+      default:
+        Fail("bad escape");
     }
   }
 
   static auto NameChar(char c) -> bool {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' || (static_cast<unsigned char>(c) >= 0x80);
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-' ||
+           (static_cast<unsigned char>(c) >= 0x80);
   }
 
   auto PrefixedName() -> std::string {
@@ -236,7 +251,8 @@ class Parser {
       } else if (c == '\\' && pos_ + 1 < s_.size()) {
         local.push_back(s_[pos_ + 1]);
         pos_ += 2;
-      } else if (c == '.' && pos_ + 1 < s_.size() && (NameChar(s_[pos_ + 1]) || s_[pos_ + 1] == ':')) {
+      } else if (c == '.' && pos_ + 1 < s_.size() &&
+                 (NameChar(s_[pos_ + 1]) || s_[pos_ + 1] == ':')) {
         local.push_back(c);
         pos_++;
       } else {
@@ -275,7 +291,8 @@ class Parser {
   auto LabeledBlank() -> std::string {
     pos_ += 2;
     std::string id;
-    while (pos_ < s_.size() && (NameChar(s_[pos_]) || (s_[pos_] == '.' && pos_ + 1 < s_.size() && NameChar(s_[pos_ + 1])))) {
+    while (pos_ < s_.size() && (NameChar(s_[pos_]) || (s_[pos_] == '.' && pos_ + 1 < s_.size() &&
+                                                       NameChar(s_[pos_ + 1])))) {
       id.push_back(s_[pos_++]);
     }
     return CanonicalBlank("n" + id);
@@ -322,7 +339,8 @@ class Parser {
     while (true) {
       Skip();
       std::string predicate;
-      if (Peek() == 'a' && pos_ + 1 < s_.size() && std::isspace(static_cast<unsigned char>(s_[pos_ + 1]))) {
+      if (Peek() == 'a' && pos_ + 1 < s_.size() &&
+          std::isspace(static_cast<unsigned char>(s_[pos_ + 1]))) {
         pos_++;
         predicate = CanonicalIri(std::string(kRdf) + "type");
       } else if (Peek() == '<') {
@@ -370,14 +388,18 @@ class Parser {
     if (c == '_' && pos_ + 1 < s_.size() && s_[pos_ + 1] == ':') {
       return LabeledBlank();
     }
-    if (std::isdigit(static_cast<unsigned char>(c)) || c == '+' || c == '-' || (c == '.' && pos_ + 1 < s_.size() && std::isdigit(static_cast<unsigned char>(s_[pos_ + 1])))) {
+    if (std::isdigit(static_cast<unsigned char>(c)) || c == '+' || c == '-' ||
+        (c == '.' && pos_ + 1 < s_.size() &&
+         std::isdigit(static_cast<unsigned char>(s_[pos_ + 1])))) {
       return Number();
     }
-    if (StartsWith("true") && !NameChar(pos_ + 4 < s_.size() ? s_[pos_ + 4] : ' ') && (pos_ + 4 >= s_.size() || s_[pos_ + 4] != ':')) {
+    if (StartsWith("true") && !NameChar(pos_ + 4 < s_.size() ? s_[pos_ + 4] : ' ') &&
+        (pos_ + 4 >= s_.size() || s_[pos_ + 4] != ':')) {
       pos_ += 4;
       return CanonicalLiteral("true", std::string(kXsd) + "boolean", "");
     }
-    if (StartsWith("false") && !NameChar(pos_ + 5 < s_.size() ? s_[pos_ + 5] : ' ') && (pos_ + 5 >= s_.size() || s_[pos_ + 5] != ':')) {
+    if (StartsWith("false") && !NameChar(pos_ + 5 < s_.size() ? s_[pos_ + 5] : ' ') &&
+        (pos_ + 5 >= s_.size() || s_[pos_ + 5] != ':')) {
       pos_ += 5;
       return CanonicalLiteral("false", std::string(kXsd) + "boolean", "");
     }
@@ -396,7 +418,8 @@ class Parser {
       if (std::isdigit(static_cast<unsigned char>(c))) {
         text.push_back(c);
         pos_++;
-      } else if (c == '.' && !dot && !exp && pos_ + 1 < s_.size() && std::isdigit(static_cast<unsigned char>(s_[pos_ + 1]))) {
+      } else if (c == '.' && !dot && !exp && pos_ + 1 < s_.size() &&
+                 std::isdigit(static_cast<unsigned char>(s_[pos_ + 1]))) {
         dot = true;
         text.push_back(c);
         pos_++;
@@ -448,7 +471,8 @@ class Parser {
     if (Peek() == '@') {
       pos_++;
       std::string lang;
-      while (pos_ < s_.size() && (std::isalnum(static_cast<unsigned char>(s_[pos_])) || s_[pos_] == '-')) {
+      while (pos_ < s_.size() &&
+             (std::isalnum(static_cast<unsigned char>(s_[pos_])) || s_[pos_] == '-')) {
         lang.push_back(s_[pos_++]);
       }
       return CanonicalLiteral(lex, "", lang);
@@ -471,6 +495,8 @@ class Parser {
 
 }  // namespace
 
-void ParseTurtle(const std::string& text, const TurtleSink& sink) { Parser(text, sink).Run(); }
+void ParseTurtle(const std::string& text, const TurtleSink& sink) {
+  Parser(text, sink).Run();
+}
 
 }  // namespace ontodb

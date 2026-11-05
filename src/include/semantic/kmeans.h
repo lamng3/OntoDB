@@ -12,8 +12,8 @@ namespace ontodb {
 // otherwise to the nearest by squared Euclidean distance. Returns k * dim
 // floats. If n < k the first n rows are the centers and the rest repeat the
 // last.
-auto KMeans(const float* data, size_t n, uint32_t dim, uint32_t k, uint32_t iterations, uint64_t seed,
-            bool spherical) -> std::vector<float>;
+auto KMeans(const float* data, size_t n, uint32_t dim, uint32_t k, uint32_t iterations,
+            uint64_t seed, bool spherical) -> std::vector<float>;
 
 // The center nearest `v` under the same rule, and its score (the dot product
 // when spherical, the negated squared distance otherwise).

@@ -202,14 +202,16 @@ TEST(P2_5_Iterator, FindFirstAgreesWithTheIterator) {
   std::mt19937 rng(11);
   std::set<std::tuple<term_id_t, term_id_t, term_id_t>> have;
   for (int i = 0; i < 300; i++) {
-    const auto k = std::make_tuple<term_id_t, term_id_t, term_id_t>(1 + rng() % 40, 1 + rng() % 5, 1 + rng() % 9);
+    const auto k = std::make_tuple<term_id_t, term_id_t, term_id_t>(1 + rng() % 40, 1 + rng() % 5,
+                                                                    1 + rng() % 9);
     if (have.insert(k).second) {
       ASSERT_TRUE(tree.Insert(TripleKey::Encode(std::get<0>(k), std::get<1>(k), std::get<2>(k))));
     }
   }
   int removed = 0;
   for (auto it = have.begin(); it != have.end() && removed < 150;) {
-    ASSERT_TRUE(tree.Remove(TripleKey::Encode(std::get<0>(*it), std::get<1>(*it), std::get<2>(*it))));
+    ASSERT_TRUE(
+        tree.Remove(TripleKey::Encode(std::get<0>(*it), std::get<1>(*it), std::get<2>(*it))));
     it = have.erase(it);
     removed++;
     if (it != have.end()) {

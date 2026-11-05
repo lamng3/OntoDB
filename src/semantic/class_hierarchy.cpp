@@ -14,7 +14,8 @@ const std::vector<term_id_t> kNoClasses;
 // Returns the component of each node and the component count. Components are
 // numbered in the order Tarjan completes them, so a component is numbered
 // after every component it points to: parents before children.
-auto Components(const std::vector<std::vector<uint32_t>>& up, std::vector<uint32_t>* comp) -> uint32_t {
+auto Components(const std::vector<std::vector<uint32_t>>& up,
+                std::vector<uint32_t>* comp) -> uint32_t {
   const size_t n = up.size();
   constexpr uint32_t kNone = static_cast<uint32_t>(-1);
   std::vector<uint32_t> index(n, kNone), low(n, 0), next_edge(n, 0);
@@ -63,7 +64,8 @@ auto Components(const std::vector<std::vector<uint32_t>>& up, std::vector<uint32
 }
 
 void Coalesce(std::vector<Interval>* set) {
-  std::sort(set->begin(), set->end(), [](const Interval& a, const Interval& b) { return a.lo < b.lo; });
+  std::sort(set->begin(), set->end(),
+            [](const Interval& a, const Interval& b) { return a.lo < b.lo; });
   size_t out = 0;
   for (const Interval& next : *set) {
     if (out > 0 && next.lo <= (*set)[out - 1].hi + 1) {
@@ -77,7 +79,8 @@ void Coalesce(std::vector<Interval>* set) {
 
 }  // namespace
 
-auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& edges, TreeParent rule,
+auto ClassHierarchy::Build(const std::vector<std::pair<term_id_t, term_id_t>>& edges,
+                           TreeParent rule,
                            const std::vector<term_id_t>& isolated) -> ClassHierarchy {
   ClassHierarchy h;
   std::vector<term_id_t> ids;
@@ -298,8 +301,9 @@ auto ClassHierarchy::IsDescendant(term_id_t d, term_id_t c) const -> bool {
     return false;
   }
   const auto& set = Intervals(c);
-  const auto it = std::upper_bound(set.begin(), set.end(), label,
-                                   [](uint32_t value, const Interval& iv) { return value < iv.lo; });
+  const auto it =
+      std::upper_bound(set.begin(), set.end(), label,
+                       [](uint32_t value, const Interval& iv) { return value < iv.lo; });
   return it != set.begin() && label <= (it - 1)->hi;
 }
 

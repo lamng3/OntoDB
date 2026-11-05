@@ -29,12 +29,12 @@ class IvfIndex {
   enum class Encoding { kFloat32, kSq8, kPq };
 
   struct Options {
-    uint32_t lists{0};         // 0: about 4 * sqrt(n)
-    uint32_t iterations{10};   // k-means rounds
+    uint32_t lists{0};        // 0: about 4 * sqrt(n)
+    uint32_t iterations{10};  // k-means rounds
     uint64_t seed{1};
-    size_t max_train{0};       // rows the centroids are trained on; 0: 64 * lists
+    size_t max_train{0};  // rows the centroids are trained on; 0: 64 * lists
     Encoding encoding{Encoding::kFloat32};
-    uint32_t pq_m{48};         // sub-vectors, when encoding is pq
+    uint32_t pq_m{48};  // sub-vectors, when encoding is pq
   };
 
   IvfIndex(const VectorStore* store, BufferPoolManager* bpm, const Options& options);

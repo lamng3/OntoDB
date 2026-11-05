@@ -20,7 +20,8 @@ class RwLatch {
     for (int spins = 0;; spins++) {
       uint32_t s = state_.load(std::memory_order_relaxed);
       if ((s & (kWriter | kWaiting)) == 0 &&
-          state_.compare_exchange_weak(s, s + 1, std::memory_order_acquire, std::memory_order_relaxed)) {
+          state_.compare_exchange_weak(s, s + 1, std::memory_order_acquire,
+                                       std::memory_order_relaxed)) {
         return;
       }
       Backoff(spins);
@@ -91,7 +92,8 @@ class Page {
   auto TryPin() -> bool {
     int c = pin_count_.load(std::memory_order_relaxed);
     while (c >= 0) {
-      if (pin_count_.compare_exchange_weak(c, c + 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      if (pin_count_.compare_exchange_weak(c, c + 1, std::memory_order_acq_rel,
+                                           std::memory_order_relaxed)) {
         return true;
       }
     }
@@ -101,7 +103,8 @@ class Page {
   auto TryUnpin() -> bool {
     int c = pin_count_.load(std::memory_order_relaxed);
     while (c > 0) {
-      if (pin_count_.compare_exchange_weak(c, c - 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+      if (pin_count_.compare_exchange_weak(c, c - 1, std::memory_order_acq_rel,
+                                           std::memory_order_relaxed)) {
         return true;
       }
     }

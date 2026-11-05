@@ -57,7 +57,8 @@ BufferPoolManager::Shard::Shard(size_t frame_count, size_t k, TraceSink* trace)
     : frames(frame_count), replacer(frame_count, k, trace), index(IndexSlots(frame_count)) {}
 
 void BufferPoolManager::Shard::IndexInsert(page_id_t page_id, frame_id_t frame) {
-  if (deleted_entries > index.size() / 4) {  // rebuild: readers that miss meanwhile take the slow path
+  if (deleted_entries >
+      index.size() / 4) {  // rebuild: readers that miss meanwhile take the slow path
     for (auto& slot : index) {
       slot.store(kEmpty, std::memory_order_relaxed);
     }
@@ -76,8 +77,9 @@ void BufferPoolManager::Shard::IndexInsert(page_id_t page_id, frame_id_t frame) 
       if (e == kDeleted) {
         deleted_entries--;
       }
-      index[i].store(((static_cast<uint64_t>(page_id) + 1) << kFrameBits) | static_cast<uint64_t>(frame),
-                     std::memory_order_release);
+      index[i].store(
+          ((static_cast<uint64_t>(page_id) + 1) << kFrameBits) | static_cast<uint64_t>(frame),
+          std::memory_order_release);
       return;
     }
     i = (i + 1) & mask;

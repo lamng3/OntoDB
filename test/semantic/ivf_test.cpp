@@ -1,9 +1,9 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <random>
 #include <set>
-
-#include <gtest/gtest.h>
 
 #include "dictionary/mem_dictionary.h"
 #include "semantic/flat_index.h"
@@ -16,7 +16,8 @@ namespace ontodb {
 namespace {
 
 // `clusters` Gaussian blobs of `per` points each.
-void Blobs(VectorStore* store, MemDictionary* dict, uint32_t clusters, uint32_t per, float spread, uint64_t seed) {
+void Blobs(VectorStore* store, MemDictionary* dict, uint32_t clusters, uint32_t per, float spread,
+           uint64_t seed) {
   std::mt19937_64 rng(seed);
   std::normal_distribution<float> gauss;
   const uint32_t dim = store->Dim();
@@ -65,7 +66,8 @@ TEST(P14_5_KMeans, SeparatesBlobsAndIsReproducible) {
     used.insert(*in_blob.begin());
   }
   EXPECT_EQ(used.size(), 4u);
-  EXPECT_EQ(KMeans(store.Vector(0), 3, 8, 5, 3, 1, true).size(), 40u);  // n < k still returns k centers
+  EXPECT_EQ(KMeans(store.Vector(0), 3, 8, 5, 3, 1, true).size(),
+            40u);  // n < k still returns k centers
 }
 
 TEST(P14_5_ProductQuantizer, AdcEqualsDotWithTheDecodedVector) {
@@ -150,7 +152,8 @@ TEST(P14_5_IvfIndex, RecallRisesWithProbesAndWorkFalls) {
     SearchStats stats;
     int queries = 0;
     for (uint32_t row = 0; row < store.Size(); row += 41) {
-      recall += Recall(ivf.Search(store.Vector(row), 10, nprobe, nullptr, &stats), exact.Search(store.Vector(row), 10));
+      recall += Recall(ivf.Search(store.Vector(row), 10, nprobe, nullptr, &stats),
+                       exact.Search(store.Vector(row), 10));
       queries++;
     }
     recall /= queries;
@@ -226,7 +229,8 @@ TEST(P14_5_IvfIndex, Sq8AndPqKeepMostOfTheRecall) {
       recall += Recall(ivf.Search(store.Vector(row), 10, 30), exact.Search(store.Vector(row), 10));
       queries++;
     }
-    EXPECT_GT(recall / queries, encoding == IvfIndex::Encoding::kSq8 ? 0.95 : 0.6) << static_cast<int>(encoding);
+    EXPECT_GT(recall / queries, encoding == IvfIndex::Encoding::kSq8 ? 0.95 : 0.6)
+        << static_cast<int>(encoding);
   }
 }
 

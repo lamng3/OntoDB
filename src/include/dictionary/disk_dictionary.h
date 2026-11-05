@@ -30,12 +30,13 @@ namespace ontodb {
 //       24 by-id tree header page, 28 by-hash tree header page.
 // The hash is 64-bit FNV-1a, fixed so that files are portable between builds.
 // Decoding an id costs a tree descent and a heap read, so the most recently decoded
-// spellings sit in a direct-mapped cache of `cache_slots` entries (slot = id mod size). Ids are dense and a spelling never
-// changes or moves, so an entry is never stale; ids that are consecutive never share a slot.
-// Thread-safe. Inserts are serialized by one mutex, so a spelling is never interned twice.
-// Lookups take no dictionary-wide lock: the trees and the heap latch their own pages, an id is
-// published (the count rises) only after its record is complete, and the decode cache is guarded
-// by 64 stripe locks, so readers that decode different ids do not wait on one another.
+// spellings sit in a direct-mapped cache of `cache_slots` entries (slot = id mod size). Ids are
+// dense and a spelling never changes or moves, so an entry is never stale; ids that are consecutive
+// never share a slot. Thread-safe. Inserts are serialized by one mutex, so a spelling is never
+// interned twice. Lookups take no dictionary-wide lock: the trees and the heap latch their own
+// pages, an id is published (the count rises) only after its record is complete, and the decode
+// cache is guarded by 64 stripe locks, so readers that decode different ids do not wait on one
+// another.
 class DiskDictionary : public Dictionary {
  public:
   // `cache_slots` is the size of the decode cache described above; 0 turns it off.

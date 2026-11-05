@@ -1,12 +1,13 @@
-#include <fstream>
-#include <sstream>
+#include "shell/shell.h"
 
 #include <gtest/gtest.h>
+
+#include <fstream>
+#include <sstream>
 
 #include "common/database.h"
 #include "dictionary/mem_dictionary.h"
 #include "semantic/vector_store.h"
-#include "shell/shell.h"
 #include "test_util.h"
 
 namespace ontodb {
@@ -31,18 +32,23 @@ struct Fixture {
     std::ofstream nt(ontology);
     const std::string sub = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
     const std::string label = "<http://www.w3.org/2000/01/rdf-schema#label>";
-    for (const auto& [c, p] : std::vector<std::pair<std::string, std::string>>{
-             {"Mammal", "Animal"}, {"Bird", "Animal"}, {"Dog", "Mammal"}, {"Cat", "Mammal"}, {"Sparrow", "Bird"}}) {
+    for (const auto& [c, p] :
+         std::vector<std::pair<std::string, std::string>>{{"Mammal", "Animal"},
+                                                          {"Bird", "Animal"},
+                                                          {"Dog", "Mammal"},
+                                                          {"Cat", "Mammal"},
+                                                          {"Sparrow", "Bird"}}) {
       nt << Iri(c) << " " << sub << " " << Iri(p) << " .\n";
     }
     for (const char* c : {"Animal", "Mammal", "Bird", "Dog", "Cat", "Sparrow"}) {
-      nt << Iri(c) << " " << label << " \"" << (std::string(c) == "Dog" ? "dog" : std::string(c)) << "\" .\n";
+      nt << Iri(c) << " " << label << " \"" << (std::string(c) == "Dog" ? "dog" : std::string(c))
+         << "\" .\n";
     }
     nt.close();
     MemDictionary dict;
     VectorStore store(4);
     const std::vector<std::pair<std::string, std::vector<float>>> vecs{
-        {"Animal", {1, 1, 0, 0}}, {"Mammal", {1, 0.2f, 0, 0}}, {"Bird", {0, 0, 1, 0.3f}},
+        {"Animal", {1, 1, 0, 0}}, {"Mammal", {1, 0.2f, 0, 0}},   {"Bird", {0, 0, 1, 0.3f}},
         {"Dog", {1, 0.1f, 0, 0}}, {"Cat", {1, 0.15f, 0.05f, 0}}, {"Sparrow", {0, 0.1f, 1, 0.2f}}};
     for (const auto& [name, v] : vecs) {
       store.Put(dict.Insert(Iri(name)), v.data());
@@ -62,8 +68,10 @@ auto RunScript(const std::string& script) -> std::string {
 
 TEST(P14_8_SemanticShell, HierarchyUnderAndSimilar) {
   Fixture f;
-  const auto out = RunScript("\\load " + f.ontology + "\n\\hindex build\n\\under <" + std::string(kNs) + "Mammal>\n\\vload " + f.vectors +
-                       "\n\\similar <" + std::string(kNs) + "Dog> 2\n\\similar dog 5 under <" + std::string(kNs) + "Bird>\n\\quit\n");
+  const auto out =
+      RunScript("\\load " + f.ontology + "\n\\hindex build\n\\under <" + std::string(kNs) +
+                "Mammal>\n\\vload " + f.vectors + "\n\\similar <" + std::string(kNs) +
+                "Dog> 2\n\\similar dog 5 under <" + std::string(kNs) + "Bird>\n\\quit\n");
   EXPECT_NE(out.find("labelled 6 classes"), std::string::npos) << out;
   EXPECT_NE(out.find("3 classes at or below"), std::string::npos) << out;
   EXPECT_NE(out.find("<http://ex/Cat>  \"Cat\""), std::string::npos) << out;
@@ -81,9 +89,11 @@ TEST(P14_8_SemanticShell, HierarchyUnderAndSimilar) {
 
 TEST(P14_8_SemanticShell, IndexesAndEveryStrategyAgreeOnATinyOntology) {
   Fixture f;
-  const std::string load = "\\load " + f.ontology + "\n\\hindex build\n\\vload " + f.vectors + "\n\\vindex build all\n";
+  const std::string load =
+      "\\load " + f.ontology + "\n\\hindex build\n\\vload " + f.vectors + "\n\\vindex build all\n";
   for (const char* strategy : {"auto", "pre", "post-hnsw", "post-ivf", "mask-hnsw", "mask-ivf"}) {
-    const auto out = RunScript(load + "\\similar <" + std::string(kNs) + "Dog> 3 under <" + std::string(kNs) + "Mammal> using " + strategy + "\n\\quit\n");
+    const auto out = RunScript(load + "\\similar <" + std::string(kNs) + "Dog> 3 under <" +
+                               std::string(kNs) + "Mammal> using " + strategy + "\n\\quit\n");
     const auto block = out.substr(out.rfind("nearest to"));
     EXPECT_EQ(block.find("Sparrow"), std::string::npos) << strategy << "\n" << block;
     EXPECT_NE(block.find("Cat"), std::string::npos) << strategy << "\n" << block;
@@ -94,10 +104,14 @@ TEST(P14_8_SemanticShell, IndexesAndEveryStrategyAgreeOnATinyOntology) {
 
 TEST(P14_8_SemanticShell, ErrorsAreMessagesNotCrashes) {
   Fixture f;
-  const auto out = RunScript("\\similar <http://ex/Dog>\n\\under <http://ex/Mammal>\n\\hindex build\n\\load " + f.ontology +
-                       "\n\\hindex build\n\\under <http://ex/Nope>\n\\vload /no/such/file\n\\vload " + f.vectors +
-                       "\n\\similar <http://ex/Nope>\n\\similar <http://ex/Dog> under <http://ex/Nope>\n\\similar <http://ex/Dog> using chaos\n"
-                       "\\similar <http://ex/Dog> using mask-hnsw\n\\similar <http://ex/Dog> 0\n\\vindex build wat\n\\quit\n");
+  const auto out = RunScript(
+      "\\similar <http://ex/Dog>\n\\under <http://ex/Mammal>\n\\hindex build\n\\load " +
+      f.ontology + "\n\\hindex build\n\\under <http://ex/Nope>\n\\vload /no/such/file\n\\vload " +
+      f.vectors +
+      "\n\\similar <http://ex/Nope>\n\\similar <http://ex/Dog> under <http://ex/Nope>\n\\similar "
+      "<http://ex/Dog> using chaos\n"
+      "\\similar <http://ex/Dog> using mask-hnsw\n\\similar <http://ex/Dog> 0\n\\vindex build "
+      "wat\n\\quit\n");
   EXPECT_NE(out.find("error: no vectors"), std::string::npos) << out;
   EXPECT_NE(out.find("error: no hierarchy"), std::string::npos) << out;
   EXPECT_NE(out.find("is not in the dictionary"), std::string::npos) << out;
@@ -111,7 +125,9 @@ TEST(P14_8_SemanticShell, ErrorsAreMessagesNotCrashes) {
 
 TEST(P14_8_SemanticShell, ABackendSwitchDropsTheEngine) {
   Fixture f;
-  const auto out = RunScript("\\load " + f.ontology + "\n\\hindex build\n\\set backend indexed\n\\hindex\n\\hindex build\n\\under <http://ex/Mammal>\n\\quit\n");
+  const auto out = RunScript("\\load " + f.ontology +
+                             "\n\\hindex build\n\\set backend indexed\n\\hindex\n\\hindex "
+                             "build\n\\under <http://ex/Mammal>\n\\quit\n");
   EXPECT_NE(out.find("hierarchy: not built"), std::string::npos) << out;
   EXPECT_NE(out.find("3 classes at or below"), std::string::npos) << out;
 }

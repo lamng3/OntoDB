@@ -74,13 +74,13 @@ class ClassHierarchy {
   auto GetStats() const -> const Stats& { return stats_; }
 
  private:
-  std::unordered_map<term_id_t, uint32_t> comp_of_;       // term id to component
-  std::vector<std::vector<term_id_t>> members_;           // component to its term ids
-  std::vector<std::vector<uint32_t>> parents_;            // component to parent components
-  std::vector<uint32_t> label_;                           // component to postorder label
-  std::vector<uint32_t> by_label_;                        // label - 1 to component
-  std::vector<std::vector<Interval>> intervals_;          // component to intervals
-  std::vector<size_t> weight_;                            // prefix sums over labels of member counts
+  std::unordered_map<term_id_t, uint32_t> comp_of_;  // term id to component
+  std::vector<std::vector<term_id_t>> members_;      // component to its term ids
+  std::vector<std::vector<uint32_t>> parents_;       // component to parent components
+  std::vector<uint32_t> label_;                      // component to postorder label
+  std::vector<uint32_t> by_label_;                   // label - 1 to component
+  std::vector<std::vector<Interval>> intervals_;     // component to intervals
+  std::vector<size_t> weight_;                       // prefix sums over labels of member counts
   Stats stats_;
 };
 

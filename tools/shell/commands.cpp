@@ -200,7 +200,8 @@ auto HIndex(Database& db, const std::string& arg) -> CommandResult {
   if (lower.rfind("build", 0) != 0) {
     return Text("error: usage: \\hindex build [<predicate>]");
   }
-  return Text(db.Semantic().BuildHierarchy(db.GetStore(), db.GetDictionary(), Trim(std::string_view(arg).substr(5))));
+  return Text(db.Semantic().BuildHierarchy(db.GetStore(), db.GetDictionary(),
+                                           Trim(std::string_view(arg).substr(5))));
 }
 
 auto Under(Database& db, const std::string& arg) -> CommandResult {
@@ -211,7 +212,8 @@ auto Under(Database& db, const std::string& arg) -> CommandResult {
   std::string cls = arg;
   size_t limit = 20;
   const auto cut = arg.find_last_of(" \t");
-  if (cut != std::string::npos && arg.find_first_not_of("0123456789", cut + 1) == std::string::npos) {
+  if (cut != std::string::npos &&
+      arg.find_first_not_of("0123456789", cut + 1) == std::string::npos) {
     limit = std::stoul(arg.substr(cut + 1));
     cls = arg.substr(0, cut);
   }
@@ -254,7 +256,11 @@ auto BuildCommands() -> std::vector<ShellCommand> {
        "classes at or below a class, by range scans over the labels",
        {},
        Under},
-      {"\\vload", "\\vload <file>", "read one vector per term (scripts/embed-terms writes the file)", {}, VLoad},
+      {"\\vload",
+       "\\vload <file>",
+       "read one vector per term (scripts/embed-terms writes the file)",
+       {},
+       VLoad},
       {"\\vindex",
        "\\vindex build [ivf|hnsw|all]",
        "build the approximate indexes (search is exact without them)",

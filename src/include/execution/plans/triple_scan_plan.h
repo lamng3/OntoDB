@@ -14,7 +14,8 @@ class TripleScanPlan : public AbstractPlanNode {
 
   auto GetType() const -> PlanType override { return PlanType::kTripleScan; }
   auto Label() const -> std::string override {
-    return std::string(pattern_.entailed ? "IntervalTypeScan {" : "TripleScan {") + pattern_.text + "}";
+    return std::string(pattern_.entailed ? "IntervalTypeScan {" : "TripleScan {") + pattern_.text +
+           "}";
   }
   auto Pattern() const -> const BoundTriplePattern& { return pattern_; }
   auto MutablePattern() -> BoundTriplePattern& { return pattern_; }

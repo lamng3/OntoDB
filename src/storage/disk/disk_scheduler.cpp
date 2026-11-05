@@ -14,7 +14,9 @@ DiskScheduler::DiskScheduler(DiskManager* disk_manager, TraceSink* trace)
 
 DiskScheduler::~DiskScheduler() = default;
 
-void DiskScheduler::Schedule(DiskRequest request) { Handle(request); }
+void DiskScheduler::Schedule(DiskRequest request) {
+  Handle(request);
+}
 #else
 DiskScheduler::DiskScheduler(DiskManager* disk_manager, TraceSink* trace)
     : disk_manager_(disk_manager), trace_(trace), worker_([this] { Run(); }) {}

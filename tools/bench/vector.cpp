@@ -92,7 +92,8 @@ auto ReadRaw(const std::string& path) -> RawVectors {
     raw.spellings.push_back(std::move(spelling));
     const size_t at = raw.data.size();
     raw.data.resize(at + raw.dim);
-    in.read(reinterpret_cast<char*>(raw.data.data() + at), static_cast<std::streamsize>(raw.dim) * 4);
+    in.read(reinterpret_cast<char*>(raw.data.data() + at),
+            static_cast<std::streamsize>(raw.dim) * 4);
   }
   return raw;
 }
@@ -103,7 +104,8 @@ auto Bucket(size_t members) -> int {
 constexpr const char* kBucketName[] = {"<=10", "11-100", "101-1000", "1001-5000", ">5000"};
 
 // Rows of the vector store that belong to the classes below `c`.
-auto MemberRows(const ClassHierarchy& h, const VectorStore& vs, term_id_t c) -> std::vector<uint32_t> {
+auto MemberRows(const ClassHierarchy& h, const VectorStore& vs,
+                term_id_t c) -> std::vector<uint32_t> {
   std::vector<uint32_t> rows;
   for (const term_id_t id : h.Descendants(c)) {
     if (const auto r = vs.Row(id)) {
@@ -140,7 +142,8 @@ auto RunFiltered(int argc, char** argv) -> int {
     }
   }
 
-  const fs::path tmp = fs::temp_directory_path() / ("ontodb-vector-" + std::to_string(::getpid()) + ".db");
+  const fs::path tmp =
+      fs::temp_directory_path() / ("ontodb-vector-" + std::to_string(::getpid()) + ".db");
   fs::remove(tmp);
   DiskManager disk(tmp.string());
   BufferPoolManager pool(65536, &disk, 2, nullptr, nullptr, nullptr, 16);
@@ -159,18 +162,21 @@ auto RunFiltered(int argc, char** argv) -> int {
     build << "intervals+label tree\t" << Seconds(t) << "\t0\n";
   }
   FlatIndex flat(&vs, FlatIndex::Precision::kFloat32);
-  const uint32_t lists = std::max<uint32_t>(64, static_cast<uint32_t>(2.6 * std::sqrt(static_cast<double>(vs.Size()))));
+  const uint32_t lists = std::max<uint32_t>(
+      64, static_cast<uint32_t>(2.6 * std::sqrt(static_cast<double>(vs.Size()))));
   IvfIndex ivf(&vs, &pool, {.lists = lists});
   {
     const auto t = Clock::now();
     ivf.Build();
-    build << "ivf (" << lists << " lists)\t" << Seconds(t) << "\t" << static_cast<double>(ivf.Bytes()) / 1048576.0 << "\n";
+    build << "ivf (" << lists << " lists)\t" << Seconds(t) << "\t"
+          << static_cast<double>(ivf.Bytes()) / 1048576.0 << "\n";
   }
   HnswIndex hnsw(&vs, {.m = 16, .ef_construction = 200});
   {
     const auto t = Clock::now();
     hnsw.Build();
-    build << "hnsw (M=16)\t" << Seconds(t) << "\t" << static_cast<double>(hnsw.Bytes()) / 1048576.0 << "\n";
+    build << "hnsw (M=16)\t" << Seconds(t) << "\t" << static_cast<double>(hnsw.Bytes()) / 1048576.0
+          << "\n";
   }
   build << "flat\t0\t" << static_cast<double>(flat.Bytes()) / 1048576.0 << "\n";
   build.close();
@@ -202,7 +208,8 @@ auto RunFiltered(int argc, char** argv) -> int {
   result << "ontology\tbucket\tkind\tclass\tstrategy\trecall\tus\tscored\tmembers\tunder_share\n";
   workload << "bucket\tkind\tclass\tquery\n";
   using S = HybridSearch::Strategy;
-  const S strategies[] = {S::kPreFilter, S::kPostFilterHnsw, S::kPostFilterIvf, S::kMaskHnsw, S::kMaskIvf, S::kAuto};
+  const S strategies[] = {S::kPreFilter, S::kPostFilterHnsw, S::kPostFilterIvf,
+                          S::kMaskHnsw,  S::kMaskIvf,        S::kAuto};
   // VEC_K sets the number of neighbors asked for (default 10).
   const size_t kK = std::getenv("VEC_K") != nullptr ? std::stoul(std::getenv("VEC_K")) : 10;
   struct Job {
@@ -258,7 +265,8 @@ auto RunFiltered(int argc, char** argv) -> int {
           ref = "syn:" + std::to_string(found);
         }
         jobs.push_back({c, std::vector<float>(q, q + vs.Dim())});
-        workload << kBucketName[bucket] << '\t' << kind << '\t' << w.dict.Lookup(c).value_or("?") << '\t' << ref << '\n';
+        workload << kBucketName[bucket] << '\t' << kind << '\t' << w.dict.Lookup(c).value_or("?")
+                 << '\t' << ref << '\n';
         // Ten nearest members, the query term itself excluded.
         auto drop_self = [&](std::vector<Neighbor> v) {
           std::vector<Neighbor> keep;
@@ -308,9 +316,11 @@ auto RunFiltered(int argc, char** argv) -> int {
           for (const auto& n : got) {
             hit += want.count(n.id);
           }
-          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c << "\tmask-hnsw/bitmap\t"
-                 << (want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size())) << '\t' << us << "\t0\t0\t"
-                 << static_cast<double>(under) / 100.0 << '\n';
+          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c
+                 << "\tmask-hnsw/bitmap\t"
+                 << (want.empty() ? 1.0
+                                  : static_cast<double>(hit) / static_cast<double>(want.size()))
+                 << '\t' << us << "\t0\t0\t" << static_cast<double>(under) / 100.0 << '\n';
         }
         // The auto rule at other thresholds, to see where the crossover really is.
         for (const size_t threshold : {256u, 1024u, 4096u, 16384u, 65536u}) {
@@ -327,9 +337,11 @@ auto RunFiltered(int argc, char** argv) -> int {
           for (const auto& n : drop_self(res.neighbors)) {
             hit += want.count(n.id);
           }
-          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c << "\tauto@" << threshold << '\t'
-                 << (want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size())) << '\t' << us << "\t0\t0\t"
-                 << static_cast<double>(under) / 100.0 << '\n';
+          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c << "\tauto@"
+                 << threshold << '\t'
+                 << (want.empty() ? 1.0
+                                  : static_cast<double>(hit) / static_cast<double>(want.size()))
+                 << '\t' << us << "\t0\t0\t" << static_cast<double>(under) / 100.0 << '\n';
         }
         for (const S s : strategies) {
           (void)search.Similar(q, kK + 1, c, s, params);  // warm
@@ -344,9 +356,12 @@ auto RunFiltered(int argc, char** argv) -> int {
           for (const auto& n : got) {
             hit += want.count(n.id);
           }
-          const double recall = want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size());
-          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c << '\t' << HybridSearch::Name(s) << '\t' << recall << '\t' << us
-                 << '\t' << res.stats.scored << '\t' << res.members << '\t' << static_cast<double>(under) / 100.0 << '\n';
+          const double recall =
+              want.empty() ? 1.0 : static_cast<double>(hit) / static_cast<double>(want.size());
+          result << name << '\t' << kBucketName[bucket] << '\t' << kind << '\t' << c << '\t'
+                 << HybridSearch::Name(s) << '\t' << recall << '\t' << us << '\t'
+                 << res.stats.scored << '\t' << res.members << '\t'
+                 << static_cast<double>(under) / 100.0 << '\n';
         }
       }
     }
@@ -397,12 +412,14 @@ auto RunIndex(int argc, char** argv) -> int {
   w.Load(argv[3]);
   VectorStore vs(VectorStore::PeekDimension(argv[4]));
   vs.Load(argv[4], &w.dict);
-  const fs::path tmp = fs::temp_directory_path() / ("ontodb-vector-idx-" + std::to_string(::getpid()) + ".db");
+  const fs::path tmp =
+      fs::temp_directory_path() / ("ontodb-vector-idx-" + std::to_string(::getpid()) + ".db");
   fs::remove(tmp);
   DiskManager disk(tmp.string());
   BufferPoolManager pool(65536, &disk, 2, nullptr, nullptr, nullptr, 16);
   FlatIndex flat(&vs, FlatIndex::Precision::kFloat32);
-  const uint32_t lists = std::max<uint32_t>(64, static_cast<uint32_t>(2.6 * std::sqrt(static_cast<double>(vs.Size()))));
+  const uint32_t lists = std::max<uint32_t>(
+      64, static_cast<uint32_t>(2.6 * std::sqrt(static_cast<double>(vs.Size()))));
   IvfIndex ivf(&vs, &pool, {.lists = lists});
   double ivf_s = 0;
   double hnsw_s = 0;
@@ -439,8 +456,10 @@ auto RunIndex(int argc, char** argv) -> int {
   }
   std::ofstream result(out / (name + "-index.tsv"));
   result << "ontology\tindex\tsetting\trecall\tus\tmib\tbuild_s\n";
-  result << name << "\tflat\texact\t1\t" << flat_us << '\t' << static_cast<double>(flat.Bytes()) / 1048576.0 << "\t0\n";
-  auto measure = [&](const std::string& index, const std::string& setting, double mib, double build_s, auto&& search) {
+  result << name << "\tflat\texact\t1\t" << flat_us << '\t'
+         << static_cast<double>(flat.Bytes()) / 1048576.0 << "\t0\n";
+  auto measure = [&](const std::string& index, const std::string& setting, double mib,
+                     double build_s, auto&& search) {
     for (const uint32_t row : queries) {
       (void)search(vs.Vector(row), 11);  // warm
       break;
@@ -461,15 +480,19 @@ auto RunIndex(int argc, char** argv) -> int {
       recall += static_cast<double>(hit) / 10.0;
     }
     const double us = Seconds(t) * 1e6 / static_cast<double>(queries.size());
-    result << name << '\t' << index << '\t' << setting << '\t' << recall / static_cast<double>(queries.size()) << '\t' << us << '\t' << mib << '\t' << build_s << '\n';
+    result << name << '\t' << index << '\t' << setting << '\t'
+           << recall / static_cast<double>(queries.size()) << '\t' << us << '\t' << mib << '\t'
+           << build_s << '\n';
   };
   const double ivf_mib = static_cast<double>(ivf.Bytes()) / 1048576.0;
   for (const uint32_t nprobe : {1u, 2u, 4u, 8u, 16u, 32u, 64u}) {
-    measure("ivf", "nprobe=" + std::to_string(nprobe), ivf_mib, ivf_s, [&](const float* q, size_t k) { return ivf.Search(q, k, nprobe); });
+    measure("ivf", "nprobe=" + std::to_string(nprobe), ivf_mib, ivf_s,
+            [&](const float* q, size_t k) { return ivf.Search(q, k, nprobe); });
   }
   const double hnsw_mib = static_cast<double>(hnsw.Bytes()) / 1048576.0;
   for (const uint32_t ef : {10u, 20u, 40u, 80u, 160u}) {
-    measure("hnsw", "ef=" + std::to_string(ef), hnsw_mib, hnsw_s, [&](const float* q, size_t k) { return hnsw.Search(q, k, ef); });
+    measure("hnsw", "ef=" + std::to_string(ef), hnsw_mib, hnsw_s,
+            [&](const float* q, size_t k) { return hnsw.Search(q, k, ef); });
   }
   fs::remove(tmp);
   return 0;
@@ -483,8 +506,10 @@ auto main(int argc, char** argv) -> int {
     return 2;
   }
   const std::string cmd = argv[1];
-  if (cmd == "filtered") return RunFiltered(argc, argv);
-  if (cmd == "index") return RunIndex(argc, argv);
+  if (cmd == "filtered")
+    return RunFiltered(argc, argv);
+  if (cmd == "index")
+    return RunIndex(argc, argv);
   std::cerr << "unknown experiment " << cmd << "\n";
   return 2;
 }

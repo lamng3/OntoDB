@@ -1,11 +1,11 @@
 #include "semantic/hnsw_index.h"
 
-#include "semantic/dot.h"
-
 #include <algorithm>
 #include <cmath>
 #include <queue>
 #include <random>
+
+#include "semantic/dot.h"
 
 namespace ontodb {
 
@@ -39,7 +39,8 @@ thread_local Visited g_visited;
 
 }  // namespace
 
-HnswIndex::HnswIndex(const VectorStore* store, const Options& options) : store_(store), options_(options) {}
+HnswIndex::HnswIndex(const VectorStore* store, const Options& options)
+    : store_(store), options_(options) {}
 
 auto HnswIndex::Sim(uint32_t a, uint32_t b) const -> float {
   return SimQ(store_->Vector(a), b);
@@ -50,11 +51,15 @@ auto HnswIndex::SimQ(const float* q, uint32_t row) const -> float {
 }
 
 auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t ef, int layer,
-                            const RowFilter* allowed, SearchStats* stats, size_t max_visits) const
-    -> std::vector<Cand> {
+                            const RowFilter* allowed, SearchStats* stats,
+                            size_t max_visits) const -> std::vector<Cand> {
   g_visited.Reset(store_->Size());
-  auto worse = [](const Cand& a, const Cand& b) { return a.score < b.score; };  // max-heap: best on top
-  auto better = [](const Cand& a, const Cand& b) { return a.score > b.score; };  // min-heap: worst on top
+  auto worse = [](const Cand& a, const Cand& b) {
+    return a.score < b.score;
+  };  // max-heap: best on top
+  auto better = [](const Cand& a, const Cand& b) {
+    return a.score > b.score;
+  };  // min-heap: worst on top
   std::priority_queue<Cand, std::vector<Cand>, decltype(worse)> frontier(worse);
   std::priority_queue<Cand, std::vector<Cand>, decltype(better)> found(better);
   size_t visits = 0;
@@ -108,7 +113,8 @@ auto HnswIndex::SearchLayer(const float* q, std::vector<Cand> entries, uint32_t 
   return out;
 }
 
-auto HnswIndex::Select(const std::vector<Cand>& sorted, size_t limit) const -> std::vector<uint32_t> {
+auto HnswIndex::Select(const std::vector<Cand>& sorted,
+                       size_t limit) const -> std::vector<uint32_t> {
   std::vector<uint32_t> kept;
   std::vector<uint32_t> pruned;
   for (const Cand& c : sorted) {
@@ -134,7 +140,8 @@ void HnswIndex::Insert(uint32_t row) {
   // The level is a function of (seed, row) so a build is reproducible.
   std::mt19937_64 gen(options_.seed * 0x9E3779B97F4A7C15ULL + row);
   const double u = std::max(std::uniform_real_distribution<double>(0.0, 1.0)(gen), 1e-12);
-  const int level = static_cast<int>(std::floor(-std::log(u) / std::log(static_cast<double>(options_.m))));
+  const int level =
+      static_cast<int>(std::floor(-std::log(u) / std::log(static_cast<double>(options_.m))));
   links_[row].assign(static_cast<size_t>(level) + 1, {});
   if (entry_ == kNone) {
     entry_ = row;
@@ -158,7 +165,8 @@ void HnswIndex::Insert(uint32_t row) {
         for (const uint32_t x : back) {
           around.push_back({Sim(e, x), x});
         }
-        std::sort(around.begin(), around.end(), [](const Cand& a, const Cand& b) { return a.score > b.score; });
+        std::sort(around.begin(), around.end(),
+                  [](const Cand& a, const Cand& b) { return a.score > b.score; });
         back = Select(around, MaxLinks(l));
       }
     }
@@ -200,8 +208,8 @@ auto HnswIndex::MeanDegree() const -> double {
   return static_cast<double>(total) / static_cast<double>(links_.size());
 }
 
-auto HnswIndex::Search(const float* query, size_t k, uint32_t ef, const RowFilter* allowed, SearchStats* stats,
-                       size_t max_visits) const -> std::vector<Neighbor> {
+auto HnswIndex::Search(const float* query, size_t k, uint32_t ef, const RowFilter* allowed,
+                       SearchStats* stats, size_t max_visits) const -> std::vector<Neighbor> {
   if (entry_ == kNone || k == 0) {
     return {};
   }
@@ -210,7 +218,8 @@ auto HnswIndex::Search(const float* query, size_t k, uint32_t ef, const RowFilte
   for (int l = top_; l > 0; l--) {
     eps = SearchLayer(q.data(), eps, 1, l, nullptr, stats, 0);
   }
-  const auto found = SearchLayer(q.data(), eps, std::max<uint32_t>(ef, static_cast<uint32_t>(k)), 0, allowed, stats, max_visits);
+  const auto found = SearchLayer(q.data(), eps, std::max<uint32_t>(ef, static_cast<uint32_t>(k)), 0,
+                                 allowed, stats, max_visits);
   std::vector<Neighbor> out;
   for (size_t i = 0; i < found.size() && out.size() < k; i++) {
     out.push_back({store_->IdAt(found[i].row), found[i].score});

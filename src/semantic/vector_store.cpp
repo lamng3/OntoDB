@@ -16,12 +16,12 @@ constexpr char kMagic2[] = "OVEC2\n";
 constexpr char kMagic1[] = "OVEC1\n";
 constexpr size_t kMagicLen = 6;
 
-template <typename T>
+template<typename T>
 void Append(std::string* out, const T& value) {
   out->append(reinterpret_cast<const char*>(&value), sizeof(T));
 }
 
-template <typename T>
+template<typename T>
 auto Take(const std::string& in, size_t* pos) -> T {
   if (*pos + sizeof(T) > in.size()) {
     throw StorageException("vector file is truncated");
@@ -40,7 +40,8 @@ auto VectorStore::PeekDimension(const std::string& path) -> uint32_t {
   if (!file.read(header, sizeof header)) {
     throw StorageException(path + " is not a vector file");
   }
-  if (std::memcmp(header, kMagic2, kMagicLen) != 0 && std::memcmp(header, kMagic1, kMagicLen) != 0) {
+  if (std::memcmp(header, kMagic2, kMagicLen) != 0 &&
+      std::memcmp(header, kMagic1, kMagicLen) != 0) {
     throw StorageException(path + " is not a vector file");
   }
   uint32_t dim;
@@ -91,11 +92,13 @@ void VectorStore::Save(const std::string& path, const Dictionary& dictionary) co
   for (size_t row = 0; row < ids_.size(); row++) {
     const auto spelling = dictionary.Lookup(ids_[row]);
     if (!spelling.has_value()) {
-      throw StorageException("term " + std::to_string(ids_[row]) + " has a vector but is not in the dictionary");
+      throw StorageException("term " + std::to_string(ids_[row]) +
+                             " has a vector but is not in the dictionary");
     }
     Append<uint32_t>(&out, static_cast<uint32_t>(spelling->size()));
     out += *spelling;
-    out.append(reinterpret_cast<const char*>(Vector(static_cast<uint32_t>(row))), sizeof(float) * dim_);
+    out.append(reinterpret_cast<const char*>(Vector(static_cast<uint32_t>(row))),
+               sizeof(float) * dim_);
   }
   Append<uint32_t>(&out, Crc32c(out.data(), out.size()));
   std::ofstream file(path, std::ios::binary | std::ios::trunc);
@@ -135,7 +138,8 @@ auto VectorStore::Load(const std::string& path, Dictionary* dictionary, bool int
   const uint32_t dim = Take<uint32_t>(body, &pos);
   const uint64_t count = Take<uint64_t>(body, &pos);
   if (dim != dim_) {
-    throw StorageException("vector file has dimension " + std::to_string(dim) + ", the store has " + std::to_string(dim_));
+    throw StorageException("vector file has dimension " + std::to_string(dim) + ", the store has " +
+                           std::to_string(dim_));
   }
   LoadStats stats;
   std::vector<float> v(dim);

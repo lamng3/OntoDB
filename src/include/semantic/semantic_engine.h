@@ -37,9 +37,11 @@ class SemanticEngine {
   auto operator=(const SemanticEngine&) -> SemanticEngine& = delete;
 
   // Labels the hierarchy of `predicate` (default rdfs:subClassOf) from the store.
-  auto BuildHierarchy(TripleStore* store, Dictionary* dictionary, const std::string& predicate) -> std::string;
+  auto BuildHierarchy(TripleStore* store, Dictionary* dictionary,
+                      const std::string& predicate) -> std::string;
   // The classes at or below `cls`, up to `limit`.
-  auto Under(TripleStore* store, Dictionary* dictionary, const std::string& cls, size_t limit) -> std::string;
+  auto Under(TripleStore* store, Dictionary* dictionary, const std::string& cls,
+             size_t limit) -> std::string;
   // Reads a vector file; terms the dictionary lacks are skipped.
   auto LoadVectors(Dictionary* dictionary, const std::string& path) -> std::string;
   // "ivf", "hnsw", or "all".

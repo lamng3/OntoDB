@@ -1,5 +1,7 @@
 #include "semantic/semantic_engine.h"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -9,7 +11,6 @@
 #include <optional>
 #include <sstream>
 #include <stdexcept>
-#include <unistd.h>
 
 #include "buffer/buffer_pool_manager.h"
 #include "common/term_codec.h"
@@ -92,7 +93,9 @@ struct SemanticEngine::Impl {
 
   Impl() {
     static std::atomic<int> counter{0};
-    file = std::filesystem::temp_directory_path() / ("ontodb-semantic-" + std::to_string(::getpid()) + "-" + std::to_string(counter++) + ".db");
+    file =
+        std::filesystem::temp_directory_path() /
+        ("ontodb-semantic-" + std::to_string(::getpid()) + "-" + std::to_string(counter++) + ".db");
     disk = std::make_unique<DiskManager>(file.string());
     pool = std::make_unique<BufferPoolManager>(kPoolFrames, disk.get(), 2);
     hierarchy = std::make_unique<ClassHierarchy>(ClassHierarchy::Build({}));
@@ -111,13 +114,15 @@ struct SemanticEngine::Impl {
 
   auto Hybrid() -> HybridSearch& {
     if (search == nullptr) {
-      search = std::make_unique<HybridSearch>(HybridSearch::Parts{hierarchy.get(), classes.get(), vectors.get(), flat.get(), ivf.get(), hnsw.get()});
+      search = std::make_unique<HybridSearch>(HybridSearch::Parts{
+          hierarchy.get(), classes.get(), vectors.get(), flat.get(), ivf.get(), hnsw.get()});
     }
     return *search;
   }
 
   // The term a spec names: `<iri>` directly, otherwise the subject whose rdfs:label is the text.
-  auto Resolve(TripleStore* store, Dictionary* dict, const std::string& raw) -> std::optional<term_id_t> {
+  auto Resolve(TripleStore* store, Dictionary* dict,
+               const std::string& raw) -> std::optional<term_id_t> {
     const std::string spec = Trim(raw);
     if (spec.empty()) {
       return std::nullopt;
@@ -166,7 +171,8 @@ struct SemanticEngine::Impl {
 SemanticEngine::SemanticEngine() : impl_(std::make_unique<Impl>()) {}
 SemanticEngine::~SemanticEngine() = default;
 
-auto SemanticEngine::BuildHierarchy(TripleStore* store, Dictionary* dictionary, const std::string& predicate) -> std::string {
+auto SemanticEngine::BuildHierarchy(TripleStore* store, Dictionary* dictionary,
+                                    const std::string& predicate) -> std::string {
   try {
     const std::string spelling = Trim(predicate).empty() ? kSubClassOf : Trim(predicate);
     const auto id = dictionary->Lookup(spelling);
@@ -195,16 +201,18 @@ auto SemanticEngine::BuildHierarchy(TripleStore* store, Dictionary* dictionary, 
     impl_->hierarchy_predicate = spelling;
     const auto& st = impl_->hierarchy->GetStats();
     std::ostringstream out;
-    out << "labelled " << st.classes << " classes (" << st.components << " after collapsing cycles), " << st.edges << " edges, "
-        << st.non_tree_edges << " outside the spanning forest; " << st.intervals << " intervals, at most " << st.max_intervals
-        << " per class; " << Ms(started) << " ms";
+    out << "labelled " << st.classes << " classes (" << st.components
+        << " after collapsing cycles), " << st.edges << " edges, " << st.non_tree_edges
+        << " outside the spanning forest; " << st.intervals << " intervals, at most "
+        << st.max_intervals << " per class; " << Ms(started) << " ms";
     return out.str();
   } catch (const std::exception& e) {
     return std::string("error: ") + e.what();
   }
 }
 
-auto SemanticEngine::Under(TripleStore* store, Dictionary* dictionary, const std::string& cls, size_t limit) -> std::string {
+auto SemanticEngine::Under(TripleStore* store, Dictionary* dictionary, const std::string& cls,
+                           size_t limit) -> std::string {
   try {
     if (impl_->hierarchy->GetStats().classes == 0) {
       return "error: no hierarchy; run \\hindex build first";
@@ -221,7 +229,8 @@ auto SemanticEngine::Under(TripleStore* store, Dictionary* dictionary, const std
     const auto members = impl_->classes->Scan(impl_->hierarchy->Intervals(*id), &scans);
     const double ms = Ms(started);
     std::ostringstream out;
-    out << members.size() << " classes at or below " << Trim(cls) << " (" << scans.scans << " range scans, " << ms << " ms)";
+    out << members.size() << " classes at or below " << Trim(cls) << " (" << scans.scans
+        << " range scans, " << ms << " ms)";
     size_t shown = 0;
     for (const term_id_t m : members) {
       if (shown++ >= limit) {
@@ -251,8 +260,10 @@ auto SemanticEngine::LoadVectors(Dictionary* dictionary, const std::string& path
     impl_->flat = std::move(flat);
     impl_->vectors = std::move(vectors);
     std::ostringstream out;
-    out << "read " << stats.read << " vectors of " << impl_->vectors->Dim() << " floats, kept " << stats.stored << ", skipped "
-        << stats.skipped_unknown << " whose term is not in the dictionary; " << Ms(started) << " ms. Search is exact until \\vindex build.";
+    out << "read " << stats.read << " vectors of " << impl_->vectors->Dim() << " floats, kept "
+        << stats.stored << ", skipped " << stats.skipped_unknown
+        << " whose term is not in the dictionary; " << Ms(started)
+        << " ms. Search is exact until \\vindex build.";
     return out.str();
   } catch (const std::exception& e) {
     return std::string("error: ") + e.what();
@@ -272,16 +283,19 @@ auto SemanticEngine::BuildIndex(const std::string& kind) -> std::string {
     if (which == "ivf" || which == "all") {
       const auto started = Clock::now();
       impl_->search.reset();
-      impl_->ivf = std::make_unique<IvfIndex>(impl_->vectors.get(), impl_->pool.get(), IvfIndex::Options{});
+      impl_->ivf =
+          std::make_unique<IvfIndex>(impl_->vectors.get(), impl_->pool.get(), IvfIndex::Options{});
       impl_->ivf->Build();
-      out << "ivf: " << impl_->ivf->Lists() << " lists in a B+ tree, " << Ms(started) / 1000.0 << " s\n";
+      out << "ivf: " << impl_->ivf->Lists() << " lists in a B+ tree, " << Ms(started) / 1000.0
+          << " s\n";
     }
     if (which == "hnsw" || which == "all") {
       const auto started = Clock::now();
       impl_->search.reset();
       impl_->hnsw = std::make_unique<HnswIndex>(impl_->vectors.get(), HnswIndex::Options{});
       impl_->hnsw->Build();
-      out << "hnsw: M=16, " << impl_->hnsw->TopLayer() + 1 << " layers, " << Ms(started) / 1000.0 << " s\n";
+      out << "hnsw: M=16, " << impl_->hnsw->TopLayer() + 1 << " layers, " << Ms(started) / 1000.0
+          << " s\n";
     }
     std::string text = out.str();
     if (!text.empty() && text.back() == '\n') {
@@ -293,7 +307,8 @@ auto SemanticEngine::BuildIndex(const std::string& kind) -> std::string {
   }
 }
 
-auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const std::string& args) -> std::string {
+auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary,
+                             const std::string& args) -> std::string {
   try {
     if (impl_->vectors == nullptr) {
       return "error: no vectors; run \\vload <file> first";
@@ -308,7 +323,8 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
     size_t k = kDefaultK;
     auto take_name = [&]() {
       std::string name;
-      while (i < tokens.size() && !IsNumber(tokens[i]) && tokens[i] != "under" && tokens[i] != "using") {
+      while (i < tokens.size() && !IsNumber(tokens[i]) && tokens[i] != "under" &&
+             tokens[i] != "using") {
         name += (name.empty() ? "" : " ") + tokens[i++];
         if (name.front() == '<' || name.front() == '"') {
           break;
@@ -355,13 +371,20 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
     using S = HybridSearch::Strategy;
     S strategy = S::kAuto;
     if (!using_.empty()) {
-      if (using_ == "auto") strategy = S::kAuto;
-      else if (using_ == "pre") strategy = S::kPreFilter;
-      else if (using_ == "post-hnsw") strategy = S::kPostFilterHnsw;
-      else if (using_ == "post-ivf") strategy = S::kPostFilterIvf;
-      else if (using_ == "mask-hnsw") strategy = S::kMaskHnsw;
-      else if (using_ == "mask-ivf") strategy = S::kMaskIvf;
-      else return "error: unknown strategy " + using_;
+      if (using_ == "auto")
+        strategy = S::kAuto;
+      else if (using_ == "pre")
+        strategy = S::kPreFilter;
+      else if (using_ == "post-hnsw")
+        strategy = S::kPostFilterHnsw;
+      else if (using_ == "post-ivf")
+        strategy = S::kPostFilterIvf;
+      else if (using_ == "mask-hnsw")
+        strategy = S::kMaskHnsw;
+      else if (using_ == "mask-ivf")
+        strategy = S::kMaskIvf;
+      else
+        return "error: unknown strategy " + using_;
       const bool needs_hnsw = strategy == S::kPostFilterHnsw || strategy == S::kMaskHnsw;
       const bool needs_ivf = strategy == S::kPostFilterIvf || strategy == S::kMaskIvf;
       if ((needs_hnsw && impl_->hnsw == nullptr) || (needs_ivf && impl_->ivf == nullptr)) {
@@ -370,7 +393,8 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
     }
     // One more than asked, because the term itself is its own nearest neighbor.
     const auto started = Clock::now();
-    const auto result = impl_->Hybrid().Similar(impl_->vectors->Vector(*row), k + 1, under_id, strategy, HybridSearch::Params{});
+    const auto result = impl_->Hybrid().Similar(impl_->vectors->Vector(*row), k + 1, under_id,
+                                                strategy, HybridSearch::Params{});
     const double ms = Ms(started);
     std::ostringstream out;
     out << "nearest to " << impl_->Describe(store, dictionary, *id);
@@ -379,7 +403,9 @@ auto SemanticEngine::Similar(TripleStore* store, Dictionary* dictionary, const s
     }
     std::string used = HybridSearch::Name(result.used);
     if (under_id == INVALID_TERM_ID) {  // with no class there is no filter to name
-      used = result.used == S::kMaskHnsw ? "hnsw" : result.used == S::kMaskIvf ? "ivf" : "exact scan";
+      used = result.used == S::kMaskHnsw  ? "hnsw"
+             : result.used == S::kMaskIvf ? "ivf"
+                                          : "exact scan";
     }
     out << " [" << used << ", " << ms * 1000.0 << " us]";
     size_t shown = 0;
@@ -531,13 +557,14 @@ auto SemanticEngine::Status() const -> std::string {
   if (st.classes == 0) {
     out << "hierarchy: not built (\\hindex build)\n";
   } else {
-    out << "hierarchy: " << st.classes << " classes, " << st.intervals << " intervals (" << impl_->hierarchy_predicate << ")\n";
+    out << "hierarchy: " << st.classes << " classes, " << st.intervals << " intervals ("
+        << impl_->hierarchy_predicate << ")\n";
   }
   if (impl_->vectors == nullptr) {
     out << "vectors: none (\\vload <file>)";
   } else {
-    out << "vectors: " << impl_->vectors->Size() << " of " << impl_->vectors->Dim() << " floats; flat"
-        << (impl_->ivf ? ", ivf" : "") << (impl_->hnsw ? ", hnsw" : "");
+    out << "vectors: " << impl_->vectors->Size() << " of " << impl_->vectors->Dim()
+        << " floats; flat" << (impl_->ivf ? ", ivf" : "") << (impl_->hnsw ? ", hnsw" : "");
   }
   return out.str();
 }

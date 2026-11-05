@@ -1,10 +1,10 @@
+#include <gtest/gtest.h>
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <random>
-
-#include <gtest/gtest.h>
 
 #include "common/exception.h"
 #include "dictionary/mem_dictionary.h"
