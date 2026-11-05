@@ -50,8 +50,8 @@ class SemanticEngine {
 
   // The same operations for programs: results as values, and failures as std::runtime_error.
   // Classes at or below `cls`; a `limit` of 0 means all of them.
-  auto UnderTerms(TripleStore* store, Dictionary* dictionary, const std::string& cls, size_t limit)
-      -> std::vector<std::string>;
+  auto UnderTerms(TripleStore* store, Dictionary* dictionary, const std::string& cls,
+                  size_t limit) -> std::vector<std::string>;
   // Replaces the vectors with one row of `dim` floats per term in `data`, and drops the approximate
   // indexes. A term the dictionary lacks is skipped. Returns how many were kept.
   auto PutVectors(Dictionary* dictionary, const std::vector<std::string>& terms, const float* data,

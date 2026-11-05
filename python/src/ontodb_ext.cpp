@@ -48,8 +48,8 @@ class Connection {
  public:
   Connection(const std::optional<std::string>& path, bool strict) {
     if (path.has_value()) {
-      const auto mode = strict ? ontodb::RecoveryMode::kAbsoluteConsistency
-                               : ontodb::RecoveryMode::kPointInTime;
+      const auto mode =
+          strict ? ontodb::RecoveryMode::kAbsoluteConsistency : ontodb::RecoveryMode::kPointInTime;
       db_ = ontodb::Database::Open(*path, mode);
     } else {
       db_ = std::make_unique<ontodb::Database>();
@@ -91,7 +91,8 @@ class Connection {
     return db.Semantic().UnderTerms(db.GetStore(), db.GetDictionary(), cls, limit);
   }
 
-  auto PutVectors(const std::vector<std::string>& terms, const float* data, uint32_t dim) -> size_t {
+  auto PutVectors(const std::vector<std::string>& terms, const float* data,
+                  uint32_t dim) -> size_t {
     const std::lock_guard<std::mutex> guard(mu_);
     auto& db = Db();
     return db.Semantic().PutVectors(db.GetDictionary(), terms, data, dim);
@@ -131,8 +132,8 @@ void RunShell(const std::optional<std::string>& path, bool strict) {
   std::unique_ptr<ontodb::Database> db;
   if (path.has_value()) {
     ontodb::OpenReport report;
-    const auto mode = strict ? ontodb::RecoveryMode::kAbsoluteConsistency
-                             : ontodb::RecoveryMode::kPointInTime;
+    const auto mode =
+        strict ? ontodb::RecoveryMode::kAbsoluteConsistency : ontodb::RecoveryMode::kPointInTime;
     db = ontodb::Database::Open(*path, mode, &report);
     std::cout << report.ToString() << "\n";
   } else {
