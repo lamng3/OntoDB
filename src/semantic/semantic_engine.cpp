@@ -29,6 +29,7 @@ namespace {
 
 constexpr const char* kSubClassOf = "<http://www.w3.org/2000/01/rdf-schema#subClassOf>";
 constexpr const char* kLabel = "<http://www.w3.org/2000/01/rdf-schema#label>";
+constexpr const char* kXsdString = "http://www.w3.org/2001/XMLSchema#string";
 constexpr size_t kPoolFrames = 4096;
 constexpr size_t kDefaultK = 10;
 
@@ -128,15 +129,24 @@ struct SemanticEngine::Impl {
     if (lex.size() >= 2 && lex.front() == '"' && lex.back() == '"') {
       lex = lex.substr(1, lex.size() - 2);
     }
-    const auto literal = dict->Lookup(CanonicalLiteral(lex, "", ""));
     const auto label = dict->Lookup(kLabel);
-    if (!literal.has_value() || !label.has_value()) {
+    if (!label.has_value()) {
       return std::nullopt;
     }
-    auto scan = store->Scan(TriplePattern{std::nullopt, *label, *literal});
-    scan->Init();
-    Triple t;
-    return scan->Next(&t) ? std::optional<term_id_t>(t.subject) : std::nullopt;
+    // OWL files often type their labels as xsd:string, which RDF 1.1 treats as the plain literal.
+    for (const char* datatype : {"", kXsdString}) {
+      const auto literal = dict->Lookup(CanonicalLiteral(lex, datatype, ""));
+      if (!literal.has_value()) {
+        continue;
+      }
+      auto scan = store->Scan(TriplePattern{std::nullopt, *label, *literal});
+      scan->Init();
+      Triple t;
+      if (scan->Next(&t)) {
+        return t.subject;
+      }
+    }
+    return std::nullopt;
   }
 
   auto Describe(TripleStore* store, Dictionary* dict, term_id_t id) -> std::string {
