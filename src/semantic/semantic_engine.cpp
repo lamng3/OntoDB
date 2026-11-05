@@ -468,8 +468,8 @@ auto UnderId(SemanticEngine::Impl& impl, TripleStore* store, Dictionary* diction
 }  // namespace
 
 auto SemanticEngine::Nearest(TripleStore* store, Dictionary* dictionary, const float* query,
-                             uint32_t dim, size_t k, const std::string& under)
-    -> std::vector<SemanticHit> {
+                             uint32_t dim, size_t k,
+                             const std::string& under) -> std::vector<SemanticHit> {
   if (impl_->vectors == nullptr) {
     throw std::runtime_error("no vectors; load them first");
   }
@@ -501,8 +501,8 @@ auto SemanticEngine::Nearest(TripleStore* store, Dictionary* dictionary, const f
 }
 
 auto SemanticEngine::NearestTerm(TripleStore* store, Dictionary* dictionary,
-                                 const std::string& term, size_t k, const std::string& under)
-    -> std::vector<SemanticHit> {
+                                 const std::string& term, size_t k,
+                                 const std::string& under) -> std::vector<SemanticHit> {
   if (impl_->vectors == nullptr) {
     throw std::runtime_error("no vectors; load them first");
   }
