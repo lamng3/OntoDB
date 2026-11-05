@@ -129,6 +129,25 @@ def test_the_hierarchy_answers_what_is_below(con):
     assert len(con.under(f"{EX}organ", limit=2)) == 2
 
 
+def test_a_label_typed_as_a_string_still_names_its_class(tmp_path):
+    """Real OWL files spell labels "vein"^^xsd:string, not as plain literals."""
+    path = tmp_path / "typed.ttl"
+    path.write_text(f"""
+    @prefix : <{EX}> .
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+    :vein a owl:Class ; rdfs:label "vein"^^xsd:string .
+    :renal a owl:Class ; rdfs:label "renal vein"^^xsd:string ; rdfs:subClassOf :vein .
+    """)
+    with ontodb.connect() as con:
+        con.load(path)
+        con.build_hierarchy()
+        assert set(con.under("vein")) == {f"{EX}vein", f"{EX}renal"}
+        con.load_vectors([f"{EX}vein", f"{EX}renal"], [[1.0, 0.0], [0.9, 0.1]], index=None)
+        assert con.similar("vein", 1) == [(f"{EX}renal", pytest.approx(0.99, abs=0.01))]
+
+
 def test_the_hierarchy_must_be_built_first(con):
     with pytest.raises(ontodb.OntoDBError, match="hierarchy"):
         con.under(f"{EX}heart")
