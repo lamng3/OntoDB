@@ -7,7 +7,7 @@
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
 [![Manual](https://img.shields.io/badge/docs-manual-8b5cf6)](https://lamng3.com/ontodb/)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-3b82f6)](CMakeLists.txt)
-[![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![License: BSD 3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-green.svg)](LICENSE)
 
 [⚡ Quick start](#-quick-start) · [✨ What it is](#-what-it-is) · [🔧 Usage](#-usage) · [📖 Manual](https://lamng3.com/ontodb/) · [📚 Book](book/ontodb-book.pdf) · [📝 Citation](#-citation)
 
@@ -152,7 +152,7 @@ The [manual](https://lamng3.com/ontodb/) covers installation, a tutorial, the sh
 
 ## License
 
-[CC BY 4.0](LICENSE). Copyright (c) 2026 Lam Nguyen.
+[BSD 3-Clause](LICENSE). Copyright (c) 2026 Lam Nguyen.
 
 ## RDFS subclass entailment of type patterns
 
