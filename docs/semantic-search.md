@@ -1,6 +1,6 @@
 # Semantic search in OntoDB
 
-This note is the theory behind plan 14: what a sorted index can and cannot say about meaning, how a class hierarchy can be made a range scan, and how vector indexes fit beside the B+ trees. The code is in `src/semantic/`; the measurements are in `benchmarks/semantic/`; the paper is in `paper/`.
+This note is the theory behind plan 14: what a sorted index can and cannot say about meaning, how a class hierarchy can be made a range scan, and how vector indexes fit beside the B+ trees. The code is in `src/semantic/`; the measurements are in `benchmarks/semantic/`; the paper is in `papers/query-engine/`.
 
 ## 1. What the B+ tree orders today
 

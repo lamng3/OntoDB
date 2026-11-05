@@ -6,9 +6,9 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 raw = root / "benchmarks/compare/raw"
-gen = root / "paper/gen"
+gen = root / "papers/query-engine/gen"
 SYS = "\\sys{}"
 ENGINES = [("ontodb", SYS), ("oxigraph", "Ox.\\ RocksDB"), ("oxigraph-mem", "Ox.\\ memory"), ("jena", "Jena TDB2"), ("sqlite", "SQLite")]
 

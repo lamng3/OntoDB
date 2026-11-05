@@ -4,7 +4,7 @@ The raw tables are not committed; the generated file is, so the paper builds alo
 import re
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+root = Path(__file__).resolve().parents[2]
 rows = []
 for line in (root / "benchmarks/semantic/raw/knn.md").read_text().splitlines():
     cells = [c.strip() for c in line.strip("|").split("|")]
@@ -27,7 +27,7 @@ flat = [(us, r) for name, _, r, us in rows if name == "flat float32"][0]
 out.append(f"\\addplot[only marks,mark=pentagon*,mark size=3pt,color=black] coordinates {{({flat[0]:g},{flat[1]:g})}};")
 out.append("\\addlegendentry{flat, exact}")
 out.append("\\end{axis}\n\\end{tikzpicture}")
-(root / "paper/gen/knn-plot.tex").write_text("\n".join(out) + "\n")
+(root / "papers/query-engine/gen/knn-plot.tex").write_text("\n".join(out) + "\n")
 print("wrote gen/knn-plot.tex with", sum(1 for r in rows), "rows")
 
 
@@ -51,5 +51,5 @@ for name, vals in orders:
         out.append(f"\\addplot+[{style},thick] coordinates {{" + " ".join(f"({w},{v:g})" for w, v in zip(windows, vals)) + "};")
         out.append(f"\\addlegendentry{{{label}}}")
 out.append("\\end{axis}\n\\end{tikzpicture}")
-(root / "paper/gen/order-plot.tex").write_text("\n".join(out).replace("\\\\", "\\") + "\n")
+(root / "papers/query-engine/gen/order-plot.tex").write_text("\n".join(out).replace("\\\\", "\\") + "\n")
 print("wrote gen/order-plot.tex")
