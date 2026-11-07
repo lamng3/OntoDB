@@ -203,8 +203,10 @@ auto HIndex(Database& db, const std::string& arg) -> CommandResult {
   if (lower.rfind("build", 0) != 0) {
     return Text("error: usage: \\hindex build [<predicate>]");
   }
-  return Text(db.Semantic().BuildHierarchy(db.GetStore(), db.GetDictionary(),
-                                           Trim(std::string_view(arg).substr(5))));
+  const std::string built = db.Semantic().BuildHierarchy(db.ReadStore(), db.GetDictionary(),
+                                                         Trim(std::string_view(arg).substr(5)));
+  db.NoteHierarchyBuilt();
+  return Text(built);
 }
 
 auto Under(Database& db, const std::string& arg) -> CommandResult {
@@ -220,7 +222,10 @@ auto Under(Database& db, const std::string& arg) -> CommandResult {
     limit = std::stoul(arg.substr(cut + 1));
     cls = arg.substr(0, cut);
   }
-  return Text(db.Semantic().Under(db.GetStore(), db.GetDictionary(), cls, limit));
+  if (!db.HierarchyIsCurrent()) {
+    return Text("error: the hierarchy was built at another version; run \\hindex build here");
+  }
+  return Text(db.Semantic().Under(db.ReadStore(), db.GetDictionary(), cls, limit));
 }
 
 auto VLoad(Database& db, const std::string& arg) -> CommandResult {
@@ -239,7 +244,54 @@ auto VIndex(Database& db, const std::string& arg) -> CommandResult {
 }
 
 auto Similar(Database& db, const std::string& arg) -> CommandResult {
-  return Text(db.Semantic().Similar(db.GetStore(), db.GetDictionary(), arg));
+  if (arg.find(" under ") != std::string::npos && !db.HierarchyIsCurrent()) {
+    return Text("error: the hierarchy was built at another version; run \\hindex build here");
+  }
+  return Text(db.Semantic().Similar(db.ReadStore(), db.GetDictionary(), arg));
+}
+
+auto Tag(Database& db, const std::string& arg) -> CommandResult {
+  if (arg.empty()) {
+    return Text("error: usage: \\tag <name>");
+  }
+  const commit_ts_t at = db.Tag(arg);
+  return Text("version " + arg + " is commit " + std::to_string(at) + ", " +
+              std::to_string(db.GetVersions().Count(at)) + " triples");
+}
+
+auto At(Database& db, const std::string& arg) -> CommandResult {
+  if (arg.empty()) {
+    return Text("reading " + db.GetAt().value_or("latest"));
+  }
+  db.SetAt(arg);
+  if (arg == "latest") {
+    return Text("reading latest");
+  }
+  const commit_ts_t at = *db.GetVersions().FindTag(arg);
+  return Text("reading version " + arg + ", commit " + std::to_string(at) + ", " +
+              std::to_string(db.GetVersions().Count(at)) + " triples");
+}
+
+auto Versions(Database& db) -> CommandResult {
+  const auto& versions = db.GetVersions();
+  std::ostringstream out;
+  for (const auto& tag : versions.Tags()) {
+    out << tag.name << "\tcommit " << tag.ts << '\t' << versions.Count(tag.ts) << " triples\n";
+  }
+  out << versions.Tags().size() << " versions; " << versions.Clock() << " commits, "
+      << versions.TripleCount() << " distinct triples in " << versions.SpanCount() << " spans";
+  return Text(out.str());
+}
+
+auto Replace(Database& db, const std::string& arg) -> CommandResult {
+  if (arg.empty()) {
+    return Text("error: usage: \\replace <file>");
+  }
+  const auto stats = db.Replace(arg);
+  std::ostringstream out;
+  out << "replaced with " << stats.triples << " triples: " << stats.added << " added, "
+      << stats.removed << " removed, in " << stats.milliseconds << " ms";
+  return Text(out.str());
 }
 
 auto BuildCommands() -> std::vector<ShellCommand> {
@@ -310,6 +362,14 @@ auto BuildCommands() -> std::vector<ShellCommand> {
          db.Abort();
          return Ok();
        })},
+      {"\\tag", "\\tag <name>", "name the newest commit as a version, for good", {}, Tag},
+      {"\\at", "\\at <version>|latest", "read that version from now on, without locks", {}, At},
+      {"\\versions", "\\versions", "the named versions", {}, no_arg(Versions)},
+      {"\\replace",
+       "\\replace <file>",
+       "make the database exactly this file, as one commit of what differs",
+       {},
+       Replace},
       {"\\txns", "\\txns", "running transactions (PLAN 7.2)", {}, no_arg([](Database& db) {
          return Text(db.TransactionsDebug());
        })},

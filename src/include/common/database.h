@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <thread>
@@ -101,6 +102,24 @@ class Database {
 
   // Names the newest commit, for good, and returns its timestamp. Durable before it returns.
   auto Tag(const std::string& name) -> commit_ts_t;
+  // This thread reads the named version from now on, without locks, and may not write: a version
+  // does not change. "latest" goes back. Refused inside a transaction.
+  void SetAt(const std::string& name);
+  auto GetAt() -> std::optional<std::string>;
+  // What the semantic commands read: this thread's version, or the store.
+  auto ReadStore() -> TripleStore*;
+  // Makes the database hold exactly the file's triples, as one commit that changes only what
+  // differs. The dictionary keeps every term, so later versions share what they have in common.
+  struct ReplaceStats {
+    uint64_t triples{0};
+    uint64_t added{0};
+    uint64_t removed{0};
+    double milliseconds{0};
+  };
+  auto Replace(const std::string& path) -> ReplaceStats;
+  // The hierarchy is labelled from one version, so \\under has to be asked of that version.
+  void NoteHierarchyBuilt();
+  auto HierarchyIsCurrent() -> bool;
 
  private:
   struct IndexedBackend;
@@ -110,7 +129,9 @@ class Database {
   // re-ANALYZEd). Sessions share one immutable snapshot.
   auto CurrentStatistics() -> std::shared_ptr<const Statistics>;
   void InvalidateStatistics();
-  auto CurrentTransaction() -> Transaction*;  // this thread's explicit transaction, or null
+  auto CurrentTransaction() -> Transaction*;       // this thread's explicit transaction, or null
+  auto CurrentAt() -> std::optional<commit_ts_t>;  // the version this thread reads, if any
+  void RefuseAtAVersion(const char* what);
   auto BeginTransaction() -> Transaction*;
   // Makes the transaction's changes the next commit, then releases its locks.
   void CommitTransaction(Transaction* txn);
@@ -146,6 +167,9 @@ class Database {
   std::unique_ptr<TransactionManager> txns_;  // over the active store
   std::mutex sessions_mu_;
   std::unordered_map<std::thread::id, Transaction*> current_;  // explicit transaction per thread
+  std::unordered_map<std::thread::id, std::string> at_;        // named version per thread
+  std::map<commit_ts_t, std::unique_ptr<SnapshotStore>> views_;
+  std::optional<commit_ts_t> hierarchy_at_;
   std::mutex statistics_mu_;
   std::shared_ptr<const Statistics> statistics_;
 };

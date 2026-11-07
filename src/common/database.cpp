@@ -3,9 +3,11 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
+#include <set>
 #include <sstream>
 
 #include "binder/binder.h"
@@ -134,6 +136,70 @@ auto Database::Tag(const std::string& name) -> commit_ts_t {
   return at;
 }
 
+auto Database::CurrentAt() -> std::optional<commit_ts_t> {
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  const auto it = at_.find(std::this_thread::get_id());
+  if (it == at_.end()) {
+    return std::nullopt;
+  }
+  return versions_.FindTag(it->second);
+}
+
+void Database::RefuseAtAVersion(const char* what) {
+  if (CurrentAt().has_value()) {
+    throw std::runtime_error(std::string(what) +
+                             " cannot run at a version, which does not change; \\at latest "
+                             "goes back");
+  }
+}
+
+void Database::SetAt(const std::string& name) {
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  const auto thread = std::this_thread::get_id();
+  if (current_.contains(thread)) {
+    throw std::runtime_error("finish the open transaction before moving to another version");
+  }
+  if (name == "latest") {
+    at_.erase(thread);
+    return;
+  }
+  if (!versions_.FindTag(name).has_value()) {
+    throw std::runtime_error("no version named " + name + "; \\versions lists them");
+  }
+  at_[thread] = name;
+}
+
+auto Database::GetAt() -> std::optional<std::string> {
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  const auto it = at_.find(std::this_thread::get_id());
+  return it == at_.end() ? std::nullopt : std::optional<std::string>(it->second);
+}
+
+auto Database::ReadStore() -> TripleStore* {
+  const auto at = CurrentAt();
+  if (!at.has_value()) {
+    return GetStore();
+  }
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  auto& view = views_[*at];
+  if (view == nullptr) {
+    view = std::make_unique<SnapshotStore>(&versions_, *at, GetStore(), nullptr);
+  }
+  return view.get();
+}
+
+void Database::NoteHierarchyBuilt() {
+  const auto at = CurrentAt();
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  hierarchy_at_ = at;
+}
+
+auto Database::HierarchyIsCurrent() -> bool {
+  const auto at = CurrentAt();
+  std::lock_guard<std::mutex> guard(sessions_mu_);
+  return hierarchy_at_ == at;
+}
+
 auto Database::CurrentStatistics() -> std::shared_ptr<const Statistics> {
   std::lock_guard<std::mutex> guard(statistics_mu_);
   if (statistics_ == nullptr) {
@@ -215,6 +281,9 @@ void Database::SetBackend(BackendKind kind) {
     std::lock_guard<std::mutex> guard(entailment_mu_);
     entailment_.reset();
     snapshot_entailments_.clear();
+    std::lock_guard<std::mutex> sessions(sessions_mu_);
+    views_.clear();  // they name the store this switch replaces
+    hierarchy_at_.reset();
   }
   data_version_++;
   if (kind == BackendKind::kIndexed && !indexed_) {
@@ -266,6 +335,7 @@ auto Database::Load(const std::string& path) -> LoadStats {
   if (CurrentTransaction() != nullptr) {
     throw std::runtime_error("\\load runs on its own, not inside a transaction");
   }
+  RefuseAtAVersion("\\load");
   Transaction* txn = BeginTransaction();
   LoadStats stats;
   try {
@@ -287,6 +357,65 @@ auto Database::Load(const std::string& path) -> LoadStats {
   CommitTransaction(txn);
   data_version_++;
   InvalidateStatistics();
+  return stats;
+}
+
+auto Database::Replace(const std::string& path) -> ReplaceStats {
+  std::shared_lock<std::shared_mutex> backend(backend_mu_);
+  if (CurrentTransaction() != nullptr) {
+    throw std::runtime_error("\\replace runs on its own, not inside a transaction");
+  }
+  RefuseAtAVersion("\\replace");
+  const auto start = std::chrono::steady_clock::now();
+  Transaction* txn = BeginTransaction();
+  ReplaceStats stats;
+  try {
+    locks_.Lock(txn, DatabaseResource(), LockMode::kX, nullptr);
+    MemStore incoming;
+    stats.triples = RdfLoader().Load(path, *GetDictionary(), incoming).triples;
+    const auto read_all = [](TripleStore& store) {
+      std::set<Triple> all;
+      auto scan = store.Scan({});
+      scan->Init();
+      Triple triple;
+      while (scan->Next(&triple)) {
+        all.insert(triple);
+      }
+      return all;
+    };
+    const std::set<Triple> wanted = read_all(incoming);
+    const std::set<Triple> held = read_all(*GetStore());
+    RecordingStore recording(GetStore());
+    try {
+      for (const auto& triple : held) {
+        if (!wanted.contains(triple)) {
+          recording.Delete(triple);
+        }
+      }
+      std::vector<Triple> fresh;
+      for (const auto& triple : wanted) {
+        if (!held.contains(triple)) {
+          fresh.push_back(triple);
+        }
+      }
+      recording.InsertBatch(fresh);
+    } catch (...) {
+      recording.Undo();
+      throw;
+    }
+    for (const auto& change : recording.Changes()) {
+      (change.is_insert ? stats.added : stats.removed)++;
+      txn->GetWriteSet().push_back({change.is_insert, change.triple});
+    }
+  } catch (...) {
+    txns_->Abort(txn);
+    throw;
+  }
+  CommitTransaction(txn);
+  data_version_++;
+  InvalidateStatistics();
+  stats.milliseconds =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
   return stats;
 }
 
@@ -315,10 +444,16 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   const Config config = GetConfig();
   const bool is_update =
       bound.kind == BoundQuery::Kind::kInsert || bound.kind == BoundQuery::Kind::kDelete;
+  if (is_update) {
+    RefuseAtAVersion("an update");
+  }
   Transaction* txn = CurrentTransaction();
   const bool implicit = txn == nullptr;
   if (implicit) {
     txn = BeginTransaction();
+    if (const auto at = CurrentAt()) {
+      txn->SetSnapshot(*at);
+    }
   }
   StatementResult result;
   try {
@@ -454,6 +589,7 @@ auto Database::TreeDebug(const std::string& index, bool dot) const -> std::strin
 
 void Database::Begin() {
   std::shared_lock<std::shared_mutex> backend(backend_mu_);
+  RefuseAtAVersion("\\begin");
   std::lock_guard<std::mutex> guard(sessions_mu_);
   auto& slot = current_[std::this_thread::get_id()];
   if (slot != nullptr) {
