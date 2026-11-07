@@ -196,8 +196,8 @@ auto Validate(const Spec& spec) -> std::string {
     return "missing name";
   }
   if (spec.isolation != "ru" && spec.isolation != "rc" && spec.isolation != "rr" &&
-      spec.isolation != "ser") {
-    return "isolation must be ru, rc, rr, or ser";
+      spec.isolation != "ser" && spec.isolation != "si") {
+    return "isolation must be ru, rc, rr, ser, or si";
   }
   if (spec.sessions.empty() || spec.permutations.empty()) {
     return "spec needs a session and a permutation";

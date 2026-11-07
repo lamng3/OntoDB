@@ -77,6 +77,8 @@ auto IsolationName(IsolationLevel level) -> const char* {
       return "rc";
     case IsolationLevel::kRepeatableRead:
       return "rr";
+    case IsolationLevel::kSnapshot:
+      return "si";
     case IsolationLevel::kSerializable:
       return "ser";
   }
@@ -124,13 +126,14 @@ auto SetKnob(Config& config, const std::string& key, const std::string& value) -
     return "error: join is auto, nlj, inlj, or hash";
   } else if (key == "isolation") {
     for (const auto level : {IsolationLevel::kReadUncommitted, IsolationLevel::kReadCommitted,
-                             IsolationLevel::kRepeatableRead, IsolationLevel::kSerializable}) {
+                             IsolationLevel::kRepeatableRead, IsolationLevel::kSerializable,
+                             IsolationLevel::kSnapshot}) {
       if (value == IsolationName(level)) {
         config.isolation = level;
         return "";
       }
     }
-    return "error: isolation is ru, rc, rr, or ser";
+    return "error: isolation is ru, rc, rr, ser, or si";
   } else {
     return "error: unknown knob " + key;
   }
@@ -287,7 +290,7 @@ auto BuildCommands() -> std::vector<ShellCommand> {
        "\\set",
        "show settings",
        {"\\set backend mem|indexed", "\\set pool_size N", "\\set lru_k K",
-        "\\set join auto|nlj|inlj|hash", "\\set isolation ru|rc|rr|ser"},
+        "\\set join auto|nlj|inlj|hash", "\\set isolation ru|rc|rr|ser|si"},
        Set},
       {"\\bpm", "\\bpm", "buffer pool frames", {}, no_arg([](Database& db) {
          return Text(db.BufferPoolDebug());

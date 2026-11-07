@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -39,6 +40,22 @@ class RecordingStore : public TripleStore {
 
   auto Scan(const TriplePattern& pattern) -> std::unique_ptr<TripleIterator> override {
     return inner_->Scan(pattern);
+  }
+
+  // Keeps the inner store's bulk load, which a triple at a time through Insert would lose.
+  auto InsertBatch(const std::vector<Triple>& triples) -> size_t override {
+    std::set<Triple> seen;
+    std::vector<Triple> fresh;
+    for (const auto& triple : triples) {
+      if (seen.insert(triple).second && !inner_->Contains(triple)) {
+        fresh.push_back(triple);
+      }
+    }
+    const size_t added = inner_->InsertBatch(fresh);
+    for (const auto& triple : fresh) {
+      changes_.push_back({true, triple});
+    }
+    return added;
   }
 
   auto Changes() const -> const std::vector<Change>& { return changes_; }

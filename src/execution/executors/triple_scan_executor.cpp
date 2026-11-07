@@ -61,7 +61,8 @@ void TripleScanExecutor::InitWith(const Row& bindings) {
   store_pattern.predicate = value(pattern.predicate);
   store_pattern.object = value(pattern.object);
   Transaction* txn = ctx_->GetTransaction();
-  if (txn != nullptr && txn->GetIsolationLevel() != IsolationLevel::kReadUncommitted) {
+  if (txn != nullptr && txn->GetIsolationLevel() != IsolationLevel::kReadUncommitted &&
+      !txn->GetSnapshot().has_value()) {
     LockManager* locks = ctx_->GetLockManager();
     locks->Lock(txn, DatabaseResource(), LockMode::kIs, ctx_->GetSession());
     const bool range = txn->GetIsolationLevel() == IsolationLevel::kRepeatableRead;
@@ -112,7 +113,8 @@ auto TripleScanExecutor::Next(Row* row) -> bool {
 
 auto TripleScanExecutor::LockRow(const Triple& triple) -> bool {
   Transaction* txn = ctx_->GetTransaction();
-  if (txn == nullptr || txn->GetIsolationLevel() == IsolationLevel::kReadUncommitted) {
+  if (txn == nullptr || txn->GetIsolationLevel() == IsolationLevel::kReadUncommitted ||
+      txn->GetSnapshot().has_value()) {
     return true;
   }
   bool waited = false;

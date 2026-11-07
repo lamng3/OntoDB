@@ -35,6 +35,8 @@ auto IsolationName(IsolationLevel level) -> const char* {
       return "rr";
     case IsolationLevel::kSerializable:
       return "ser";
+    case IsolationLevel::kSnapshot:
+      return "si";
   }
   return "?";
 }

@@ -1,9 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <optional>
 #include <vector>
 
 #include "common/types.h"
+#include "concurrency/version_index.h"
 
 namespace ontodb {
 
@@ -35,12 +37,23 @@ class Transaction {
   auto GetLastLsn() const -> lsn_t { return last_lsn_; }
   void SetLastLsn(lsn_t lsn) { last_lsn_ = lsn; }
 
+  // When set, this transaction reads the database as of that commit, without locks.
+  auto GetSnapshot() const -> std::optional<commit_ts_t> { return snapshot_; }
+  void SetSnapshot(commit_ts_t at) { snapshot_ = at; }
+  // First committer wins: a write fails if another transaction committed a change to the same
+  // triple after this one's snapshot. A statement outside \\begin read nothing earlier that the
+  // write could contradict, so it does not check.
+  auto ChecksConflicts() const -> bool { return checks_conflicts_; }
+  void SetChecksConflicts(bool checks) { checks_conflicts_ = checks; }
+
  private:
   txn_id_t id_;
   IsolationLevel isolation_;
   std::atomic<TransactionState> state_{TransactionState::kGrowing};
   std::vector<WriteRecord> write_set_;
   lsn_t last_lsn_{INVALID_LSN};
+  std::optional<commit_ts_t> snapshot_;
+  bool checks_conflicts_{false};
 };
 
 }  // namespace ontodb

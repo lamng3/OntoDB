@@ -185,9 +185,8 @@ TEST(VersionIndex, RemapKeepsTheHistoryUnderNewIds) {
   index.Apply({Insert(kA)});
   index.Apply({Delete(kA)});
   index.Tag("gone");
-  index.Remap([](const Triple& t) {
-    return Triple{t.subject + 10, t.predicate + 10, t.object + 10};
-  });
+  index.Remap(
+      [](const Triple& t) { return Triple{t.subject + 10, t.predicate + 10, t.object + 10}; });
   const Triple moved{11, 12, 13};
   EXPECT_TRUE(index.Contains(moved, 1));
   EXPECT_FALSE(index.Contains(moved, 2));

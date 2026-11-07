@@ -18,6 +18,7 @@
 #include "parser/parser.h"
 #include "store/indexed_store.h"
 #include "store/mem_store.h"
+#include "store/recording_store.h"
 
 namespace ontodb {
 
@@ -67,6 +68,14 @@ void CopyTriples(Dictionary& from_terms, TripleStore& from, Dictionary& to_terms
   }
 }
 
+// The history names terms too, including ones no current triple uses.
+void RemapVersions(VersionIndex& versions, Dictionary& from_terms, Dictionary& to_terms) {
+  versions.Remap([&](const Triple& t) {
+    auto id = [&](term_id_t old) { return to_terms.Insert(*from_terms.Lookup(old)); };
+    return Triple{id(t.subject), id(t.predicate), id(t.object)};
+  });
+}
+
 }  // namespace
 
 Database::Database()
@@ -84,6 +93,27 @@ auto Database::CurrentTransaction() -> Transaction* {
   std::lock_guard<std::mutex> guard(sessions_mu_);
   const auto it = current_.find(std::this_thread::get_id());
   return it == current_.end() ? nullptr : it->second;
+}
+
+auto Database::BeginTransaction() -> Transaction* {
+  const IsolationLevel level = GetConfig().isolation;
+  Transaction* txn = txns_->Begin(level);
+  if (level == IsolationLevel::kSnapshot) {
+    txn->SetSnapshot(versions_.Clock());
+  }
+  return txn;
+}
+
+// The locks are released last: whoever gets one next sees this commit in the index.
+void Database::CommitTransaction(Transaction* txn) {
+  std::lock_guard<std::mutex> guard(commit_mu_);
+  std::vector<VersionChange> changes;
+  changes.reserve(txn->GetWriteSet().size());
+  for (const auto& write : txn->GetWriteSet()) {
+    changes.push_back({write.is_insert, write.triple});
+  }
+  versions_.Apply(changes);
+  txns_->Commit(txn);
 }
 
 auto Database::CurrentStatistics() -> std::shared_ptr<const Statistics> {
@@ -121,6 +151,32 @@ auto Database::EntailmentFor(const Config& config) -> TypeEntailment* {
   return entailment_.get();
 }
 
+auto Database::EntailmentAt(commit_ts_t at,
+                            Transaction* txn) -> std::shared_ptr<SnapshotEntailment> {
+  constexpr size_t kKept = 4;
+  const bool own_changes = txn != nullptr && !txn->GetWriteSet().empty();
+  auto build = [&] {
+    auto built = std::make_shared<SnapshotEntailment>();
+    built->store = std::make_unique<SnapshotStore>(&versions_, at, GetStore(), txn);
+    built->index = std::make_unique<TypeEntailmentIndex>();
+    built->index->Refresh(built->store.get(), GetDictionary(), at);
+    return built;
+  };
+  if (own_changes) {
+    return build();
+  }
+  std::lock_guard<std::mutex> guard(entailment_mu_);
+  auto& slot = snapshot_entailments_[at];
+  if (slot == nullptr) {
+    txn = nullptr;  // shared, so it must not read one transaction's write set later
+    slot = build();
+    if (snapshot_entailments_.size() > kKept) {
+      snapshot_entailments_.erase(snapshot_entailments_.begin());  // statements keep what they hold
+    }
+  }
+  return slot;
+}
+
 auto Database::Semantic() -> SemanticEngine& {
   if (!semantic_) {
     semantic_ = std::make_unique<SemanticEngine>();
@@ -140,6 +196,7 @@ void Database::SetBackend(BackendKind kind) {
     semantic_.reset();  // ids are about to change
     std::lock_guard<std::mutex> guard(entailment_mu_);
     entailment_.reset();
+    snapshot_entailments_.clear();
   }
   data_version_++;
   if (kind == BackendKind::kIndexed && !indexed_) {
@@ -150,6 +207,7 @@ void Database::SetBackend(BackendKind kind) {
     auto backend =
         std::make_unique<IndexedBackend>(TempDatabasePath(), GetConfig(), &stats_, &trace_);
     CopyTriples(*dictionary_, *store_, backend->dictionary, backend->store);
+    RemapVersions(versions_, *dictionary_, backend->dictionary);
     indexed_ = std::move(backend);
     bpm_ = &indexed_->pool;
     dictionary_ = std::make_unique<MemDictionary>();
@@ -158,6 +216,7 @@ void Database::SetBackend(BackendKind kind) {
     auto terms = std::make_unique<MemDictionary>();
     auto triples = std::make_unique<MemStore>();
     CopyTriples(indexed_->dictionary, indexed_->store, *terms, *triples);
+    RemapVersions(versions_, indexed_->dictionary, *terms);
     dictionary_ = std::move(terms);
     store_ = std::move(triples);
     bpm_ = nullptr;
@@ -189,21 +248,36 @@ auto Database::Load(const std::string& path) -> LoadStats {
   if (CurrentTransaction() != nullptr) {
     throw std::runtime_error("\\load runs on its own, not inside a transaction");
   }
-  Transaction* txn = txns_->Begin(GetConfig().isolation);
+  Transaction* txn = BeginTransaction();
   LoadStats stats;
   try {
     locks_.Lock(txn, DatabaseResource(), LockMode::kX, nullptr);
     if (!durability_) {
-      stats = RdfLoader().Load(path, *GetDictionary(), *GetStore());
+      RecordingStore recording(GetStore());
+      try {
+        stats = RdfLoader().Load(path, *GetDictionary(), recording);
+      } catch (...) {
+        recording.Undo();
+        throw;
+      }
+      for (const auto& change : recording.Changes()) {
+        txn->GetWriteSet().push_back({change.is_insert, change.triple});
+      }
     } else {
-      durability_->Run(
-          [&](TripleStore& store) { stats = RdfLoader().Load(path, *dictionary_, store); });
+      durability_->Run([&](TripleStore& store) {
+        stats = RdfLoader().Load(path, *dictionary_, store);
+        const auto& changes = static_cast<RecordingStore&>(store).Changes();
+        for (const auto& change : changes) {
+          txn->GetWriteSet().push_back({change.is_insert, change.triple});
+        }
+      });
     }
   } catch (...) {
+    txn->GetWriteSet().clear();  // taken back already
     txns_->Abort(txn);
     throw;
   }
-  txns_->Commit(txn);
+  CommitTransaction(txn);
   data_version_++;
   InvalidateStatistics();
   return stats;
@@ -237,7 +311,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   Transaction* txn = CurrentTransaction();
   const bool implicit = txn == nullptr;
   if (implicit) {
-    txn = txns_->Begin(config.isolation);
+    txn = BeginTransaction();
   }
   StatementResult result;
   try {
@@ -249,9 +323,19 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
       locks_.Lock(txn, DatabaseResource(), LockMode::kS, session);
     }
     if (!durability_ || !is_update) {
-      ExecutorContext ctx(GetStore(), GetDictionary(), &config, txn, txns_.get(), &locks_, bpm_,
-                          &stats_, &trace_, session);
-      if (!is_update) {
+      std::unique_ptr<SnapshotStore> snapshot;
+      if (!is_update && txn->GetSnapshot().has_value()) {
+        snapshot =
+            std::make_unique<SnapshotStore>(&versions_, *txn->GetSnapshot(), GetStore(), txn);
+      }
+      ExecutorContext ctx(snapshot ? snapshot.get() : GetStore(), GetDictionary(), &config, txn,
+                          txns_.get(), &locks_, bpm_, &stats_, &trace_, session);
+      ctx.SetVersions(&versions_);
+      std::shared_ptr<SnapshotEntailment> held;
+      if (!is_update && snapshot && config.entail) {
+        held = EntailmentAt(*txn->GetSnapshot(), txn);
+        ctx.SetEntailment(held->index.get());
+      } else if (!is_update) {
         ctx.SetEntailment(EntailmentFor(config));
       }
       const auto statistics = is_update ? nullptr : CurrentStatistics();
@@ -260,6 +344,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
       durability_->Run([&](TripleStore& store) {
         ExecutorContext ctx(&store, dictionary_.get(), &config, txn, txns_.get(), &locks_, bpm_,
                             &stats_, &trace_, session);
+        ctx.SetVersions(&versions_);
         result = ExecutionEngine(&ctx).Execute(bound);
       });
     }
@@ -277,7 +362,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
     throw;
   }
   if (implicit) {
-    txns_->Commit(txn);
+    CommitTransaction(txn);
   }
   if (is_update) {
     data_version_++;
@@ -382,7 +467,8 @@ void Database::Begin() {
   if (slot != nullptr) {
     throw std::runtime_error("already in transaction " + std::to_string(slot->GetId()));
   }
-  slot = txns_->Begin(GetConfig().isolation);
+  slot = BeginTransaction();
+  slot->SetChecksConflicts(slot->GetSnapshot().has_value());
 }
 
 void Database::Commit() {
@@ -390,7 +476,7 @@ void Database::Commit() {
   if (txn == nullptr) {
     throw std::runtime_error("no transaction to commit");
   }
-  txns_->Commit(txn);
+  CommitTransaction(txn);
   std::lock_guard<std::mutex> guard(sessions_mu_);
   current_.erase(std::this_thread::get_id());
 }

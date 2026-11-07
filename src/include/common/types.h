@@ -79,7 +79,13 @@ enum class BackendKind { kMem, kIndexed };
 
 enum class JoinMethod { kAuto, kNestedLoop, kIndexNestedLoop, kHash };
 
-enum class IsolationLevel { kReadUncommitted, kReadCommitted, kRepeatableRead, kSerializable };
+enum class IsolationLevel {
+  kReadUncommitted,
+  kReadCommitted,
+  kRepeatableRead,
+  kSerializable,
+  kSnapshot,  // reads see the commit the transaction began at, and take no locks
+};
 
 struct Config {
   BackendKind backend{BackendKind::kMem};

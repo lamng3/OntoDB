@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -15,6 +16,7 @@
 #include "common/types.h"
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
+#include "concurrency/version_index.h"
 #include "dictionary/mem_dictionary.h"
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
@@ -23,6 +25,7 @@
 #include "semantic/type_entailment_index.h"
 #include "stats/statistics.h"
 #include "store/mem_store.h"
+#include "store/snapshot_store.h"
 
 namespace ontodb {
 
@@ -49,6 +52,12 @@ class BufferPoolManager;
 // persistent database does not accept \begin yet: its log commits each
 // statement on its own. Switching backends waits for running statements and
 // is refused while a transaction is open.
+//
+// MVCC beside the locks: every commit also goes into a VersionIndex, under the next timestamp, and
+// the index is what a snapshot reads. At \\set isolation si a transaction reads the commit it began
+// at, takes no lock to read, and blocks no writer. It still takes X locks to write, so two writers
+// of one triple queue, and the later one aborts if the earlier committed after its snapshot (first
+// committer wins). This is snapshot isolation, not serializability: write skew is allowed.
 class Database {
  public:
   Database();
@@ -67,6 +76,7 @@ class Database {
   auto GetStore() -> TripleStore*;
   void SetBackend(BackendKind kind);
   auto GetStats() -> IoStats& { return stats_; }
+  auto GetVersions() const -> const VersionIndex& { return versions_; }
   auto GetTrace() -> TraceSink* { return &trace_; }
   auto GetBufferPool() -> BufferPoolManager* { return bpm_; }
   // The semantic search engine (PLAN 14), made on first use. Its labels and
@@ -99,6 +109,16 @@ class Database {
   auto CurrentStatistics() -> std::shared_ptr<const Statistics>;
   void InvalidateStatistics();
   auto CurrentTransaction() -> Transaction*;  // this thread's explicit transaction, or null
+  auto BeginTransaction() -> Transaction*;
+  // Makes the transaction's changes the next commit, then releases its locks.
+  void CommitTransaction(Transaction* txn);
+  // The entailment index of a snapshot, and the view it reads. Shared by the statements at one
+  // commit, unless the transaction has changes of its own.
+  struct SnapshotEntailment {
+    std::unique_ptr<SnapshotStore> store;
+    std::unique_ptr<TypeEntailmentIndex> index;
+  };
+  auto EntailmentAt(commit_ts_t at, Transaction* txn) -> std::shared_ptr<SnapshotEntailment>;
 
   std::unique_ptr<MemDictionary> dictionary_;
   std::unique_ptr<MemStore> store_;
@@ -115,8 +135,11 @@ class Database {
   auto EntailmentFor(const Config& config) -> TypeEntailment*;
   std::mutex entailment_mu_;
   std::unique_ptr<TypeEntailmentIndex> entailment_;
+  std::map<commit_ts_t, std::shared_ptr<SnapshotEntailment>> snapshot_entailments_;  // a few recent
   std::atomic<uint64_t> data_version_{0};
   std::shared_mutex backend_mu_;  // statements share it; a backend switch takes it alone
+  VersionIndex versions_;
+  std::mutex commit_mu_;  // commits take timestamps one at a time
   LockManager locks_;
   std::unique_ptr<TransactionManager> txns_;  // over the active store
   std::mutex sessions_mu_;

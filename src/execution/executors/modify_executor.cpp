@@ -3,6 +3,7 @@
 #include "concurrency/lock_resources.h"
 #include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
+#include "concurrency/version_index.h"
 #include "store/triple_store.h"
 
 namespace ontodb {
@@ -35,6 +36,14 @@ auto ModifyExecutor::Next(Row* row) -> bool {
     for (const auto& triple : *triples_) {
       if (txn != nullptr) {
         locks->Lock(txn, TripleResource(triple), LockMode::kX, ctx_->GetSession());
+        // Holding the lock, no one can commit a change to this triple before this transaction
+        // ends, so the store now agrees with this transaction's snapshot, or this check fails.
+        if (txn->ChecksConflicts() && ctx_->GetVersions() != nullptr &&
+            ctx_->GetVersions()->LastChange(triple) > txn->GetSnapshot().value_or(0)) {
+          throw TransactionAbortException("txn " + std::to_string(txn->GetId()) +
+                                          ": another transaction committed a change to this "
+                                          "triple after this one began");
+        }
         // With a log, the change is logged before any page it touches; only a
         // change that will happen is logged, or undo would take back a triple
         // this statement never added.

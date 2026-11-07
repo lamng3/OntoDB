@@ -34,6 +34,8 @@ void ApplyIsolation(Database* db, const std::string& level) {
     config.isolation = IsolationLevel::kReadCommitted;
   } else if (level == "rr") {
     config.isolation = IsolationLevel::kRepeatableRead;
+  } else if (level == "si") {
+    config.isolation = IsolationLevel::kSnapshot;
   } else {
     config.isolation = IsolationLevel::kSerializable;
   }
