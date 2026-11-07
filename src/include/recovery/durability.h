@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -9,10 +8,10 @@
 
 #include "common/io_stats.h"
 #include "common/types.h"
+#include "concurrency/version_index.h"
 #include "dictionary/mem_dictionary.h"
 #include "recovery/log_manager.h"
 #include "store/mem_store.h"
-#include "store/recording_store.h"
 
 namespace ontodb {
 
@@ -47,18 +46,21 @@ struct OpenReport {
 };
 
 // Durability for the memory database (PLAN 9). The directory holds `snapshot`
-// and `wal`. Each statement is one transaction: begin, any new dictionary
-// terms, one update record per changed triple, commit. The commit is forced
-// before the statement returns. Opening loads the snapshot and replays the
-// committed transactions logged after it; an uncommitted transaction leaves
-// no trace. A statement that fails partway is undone in memory and logs
-// nothing it needs.
+// and `wal`. A transaction reaches the log whole, when it commits: begin, any
+// new dictionary terms, one update record per changed triple, commit, forced
+// before the commit returns. So a transaction still open has nothing on disk,
+// and undoing one, or a crash during one, needs nothing from the log. Opening
+// loads the snapshot and replays the committed transactions logged after it,
+// in order, each as the next commit in the version index, which is how every
+// commit keeps its timestamp. A snapshot holds the index's whole history, so a
+// checkpoint loses no version. Tags are logged and forced like commits.
 //
 // Updates are logical (page_id is INVALID_PAGE_ID): the memory store has no
 // pages. The disk store's page-oriented recovery is PLAN 8.3 to 8.7.
 class Durability {
  public:
-  Durability(std::filesystem::path dir, MemDictionary* dictionary, MemStore* store, IoStats* stats);
+  Durability(std::filesystem::path dir, MemDictionary* dictionary, MemStore* store,
+             VersionIndex* versions, IoStats* stats);
   ~Durability();
 
   Durability(const Durability&) = delete;
@@ -67,9 +69,10 @@ class Durability {
   // Call once, on an empty dictionary and store.
   auto Open(RecoveryMode mode) -> OpenReport;
 
-  // Runs `body` as one transaction. `body` makes its changes through the
-  // store it is given.
-  void Run(const std::function<void(TripleStore&)>& body);
+  // Logs one transaction's changes and forces them. The caller holds off other commits, so the
+  // log's order is the order of the timestamps.
+  void LogCommit(const std::vector<VersionChange>& changes);
+  void LogTag(const std::string& name, commit_ts_t at);
 
   // Writes a snapshot of the current state and starts an empty log.
   auto Checkpoint() -> std::string;
@@ -87,19 +90,18 @@ class Durability {
   // Open, in steps. Each returns the LSN it reached.
   auto LoadSnapshotIfAny(OpenReport* report) -> lsn_t;
   auto ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* report) -> lsn_t;
-  // Run: begin, new terms, one update per change, commit, forced.
-  void LogTransaction(const std::vector<RecordingStore::Change>& changes);
   // Verify, one check per report line.
-  auto CheckSnapshot(MemDictionary* terms, MemStore* store,
+  auto CheckSnapshot(MemDictionary* terms, MemStore* store, VersionIndex* versions,
                      lsn_t* snapshot_lsn) const -> CheckResult;
   static auto CheckLog(const LogScan& scan) -> CheckResult;
-  auto CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDictionary* terms,
-                   MemStore* store) const -> CheckResult;
+  auto CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDictionary* terms, MemStore* store,
+                   VersionIndex* versions) const -> CheckResult;
   auto CheckInvariants() const -> CheckResult;
 
   std::filesystem::path dir_;
   MemDictionary* dictionary_;
   MemStore* store_;
+  VersionIndex* versions_;
   IoStats* stats_;
 
   std::mutex mu_;

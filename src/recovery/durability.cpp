@@ -1,15 +1,16 @@
 #include "recovery/durability.h"
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #include "common/crash_point.h"
 #include "common/exception.h"
 #include "recovery/snapshot.h"
-#include "store/recording_store.h"
 
 namespace ontodb {
 namespace {
@@ -23,7 +24,8 @@ struct ReplayResult {
 };
 
 // Loads a snapshot into an empty dictionary and store.
-void LoadSnapshot(const Snapshot& snap, Dictionary& dictionary, TripleStore& store) {
+void LoadSnapshot(const Snapshot& snap, Dictionary& dictionary, TripleStore& store,
+                  VersionIndex& versions) {
   for (size_t i = 0; i < snap.terms.size(); i++) {
     if (dictionary.Insert(snap.terms[i]) != i + 1) {
       throw SnapshotCorruptionException("snapshot: term " + std::to_string(i + 1) +
@@ -33,14 +35,15 @@ void LoadSnapshot(const Snapshot& snap, Dictionary& dictionary, TripleStore& sto
   for (const auto& triple : snap.triples) {
     store.Insert(triple);
   }
+  versions.Restore(snap.spans, snap.tags, snap.clock);
 }
 
 // Applies the records logged after `after_lsn`. Terms apply in order whatever
 // their transaction's outcome: the dictionary only grows, and a term no
 // committed triple uses is invisible. Updates apply only for committed
-// transactions, in log order.
+// transactions, each at its commit record, as the next commit in the index.
 auto Replay(const std::vector<LogRecord>& records, lsn_t after_lsn, Dictionary& dictionary,
-            TripleStore& store) -> ReplayResult {
+            TripleStore& store, VersionIndex& versions) -> ReplayResult {
   ReplayResult result;
   std::set<txn_id_t> begun;
   std::set<txn_id_t> committed;
@@ -57,11 +60,32 @@ auto Replay(const std::vector<LogRecord>& records, lsn_t after_lsn, Dictionary& 
       committed.insert(record.GetTxnId());
     }
   }
+  std::map<txn_id_t, std::vector<VersionChange>> pending;
   for (const auto& record : records) {
     if (record.GetLsn() <= after_lsn) {
       continue;
     }
-    if (record.GetType() == LogRecordType::kTerm) {
+    if (record.GetType() == LogRecordType::kTag) {
+      try {
+        versions.Tag(record.GetTagName(), record.GetTagTimestamp());
+      } catch (const std::invalid_argument& ex) {
+        throw LogCorruptionException("wal: lsn " + std::to_string(record.GetLsn()) + ": " +
+                                     ex.what());
+      }
+    } else if (record.GetType() == LogRecordType::kCommit) {
+      const auto found = pending.find(record.GetTxnId());
+      if (found != pending.end()) {
+        for (const auto& change : found->second) {
+          if (change.is_insert) {
+            store.Insert(change.triple);
+          } else {
+            store.Delete(change.triple);
+          }
+        }
+        versions.Apply(found->second);
+        pending.erase(found);
+      }
+    } else if (record.GetType() == LogRecordType::kTerm) {
       const term_id_t id = record.GetTermId();
       if (id <= dictionary.Size()) {
         if (dictionary.Lookup(id) != record.GetTermText()) {
@@ -75,11 +99,7 @@ auto Replay(const std::vector<LogRecord>& records, lsn_t after_lsn, Dictionary& 
       }
     } else if (record.GetType() == LogRecordType::kUpdate &&
                committed.contains(record.GetTxnId())) {
-      if (record.IsInsert()) {
-        store.Insert(record.GetTriple());
-      } else {
-        store.Delete(record.GetTriple());
-      }
+      pending[record.GetTxnId()].push_back({record.IsInsert(), record.GetTriple()});
     }
   }
   result.committed = committed.size();
@@ -161,8 +181,12 @@ auto OpenReport::ToString() const -> std::string {
 }
 
 Durability::Durability(std::filesystem::path dir, MemDictionary* dictionary, MemStore* store,
-                       IoStats* stats)
-    : dir_(std::move(dir)), dictionary_(dictionary), store_(store), stats_(stats) {}
+                       VersionIndex* versions, IoStats* stats)
+    : dir_(std::move(dir))
+    , dictionary_(dictionary)
+    , store_(store)
+    , versions_(versions)
+    , stats_(stats) {}
 
 Durability::~Durability() = default;
 
@@ -192,7 +216,7 @@ auto Durability::LoadSnapshotIfAny(OpenReport* report) -> lsn_t {
     return 0;
   }
   const Snapshot snap = ReadSnapshot(SnapshotPath());
-  LoadSnapshot(snap, *dictionary_, *store_);
+  LoadSnapshot(snap, *dictionary_, *store_, *versions_);
   report->had_snapshot = true;
   report->snapshot_lsn = snap.lsn;
   report->snapshot_triples = snap.triples.size();
@@ -201,7 +225,7 @@ auto Durability::LoadSnapshotIfAny(OpenReport* report) -> lsn_t {
 }
 
 auto Durability::ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* report) -> lsn_t {
-  const ReplayResult replay = Replay(scan.records, snapshot_lsn, *dictionary_, *store_);
+  const ReplayResult replay = Replay(scan.records, snapshot_lsn, *dictionary_, *store_, *versions_);
   report->log_records = replay.records;
   report->committed = replay.committed;
   report->uncommitted = replay.uncommitted;
@@ -211,19 +235,14 @@ auto Durability::ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* 
   return replay.last_lsn;
 }
 
-void Durability::Run(const std::function<void(TripleStore&)>& body) {
+void Durability::LogTag(const std::string& name, commit_ts_t at) {
   std::lock_guard<std::mutex> guard(mu_);
-  RecordingStore recording(store_);
-  try {
-    body(recording);
-    LogTransaction(recording.Changes());
-  } catch (...) {
-    recording.Undo();
-    throw;
-  }
+  auto record = LogRecord::Tag(name, at);
+  log_->Flush(log_->Append(&record), true);
 }
 
-void Durability::LogTransaction(const std::vector<RecordingStore::Change>& changes) {
+void Durability::LogCommit(const std::vector<VersionChange>& changes) {
+  std::lock_guard<std::mutex> guard(mu_);
   const size_t terms = dictionary_->Size();
   if (changes.empty() && terms == logged_terms_) {
     return;  // nothing to make durable
@@ -255,7 +274,7 @@ auto Durability::Checkpoint() -> std::string {
   std::lock_guard<std::mutex> guard(mu_);
   const lsn_t lsn = log_->NextLsn() - 1;
   log_->Flush(lsn, true);
-  WriteSnapshot(SnapshotPath(), *dictionary_, *store_, lsn, next_txn_);
+  WriteSnapshot(SnapshotPath(), *dictionary_, *versions_, lsn, next_txn_);
   logged_terms_ = dictionary_->Size();
   // A crash here leaves the new snapshot and the old log. Replay skips every
   // record at or below the snapshot's LSN, so the old log does no harm.
@@ -264,8 +283,8 @@ auto Durability::Checkpoint() -> std::string {
   std::filesystem::resize_file(WalPath(), 0);
   StartLog(lsn + 1);
   std::ostringstream out;
-  out << "checkpoint at lsn " << lsn << ": " << dictionary_->Size() << " terms, " << store_->Size()
-      << " triples; wal reset";
+  out << "checkpoint at lsn " << lsn << ": " << dictionary_->Size() << " terms, "
+      << versions_->Count(versions_->Clock()) << " triples; wal reset";
   return out.str();
 }
 
@@ -274,12 +293,13 @@ auto Durability::Verify() -> std::string {
   log_->Flush(log_->NextLsn() - 1, true);
   MemDictionary rebuilt_terms;
   MemStore rebuilt;
+  VersionIndex rebuilt_versions;
   lsn_t snapshot_lsn = 0;
   const LogScan scan = ScanLog(WalPath());
   const std::vector<CheckResult> checks = {
-      CheckSnapshot(&rebuilt_terms, &rebuilt, &snapshot_lsn),
+      CheckSnapshot(&rebuilt_terms, &rebuilt, &rebuilt_versions, &snapshot_lsn),
       CheckLog(scan),
-      CheckReplay(scan, snapshot_lsn, &rebuilt_terms, &rebuilt),
+      CheckReplay(scan, snapshot_lsn, &rebuilt_terms, &rebuilt, &rebuilt_versions),
       CheckInvariants(),
   };
   std::ostringstream out;
@@ -292,14 +312,14 @@ auto Durability::Verify() -> std::string {
   return out.str();
 }
 
-auto Durability::CheckSnapshot(MemDictionary* terms, MemStore* store,
+auto Durability::CheckSnapshot(MemDictionary* terms, MemStore* store, VersionIndex* versions,
                                lsn_t* snapshot_lsn) const -> CheckResult {
   if (!std::filesystem::exists(SnapshotPath())) {
     return {true, "snapshot: none"};
   }
   try {
     const Snapshot snap = ReadSnapshot(SnapshotPath());
-    LoadSnapshot(snap, *terms, *store);
+    LoadSnapshot(snap, *terms, *store, *versions);
     *snapshot_lsn = snap.lsn;
     std::ostringstream line;
     line << "snapshot: ok (lsn " << snap.lsn << ", " << snap.terms.size() << " terms, "
@@ -320,9 +340,9 @@ auto Durability::CheckLog(const LogScan& scan) -> CheckResult {
 }
 
 auto Durability::CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDictionary* terms,
-                             MemStore* store) const -> CheckResult {
+                             MemStore* store, VersionIndex* versions) const -> CheckResult {
   try {
-    Replay(scan.records, snapshot_lsn, *terms, *store);
+    Replay(scan.records, snapshot_lsn, *terms, *store, *versions);
   } catch (const StorageException& ex) {
     return {false, std::string("replay: FAILED: ") + ex.what()};
   }
@@ -330,13 +350,34 @@ auto Durability::CheckReplay(const LogScan& scan, lsn_t snapshot_lsn, MemDiction
   for (term_id_t id = 1; terms_match && id <= terms->Size(); id++) {
     terms_match = terms->Lookup(id) == dictionary_->Lookup(id);
   }
-  const bool triples_match = AllTriples(*store) == AllTriples(*store_);
-  if (terms_match && triples_match) {
-    return {true,
-            "replay: matches the live database (" + std::to_string(store->Size()) + " triples)"};
+  // Against the committed state: the live store may hold what an open transaction has not
+  // committed.
+  auto committed = versions_->Scan({}, versions_->Clock());
+  std::sort(committed.begin(), committed.end());
+  const bool triples_match = AllTriples(*store) == committed;
+  const auto same_spans = [](const auto& a, const auto& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) {
+             return x.triple == y.triple && x.span == y.span;
+           });
+  };
+  const auto same_tags = [](const auto& a, const auto& b) {
+    return a.size() == b.size() &&
+           std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) {
+             return x.name == y.name && x.ts == y.ts;
+           });
+  };
+  const bool history_match = versions->Clock() == versions_->Clock() &&
+                             same_spans(versions->Dump(), versions_->Dump()) &&
+                             same_tags(versions->Tags(), versions_->Tags());
+  if (terms_match && triples_match && history_match) {
+    return {true, "replay: matches the live database (" + std::to_string(store->Size()) +
+                      " triples, " + std::to_string(versions->SpanCount()) + " spans, " +
+                      std::to_string(versions->Tags().size()) + " versions)"};
   }
   return {false, std::string("replay: MISMATCH (") + (terms_match ? "" : "terms ") +
-                     (triples_match ? "" : "triples ") + "differ from the live database)"};
+                     (triples_match ? "" : "triples ") + (history_match ? "" : "history ") +
+                     "differ from the live database)"};
 }
 
 auto Durability::CheckInvariants() const -> CheckResult {

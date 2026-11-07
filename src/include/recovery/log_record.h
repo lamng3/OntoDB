@@ -29,6 +29,7 @@ namespace ontodb {
 //     checkpoint  u32 n, then n x i64 txn_id
 //     term        u64 term_id, u32 n, then n bytes of canonical spelling
 //     page        i32 page_id, then the page's PAGE_SIZE - 8 bytes after its pageLSN
+//     tag         u64 commit timestamp, u32 n, then n bytes of the version's name
 //     begin, commit, abort: nothing
 //
 // A page record (PLAN 8.3) is a physical after-image: redo copies it back
@@ -43,7 +44,8 @@ enum class LogRecordType {
   kClr,
   kCheckpoint,
   kTerm,
-  kPage
+  kPage,
+  kTag
 };
 
 // A record whose bytes are all present but wrong: bad checksum, bad type, or
@@ -73,6 +75,8 @@ class LogRecord {
   auto GetTermId() const -> term_id_t { return term_id_; }
   auto GetTermText() const -> const std::string& { return term_text_; }
   auto GetImage() const -> const std::string& { return image_; }  // a page record's bytes
+  auto GetTagName() const -> const std::string& { return term_text_; }
+  auto GetTagTimestamp() const -> uint64_t { return term_id_; }
 
   void SetLsn(lsn_t lsn) { lsn_ = lsn; }
   void SetPrevLsn(lsn_t lsn) { prev_lsn_ = lsn; }
@@ -93,6 +97,7 @@ class LogRecord {
   static auto Term(txn_id_t txn, term_id_t id, const std::string& text) -> LogRecord;
   // `bytes` is the page after its pageLSN: PAGE_SIZE - 8 bytes.
   static auto Page(page_id_t page, const char* bytes) -> LogRecord;
+  static auto Tag(const std::string& name, uint64_t timestamp) -> LogRecord;
 
  private:
   LogRecordType type_{LogRecordType::kInvalid};

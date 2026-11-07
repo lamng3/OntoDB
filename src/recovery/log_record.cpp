@@ -78,6 +78,8 @@ auto TypeName(LogRecordType type) -> const char* {
       return "term";
     case LogRecordType::kPage:
       return "page";
+    case LogRecordType::kTag:
+      return "tag";
     case LogRecordType::kInvalid:
       break;
   }
@@ -99,6 +101,7 @@ auto LogRecord::Size() const -> uint32_t {
       size += 4 + static_cast<uint32_t>(active_.size()) * 8;
       break;
     case LogRecordType::kTerm:
+    case LogRecordType::kTag:
       size += 8 + 4 + static_cast<uint32_t>(term_text_.size());
       break;
     case LogRecordType::kPage:
@@ -132,7 +135,7 @@ void LogRecord::SerializeTo(char* dest) const {
     for (const txn_id_t txn : active_) {
       out.Put<int64_t>(txn);
     }
-  } else if (type_ == LogRecordType::kTerm) {
+  } else if (type_ == LogRecordType::kTerm || type_ == LogRecordType::kTag) {
     out.Put<uint64_t>(term_id_);
     out.Put<uint32_t>(static_cast<uint32_t>(term_text_.size()));
     out.PutBytes(term_text_);
@@ -167,7 +170,7 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
   in.Get<uint32_t>();
   LogRecord record;
   const auto type = in.Get<uint8_t>();
-  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kPage)) {
+  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kTag)) {
     throw LogCorruptionException("log record: unknown type " + std::to_string(type));
   }
   record.type_ = static_cast<LogRecordType>(type);
@@ -188,7 +191,7 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
     for (uint32_t i = 0; i < n; i++) {
       record.active_.push_back(in.Get<int64_t>());
     }
-  } else if (record.type_ == LogRecordType::kTerm) {
+  } else if (record.type_ == LogRecordType::kTerm || record.type_ == LogRecordType::kTag) {
     record.term_id_ = in.Get<uint64_t>();
     const auto n = in.Get<uint32_t>();
     record.term_text_ = in.GetBytes(n);
@@ -213,6 +216,8 @@ auto LogRecord::ToString() const -> std::string {
     }
   } else if (type_ == LogRecordType::kCheckpoint) {
     out << " active " << active_.size();
+  } else if (type_ == LogRecordType::kTag) {
+    out << " " << term_text_ << " at " << term_id_;
   } else if (type_ == LogRecordType::kTerm) {
     out << " " << term_id_ << " " << term_text_;
   } else if (type_ == LogRecordType::kPage) {
@@ -272,6 +277,14 @@ auto LogRecord::Term(txn_id_t txn, term_id_t id, const std::string& text) -> Log
   record.txn_id_ = txn;
   record.term_id_ = id;
   record.term_text_ = text;
+  return record;
+}
+
+auto LogRecord::Tag(const std::string& name, uint64_t timestamp) -> LogRecord {
+  LogRecord record;
+  record.type_ = LogRecordType::kTag;
+  record.term_id_ = timestamp;
+  record.term_text_ = name;
   return record;
 }
 

@@ -48,10 +48,9 @@ class BufferPoolManager;
 // its own implicit transaction. Statements lock triples through the lock
 // manager on both backends (strict two-phase locking, deadlock detection);
 // the isolation levels are described in execution/executors. \load takes an
-// exclusive lock on the whole database instead of one lock per triple. A
-// persistent database does not accept \begin yet: its log commits each
-// statement on its own. Switching backends waits for running statements and
-// is refused while a transaction is open.
+// exclusive lock on the whole database instead of one lock per triple.
+// Switching backends waits for running statements and is refused while a
+// transaction is open.
 //
 // MVCC beside the locks: every commit also goes into a VersionIndex, under the next timestamp, and
 // the index is what a snapshot reads. At \\set isolation si a transaction reads the commit it began
@@ -99,6 +98,9 @@ class Database {
   auto Checkpoint() -> std::string;
   auto Verify() -> std::string;
   void Crash();
+
+  // Names the newest commit, for good, and returns its timestamp. Durable before it returns.
+  auto Tag(const std::string& name) -> commit_ts_t;
 
  private:
   struct IndexedBackend;

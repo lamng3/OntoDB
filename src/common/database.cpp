@@ -112,8 +112,26 @@ void Database::CommitTransaction(Transaction* txn) {
   for (const auto& write : txn->GetWriteSet()) {
     changes.push_back({write.is_insert, write.triple});
   }
+  if (durability_ && !changes.empty()) {
+    try {
+      durability_->LogCommit(changes);
+    } catch (...) {
+      txns_->Abort(txn);  // not durable, so it did not happen
+      throw;
+    }
+  }
   versions_.Apply(changes);
   txns_->Commit(txn);
+}
+
+auto Database::Tag(const std::string& name) -> commit_ts_t {
+  std::lock_guard<std::mutex> guard(commit_mu_);
+  const bool had = versions_.FindTag(name).has_value();
+  const commit_ts_t at = versions_.Tag(name);  // refuses a name another commit has
+  if (durability_ && !had) {
+    durability_->LogTag(name, at);
+  }
+  return at;
 }
 
 auto Database::CurrentStatistics() -> std::shared_ptr<const Statistics> {
@@ -232,8 +250,8 @@ void Database::SetBackend(BackendKind kind) {
 auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
                     OpenReport* report) -> std::unique_ptr<Database> {
   auto db = std::make_unique<Database>();
-  db->durability_ =
-      std::make_unique<Durability>(dir, db->dictionary_.get(), db->store_.get(), &db->stats_);
+  db->durability_ = std::make_unique<Durability>(dir, db->dictionary_.get(), db->store_.get(),
+                                                 &db->versions_, &db->stats_);
   const OpenReport opened = db->durability_->Open(mode);
   if (report != nullptr) {
     *report = opened;
@@ -252,28 +270,17 @@ auto Database::Load(const std::string& path) -> LoadStats {
   LoadStats stats;
   try {
     locks_.Lock(txn, DatabaseResource(), LockMode::kX, nullptr);
-    if (!durability_) {
-      RecordingStore recording(GetStore());
-      try {
-        stats = RdfLoader().Load(path, *GetDictionary(), recording);
-      } catch (...) {
-        recording.Undo();
-        throw;
-      }
-      for (const auto& change : recording.Changes()) {
-        txn->GetWriteSet().push_back({change.is_insert, change.triple});
-      }
-    } else {
-      durability_->Run([&](TripleStore& store) {
-        stats = RdfLoader().Load(path, *dictionary_, store);
-        const auto& changes = static_cast<RecordingStore&>(store).Changes();
-        for (const auto& change : changes) {
-          txn->GetWriteSet().push_back({change.is_insert, change.triple});
-        }
-      });
+    RecordingStore recording(GetStore());
+    try {
+      stats = RdfLoader().Load(path, *GetDictionary(), recording);
+    } catch (...) {
+      recording.Undo();
+      throw;
+    }
+    for (const auto& change : recording.Changes()) {
+      txn->GetWriteSet().push_back({change.is_insert, change.triple});
     }
   } catch (...) {
-    txn->GetWriteSet().clear();  // taken back already
     txns_->Abort(txn);
     throw;
   }
@@ -322,32 +329,22 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
       // the scan found rows or even ran.
       locks_.Lock(txn, DatabaseResource(), LockMode::kS, session);
     }
-    if (!durability_ || !is_update) {
-      std::unique_ptr<SnapshotStore> snapshot;
-      if (!is_update && txn->GetSnapshot().has_value()) {
-        snapshot =
-            std::make_unique<SnapshotStore>(&versions_, *txn->GetSnapshot(), GetStore(), txn);
-      }
-      ExecutorContext ctx(snapshot ? snapshot.get() : GetStore(), GetDictionary(), &config, txn,
-                          txns_.get(), &locks_, bpm_, &stats_, &trace_, session);
-      ctx.SetVersions(&versions_);
-      std::shared_ptr<SnapshotEntailment> held;
-      if (!is_update && snapshot && config.entail) {
-        held = EntailmentAt(*txn->GetSnapshot(), txn);
-        ctx.SetEntailment(held->index.get());
-      } else if (!is_update) {
-        ctx.SetEntailment(EntailmentFor(config));
-      }
-      const auto statistics = is_update ? nullptr : CurrentStatistics();
-      result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
-    } else {
-      durability_->Run([&](TripleStore& store) {
-        ExecutorContext ctx(&store, dictionary_.get(), &config, txn, txns_.get(), &locks_, bpm_,
-                            &stats_, &trace_, session);
-        ctx.SetVersions(&versions_);
-        result = ExecutionEngine(&ctx).Execute(bound);
-      });
+    std::unique_ptr<SnapshotStore> snapshot;
+    if (!is_update && txn->GetSnapshot().has_value()) {
+      snapshot = std::make_unique<SnapshotStore>(&versions_, *txn->GetSnapshot(), GetStore(), txn);
     }
+    ExecutorContext ctx(snapshot ? snapshot.get() : GetStore(), GetDictionary(), &config, txn,
+                        txns_.get(), &locks_, bpm_, &stats_, &trace_, session);
+    ctx.SetVersions(&versions_);
+    std::shared_ptr<SnapshotEntailment> held;
+    if (!is_update && snapshot && config.entail) {
+      held = EntailmentAt(*txn->GetSnapshot(), txn);
+      ctx.SetEntailment(held->index.get());
+    } else if (!is_update) {
+      ctx.SetEntailment(EntailmentFor(config));
+    }
+    const auto statistics = is_update ? nullptr : CurrentStatistics();
+    result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
   } catch (const TransactionAbortException&) {
     txns_->Abort(txn);
     if (!implicit) {
@@ -456,11 +453,6 @@ auto Database::TreeDebug(const std::string& index, bool dot) const -> std::strin
 }
 
 void Database::Begin() {
-  if (durability_) {
-    throw std::runtime_error(
-        "a persistent database runs each statement as its own transaction; \\begin is not "
-        "supported there yet");
-  }
   std::shared_lock<std::shared_mutex> backend(backend_mu_);
   std::lock_guard<std::mutex> guard(sessions_mu_);
   auto& slot = current_[std::this_thread::get_id()];
@@ -476,7 +468,13 @@ void Database::Commit() {
   if (txn == nullptr) {
     throw std::runtime_error("no transaction to commit");
   }
-  CommitTransaction(txn);
+  try {
+    CommitTransaction(txn);
+  } catch (...) {
+    std::lock_guard<std::mutex> guard(sessions_mu_);
+    current_.erase(std::this_thread::get_id());
+    throw;
+  }
   std::lock_guard<std::mutex> guard(sessions_mu_);
   current_.erase(std::this_thread::get_id());
 }
@@ -508,6 +506,7 @@ auto Database::LogDebug(size_t n) const -> std::string {
 
 auto Database::Checkpoint() -> std::string {
   if (durability_) {
+    std::lock_guard<std::mutex> guard(commit_mu_);
     return durability_->Checkpoint();
   }
   throw NotImplementedException("PLAN 8.5: CheckpointManager::Checkpoint");
@@ -515,6 +514,7 @@ auto Database::Checkpoint() -> std::string {
 
 auto Database::Verify() -> std::string {
   if (durability_) {
+    std::lock_guard<std::mutex> guard(commit_mu_);
     return durability_->Verify();
   }
   return "error: nothing on disk to verify; start the shell with a directory (ontodb <dir>)";
