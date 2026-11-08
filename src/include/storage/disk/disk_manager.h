@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <set>
 #include <string>
 
 #include "common/io_stats.h"
@@ -18,13 +19,18 @@ namespace ontodb {
 // Report every read with stats->PageRead and every write with stats->PageWrite
 // when stats is non-null. Trace component "disk".
 //
-// The file's length is the allocation record: AllocatePage grows the file by
-// one zero page, so a restart sees every page allocated before it, and page 0
-// is an ordinary page (the catalog uses it). DeallocatePage does not reuse the
-// id; the file only grows. WritePage does not fsync; ShutDown does. Writing a
-// page past the end grows the file to cover it, and reading one returns zeros,
-// so a never-written page reads as zeros whether or not it was allocated. A
-// negative page id, or any call after ShutDown, throws StorageException.
+// The file's length is the high-water mark: AllocatePage grows the file by one
+// zero page when nothing freed is waiting, so a restart sees every page that
+// was still allocated, and page 0 is an ordinary page (the catalog uses it).
+// DeallocatePage hands the id out again. A freed page at the end of the file
+// is cut off, and so is each freed page that then becomes the end, so deleting
+// the tail shrinks the file. A hole in the middle stays allocated until this
+// process reuses it: the free list is not written down, because a crash must
+// not hand out a page the log may still redo. WritePage does not fsync;
+// ShutDown does. Writing a page past the end grows the file to cover it, and
+// reading one returns zeros, so a never-written page reads as zeros whether or
+// not it was allocated. A negative page id, or any call after ShutDown, throws
+// StorageException.
 class DiskManager {
  public:
   explicit DiskManager(std::string db_file, IoStats* stats = nullptr, TraceSink* trace = nullptr);
@@ -51,6 +57,7 @@ class DiskManager {
   TraceSink* trace_;
   int fd_{-1};
   std::mutex alloc_mu_;
+  std::set<page_id_t> free_;  // ids DeallocatePage handed back, lowest first
   std::atomic<page_id_t> num_pages_{0};
   std::atomic<int> num_reads_{0};
   std::atomic<int> num_writes_{0};

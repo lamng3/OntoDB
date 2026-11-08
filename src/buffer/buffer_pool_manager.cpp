@@ -1,6 +1,7 @@
 #include "buffer/buffer_pool_manager.h"
 
 #include <future>
+#include <limits>
 #include <sstream>
 
 #include "common/crash_point.h"
@@ -31,7 +32,13 @@ BufferPoolManager::BufferPoolManager(size_t pool_size, DiskManager* disk_manager
   }
 }
 
-BufferPoolManager::~BufferPoolManager() = default;
+BufferPoolManager::~BufferPoolManager() {
+  try {
+    ReclaimRetired();
+  } catch (const std::exception&) {
+    // Shutting down. A page left retired is a leak, not a torn write.
+  }
+}
 
 namespace {
 
@@ -144,6 +151,7 @@ auto BufferPoolManager::NewPage(page_id_t* page_id) -> Page* {
   page.SetPageId(id);
   page.IncrementPin();
   shard.page_table[id] = frame_id;
+  shard.deleted.erase(id);  // this id may be a page DeletePage retired
   shard.replacer.RecordAccess(frame_id);
   shard.replacer.SetEvictable(frame_id, false);
   if (shards_.size() > 1) {
@@ -292,10 +300,49 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
     page.Reset();  // a deleted page's bytes are discarded, not written
     shard.page_table.erase(it);
   }
-  disk_manager_->DeallocatePage(page_id);
   shard.deleted.insert(page_id);
   Trace("delete page " + std::to_string(page_id));
+  if (log_manager_ == nullptr) {
+    disk_manager_->DeallocatePage(page_id);
+    return true;
+  }
+  // The log record that forgot this page is already appended (the caller
+  // dropped the parent guard first). Keep the bytes until that record is
+  // durable, then hand the id out again.
+  const lsn_t next = log_manager_->NextLsn();
+  {
+    std::lock_guard<std::mutex> retired(retired_mu_);
+    retired_.push_back(Retired{page_id, next > 0 ? next - 1 : 0});
+  }
   return true;
+}
+
+void BufferPoolManager::ReclaimRetired() {
+  if (log_manager_ != nullptr) {
+    const lsn_t flushable = log_manager_->FlushableLsn();
+    if (flushable > 0 && log_manager_->GetPersistentLsn() < flushable) {
+      log_manager_->Flush(flushable, true);
+    }
+  }
+  const lsn_t durable = log_manager_ == nullptr ? std::numeric_limits<lsn_t>::max()
+                                                : log_manager_->GetPersistentLsn();
+  std::vector<page_id_t> ready;
+  {
+    std::lock_guard<std::mutex> retired(retired_mu_);
+    std::vector<Retired> keep;
+    ready.reserve(retired_.size());
+    for (const auto& item : retired_) {
+      if (item.need <= durable) {
+        ready.push_back(item.page);
+      } else {
+        keep.push_back(item);
+      }
+    }
+    retired_.swap(keep);
+  }
+  for (const page_id_t page_id : ready) {
+    disk_manager_->DeallocatePage(page_id);
+  }
 }
 
 auto BufferPoolManager::GetPinnedFrameCount() const -> size_t {
@@ -326,6 +373,7 @@ auto BufferPoolManager::BeginGroup() -> lsn_t {
 void BufferPoolManager::EndGroup(lsn_t token) {
   if (log_manager_ != nullptr) {
     log_manager_->EndGroup(token);
+    ReclaimRetired();  // the group's records can be flushed now
   }
 }
 

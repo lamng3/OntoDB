@@ -117,8 +117,12 @@ class BufferPoolManager {
 
   auto ShardOf(page_id_t page_id) const -> Shard&;
   auto TakeFrame(Shard& shard, frame_id_t* frame_id) -> bool;  // requires shard.mu
-  void WriteBack(Page* page);                                  // requires the page's shard latch
-  void RunIo(bool is_write, Page* page);                       // requires the page's shard latch
+  // Frees retired pages whose removing log record is durable. A page freed
+  // under a log stays retired until then, so a crash cannot reuse an id redo
+  // still has to restore.
+  void ReclaimRetired();
+  void WriteBack(Page* page);             // requires the page's shard latch
+  void RunIo(bool is_write, Page* page);  // requires the page's shard latch
   void Trace(const std::string& message) const;
   auto NullReason(page_id_t page_id) const -> std::string;
 
@@ -131,6 +135,13 @@ class BufferPoolManager {
 
   std::vector<std::unique_ptr<Shard>> shards_;
   std::unique_ptr<DiskScheduler> scheduler_;
+
+  struct Retired {
+    page_id_t page{INVALID_PAGE_ID};
+    lsn_t need{0};  // durable once the log has reached this LSN
+  };
+  std::mutex retired_mu_;
+  std::vector<Retired> retired_;
 };
 
 // One multi-page change, logged atomically (a mini-transaction). Every page

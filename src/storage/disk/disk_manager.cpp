@@ -81,16 +81,18 @@ void DiskManager::WritePage(page_id_t page_id, const char* page_data) {
     }
     done += static_cast<size_t>(n);
   }
-  // A write past the end grew the file; later allocations must not hand out
-  // this id.
-  page_id_t known = num_pages_.load();
-  while (known <= page_id && !num_pages_.compare_exchange_weak(known, page_id + 1)) {
-  }
   num_writes_.fetch_add(1, std::memory_order_relaxed);
   if (stats_ != nullptr) {
     stats_->PageWrite();
   }
   Trace("write", page_id);
+  // A write past the end grew the file; later allocations must not hand out
+  // this id. A write of a freed id is that page coming back to life.
+  std::lock_guard<std::mutex> guard(alloc_mu_);
+  free_.erase(page_id);
+  if (page_id >= num_pages_.load()) {
+    num_pages_.store(page_id + 1);
+  }
 }
 
 void DiskManager::ReadPage(page_id_t page_id, char* page_data) {
@@ -121,6 +123,12 @@ void DiskManager::ReadPage(page_id_t page_id, char* page_data) {
 
 auto DiskManager::AllocatePage() -> page_id_t {
   std::lock_guard<std::mutex> guard(alloc_mu_);
+  if (!free_.empty()) {
+    const page_id_t page_id = *free_.begin();
+    free_.erase(free_.begin());
+    Trace("allocate", page_id);
+    return page_id;
+  }
   const page_id_t page_id = num_pages_.load();
   if (page_id == std::numeric_limits<page_id_t>::max()) {
     throw StorageException("database file " + db_file_ + " is full");
@@ -137,6 +145,21 @@ auto DiskManager::AllocatePage() -> page_id_t {
 
 void DiskManager::DeallocatePage(page_id_t page_id) {
   CheckUsable(page_id);
+  std::lock_guard<std::mutex> guard(alloc_mu_);
+  if (page_id >= num_pages_.load() || free_.contains(page_id)) {
+    Trace("deallocate", page_id);
+    return;
+  }
+  free_.insert(page_id);
+  // Cut the tail. A freed page that the cut then exposes is cut too, so a
+  // database that drops its last pages gets the file back.
+  while (num_pages_.load() > 0 && free_.contains(num_pages_.load() - 1)) {
+    free_.erase(num_pages_.load() - 1);
+    num_pages_.store(num_pages_.load() - 1);
+  }
+  if (::ftruncate(fd_, Offset(num_pages_.load())) != 0) {
+    throw StorageException(ErrnoText("cannot shrink", db_file_));
+  }
   Trace("deallocate", page_id);
 }
 

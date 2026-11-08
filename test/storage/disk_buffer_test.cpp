@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <future>
 #include <sstream>
 #include <stdexcept>
@@ -62,22 +63,26 @@ TEST(P1_1_DiskManager, ReadWriteAndRestart) {
   EXPECT_EQ(back, image);
 }
 
-TEST(P1_1_DiskManager, IdsSurviveRestartAndAreNeverReused) {
+TEST(P1_1_DiskManager, FreedIdsAreReusedAndTheTailShrinks) {
   test::TempDir dir;
   const auto path = (dir.path() / "db").string();
   {
     DiskManager disk(path);
     EXPECT_EQ(disk.AllocatePage(), 0);  // page 0 is an ordinary page
     EXPECT_EQ(disk.AllocatePage(), 1);
+    EXPECT_EQ(disk.AllocatePage(), 2);
     disk.DeallocatePage(1);
-    EXPECT_EQ(disk.AllocatePage(), 2);  // a freed id is not handed out again
+    EXPECT_EQ(disk.AllocatePage(), 1);  // a hole is handed out before the file grows
+    disk.DeallocatePage(1);
+    disk.DeallocatePage(2);  // the tail, and then the hole that becomes the tail
     disk.ShutDown();
   }
+  EXPECT_EQ(std::filesystem::file_size(path), static_cast<std::uintmax_t>(PAGE_SIZE));
   DiskManager again(path);
   std::array<char, PAGE_SIZE> page{};
-  again.ReadPage(2, page.data());  // allocated, never written: zeros
+  again.ReadPage(0, page.data());
   EXPECT_EQ(page, (std::array<char, PAGE_SIZE>{}));
-  EXPECT_EQ(again.AllocatePage(), 3);
+  EXPECT_EQ(again.AllocatePage(), 1);  // the cut ids are gone with the file
 }
 
 TEST(P1_1_DiskManager, WritePastTheEndGrowsTheFile) {
