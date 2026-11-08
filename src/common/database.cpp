@@ -522,6 +522,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
     result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
   } catch (const TransactionAbortException&) {
     txns_->Abort(txn);
+    InvalidateStatistics();
     if (!implicit) {
       std::lock_guard<std::mutex> guard(sessions_mu_);
       current_.erase(std::this_thread::get_id());
@@ -530,6 +531,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   } catch (...) {
     if (implicit) {
       txns_->Abort(txn);
+      InvalidateStatistics();
     }
     throw;
   }
@@ -538,6 +540,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   }
   if (is_update) {
     data_version_++;
+    InvalidateStatistics();
   }
   return result;
 }
@@ -661,6 +664,7 @@ void Database::Abort() {
     throw std::runtime_error("no transaction to abort");
   }
   txns_->Abort(txn);
+  InvalidateStatistics();
   std::lock_guard<std::mutex> guard(sessions_mu_);
   current_.erase(std::this_thread::get_id());
 }

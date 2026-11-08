@@ -130,9 +130,10 @@ class Database {
  private:
   struct IndexedBackend;
 
-  // The statistics the optimizer plans with: collected on first use after a
-  // load or a backend switch, and not refreshed by updates (like a table not
-  // re-ANALYZEd). Sessions share one immutable snapshot.
+  // The statistics the optimizer plans with. Collected when missing, and dropped
+  // when the store changes (a load, an update, an abort that undoes one, or a
+  // backend switch), so the next plan sees the new counts. Sessions share one
+  // immutable snapshot until that happens.
   auto CurrentStatistics() -> std::shared_ptr<const Statistics>;
   void InvalidateStatistics();
   auto CurrentTransaction() -> Transaction*;       // this thread's explicit transaction, or null

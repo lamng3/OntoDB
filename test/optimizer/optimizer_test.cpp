@@ -264,6 +264,24 @@ TEST(P5_4_JoinAlgorithm, AutoProbesSmallOuterHashesLargeOuter) {
   EXPECT_EQ(CollectRows(plan.get(), &ctx).size(), 50u);
 }
 
+TEST(Statistics, AnUpdateAndAnAbortRefreshTheEstimate) {
+  Database db;
+  const char* scan = "SELECT ?s ?p ?o WHERE { ?s ?p ?o }";
+  EXPECT_NE(db.ExplainAnalyze(scan).find("estimated 0"), std::string::npos);
+  db.Execute("INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/b> }", nullptr);
+  EXPECT_NE(db.ExplainAnalyze(scan).find("estimated 1"), std::string::npos);
+
+  db.Begin();
+  db.Execute("INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/c> }", nullptr);
+  db.Abort();
+  const auto after_abort = db.ExplainAnalyze(scan);
+  EXPECT_NE(after_abort.find("estimated 1"), std::string::npos) << after_abort;
+  EXPECT_EQ(after_abort.find("estimated 2"), std::string::npos) << after_abort;
+
+  db.Execute("DELETE DATA { <http://ex/a> <http://ex/p> <http://ex/b> }", nullptr);
+  EXPECT_NE(db.ExplainAnalyze(scan).find("estimated 0"), std::string::npos);
+}
+
 TEST(P5_5_ExplainAnalyze, PrintsEstimateAndActual) {
   Database db;
   db.Load(test::DataFile("tiny.ttl").string());
