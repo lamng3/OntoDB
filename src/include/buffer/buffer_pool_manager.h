@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "buffer/lru_k_replacer.h"
@@ -80,12 +81,19 @@ class BufferPoolManager {
   auto DeletePage(page_id_t page_id) -> bool;
   auto GetPinnedFrameCount() const -> size_t;
   auto GetPoolSize() const -> size_t { return pool_size_; }
-  // With a log manager installed: appends a page record holding the page's
-  // bytes after its pageLSN and sets the pageLSN to that record's LSN
-  // (PLAN 8.3). A write guard calls it, latch still held, when it releases a
-  // page it changed, so every change through a guard is logged before the
-  // page can be written. Without a log manager it does nothing.
+  // With a log manager installed: appends a page record and sets the pageLSN
+  // to that record's LSN (PLAN 8.3). The first change of a page after a
+  // checkpoint logs the whole page; a later change logs only the bytes that
+  // differ. A write guard calls it, latch still held, when it releases a page
+  // it changed, so every change through a guard is logged before the page can
+  // be written. Without a log manager it does nothing.
   void LogPageWrite(Page* page);
+  // Pages whose removing log record is durable can be handed out again.
+  void Reclaim();
+  // Dirty frames and the LSN of the first record that dirtied each one.
+  auto DirtyPages() const -> std::vector<std::pair<page_id_t, lsn_t>>;
+  // The next logged change of every page is a full image, not a diff.
+  void NoteCheckpoint();
   // Forward to the log manager's BeginGroup / EndGroup; no-ops without one.
   auto BeginGroup() -> lsn_t;
   void EndGroup(lsn_t token);
@@ -142,6 +150,13 @@ class BufferPoolManager {
   };
   std::mutex retired_mu_;
   std::vector<Retired> retired_;
+
+  // The payload last logged for a page, so a later change can log the bytes
+  // that differ. `full_since_checkpoint_` is the pages whose full image is
+  // already in the log since the last checkpoint.
+  std::mutex image_mu_;
+  std::unordered_map<page_id_t, std::string> logged_image_;
+  std::unordered_set<page_id_t> full_since_checkpoint_;
 };
 
 // One multi-page change, logged atomically (a mini-transaction). Every page

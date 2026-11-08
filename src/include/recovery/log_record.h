@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "common/exception.h"
@@ -29,13 +30,19 @@ namespace ontodb {
 //     checkpoint  u32 n, then n x i64 txn_id
 //     term        u64 term_id, u32 n, then n bytes of canonical spelling
 //     page        i32 page_id, then the page's PAGE_SIZE - 8 bytes after its pageLSN
+//     page diff   i32 page_id, i64 pred_lsn, u32 n, then n spans of
+//                 u16 offset, u16 length, and that many bytes
 //     tag         u64 commit timestamp, u32 n, then n bytes of the version's name
 //     vacuum      u64 horizon, u32 n, then n x u64 timestamps kept
+//     checkpoint  u32 n, n x i64 txn_id, u32 d, d x (i32 page_id, i64 rec_lsn)
 //     begin, commit, abort: nothing
 //
 // A page record (PLAN 8.3) is a physical after-image: redo copies it back
 // when its LSN is newer than the page's pageLSN. Its txn_id is
 // INVALID_TXN_ID; page records are redo-only and belong to no undo chain.
+// The first change of a page after a checkpoint is a full image. A later
+// change may be a page diff, which redo applies only when the page's pageLSN
+// is still pred_lsn, the LSN of the previous image of that page.
 enum class LogRecordType {
   kInvalid,
   kBegin,
@@ -47,7 +54,14 @@ enum class LogRecordType {
   kTerm,
   kPage,
   kTag,
-  kVacuum
+  kVacuum,
+  kPageDiff
+};
+
+// One changed run in a page diff. `offset` is into the page after its pageLSN.
+struct PageSpan {
+  uint16_t offset{0};
+  std::string bytes;
 };
 
 // A record whose bytes are all present but wrong: bad checksum, bad type, or
@@ -77,6 +91,11 @@ class LogRecord {
   auto GetTermId() const -> term_id_t { return term_id_; }
   auto GetTermText() const -> const std::string& { return term_text_; }
   auto GetImage() const -> const std::string& { return image_; }  // a page record's bytes
+  auto GetPredLsn() const -> lsn_t { return undo_next_; }         // a page diff applies onto this
+  auto GetSpans() const -> const std::vector<PageSpan>& { return spans_; }
+  auto GetDirtyPages() const -> const std::vector<std::pair<page_id_t, lsn_t>>& {
+    return dirty_pages_;
+  }
   auto GetTagName() const -> const std::string& { return term_text_; }
   auto GetTagTimestamp() const -> uint64_t { return term_id_; }
 
@@ -95,10 +114,16 @@ class LogRecord {
                      const Triple& triple) -> LogRecord;
   static auto Clr(txn_id_t txn, page_id_t page, bool is_insert, const Triple& triple,
                   lsn_t undo_next) -> LogRecord;
-  static auto Checkpoint(const std::vector<txn_id_t>& active) -> LogRecord;
+  // `dirty` is the fuzzy checkpoint's dirty page table: each page's recLSN, the
+  // first log record that dirtied it. A sharp checkpoint passes an empty one.
+  static auto Checkpoint(const std::vector<txn_id_t>& active,
+                         const std::vector<std::pair<page_id_t, lsn_t>>& dirty = {}) -> LogRecord;
   static auto Term(txn_id_t txn, term_id_t id, const std::string& text) -> LogRecord;
   // `bytes` is the page after its pageLSN: PAGE_SIZE - 8 bytes.
   static auto Page(page_id_t page, const char* bytes) -> LogRecord;
+  // A later change of a page. Redo applies `spans` only when the page's
+  // pageLSN is still `pred`, then sets the pageLSN to this record.
+  static auto PageDiff(page_id_t page, lsn_t pred, std::vector<PageSpan> spans) -> LogRecord;
   static auto Tag(const std::string& name, uint64_t timestamp) -> LogRecord;
   static auto Vacuum(uint64_t horizon, const std::vector<int64_t>& kept) -> LogRecord;
   auto GetVacuumHorizon() const -> uint64_t { return term_id_; }
@@ -116,6 +141,8 @@ class LogRecord {
   term_id_t term_id_{INVALID_TERM_ID};
   std::string term_text_;
   std::string image_;
+  std::vector<PageSpan> spans_;
+  std::vector<std::pair<page_id_t, lsn_t>> dirty_pages_;
 };
 
 }  // namespace ontodb

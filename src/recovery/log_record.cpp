@@ -78,6 +78,8 @@ auto TypeName(LogRecordType type) -> const char* {
       return "term";
     case LogRecordType::kPage:
       return "page";
+    case LogRecordType::kPageDiff:
+      return "page-diff";
     case LogRecordType::kTag:
       return "tag";
     case LogRecordType::kVacuum:
@@ -101,6 +103,13 @@ auto LogRecord::Size() const -> uint32_t {
       break;
     case LogRecordType::kCheckpoint:
       size += 4 + static_cast<uint32_t>(active_.size()) * 8;
+      size += 4 + static_cast<uint32_t>(dirty_pages_.size()) * (4 + 8);
+      break;
+    case LogRecordType::kPageDiff:
+      size += 4 + 8 + 4;
+      for (const auto& span : spans_) {
+        size += 2 + 2 + static_cast<uint32_t>(span.bytes.size());
+      }
       break;
     case LogRecordType::kVacuum:
       size += 8 + 4 + static_cast<uint32_t>(active_.size()) * 8;
@@ -143,6 +152,13 @@ void LogRecord::SerializeTo(char* dest) const {
     for (const txn_id_t txn : active_) {
       out.Put<int64_t>(txn);
     }
+    if (type_ == LogRecordType::kCheckpoint) {
+      out.Put<uint32_t>(static_cast<uint32_t>(dirty_pages_.size()));
+      for (const auto& [page, rec_lsn] : dirty_pages_) {
+        out.Put<int32_t>(page);
+        out.Put<int64_t>(rec_lsn);
+      }
+    }
   } else if (type_ == LogRecordType::kTerm || type_ == LogRecordType::kTag) {
     out.Put<uint64_t>(term_id_);
     out.Put<uint32_t>(static_cast<uint32_t>(term_text_.size()));
@@ -150,6 +166,15 @@ void LogRecord::SerializeTo(char* dest) const {
   } else if (type_ == LogRecordType::kPage) {
     out.Put<int32_t>(page_id_);
     out.PutBytes(image_);
+  } else if (type_ == LogRecordType::kPageDiff) {
+    out.Put<int32_t>(page_id_);
+    out.Put<int64_t>(undo_next_);
+    out.Put<uint32_t>(static_cast<uint32_t>(spans_.size()));
+    for (const auto& span : spans_) {
+      out.Put<uint16_t>(span.offset);
+      out.Put<uint16_t>(static_cast<uint16_t>(span.bytes.size()));
+      out.PutBytes(span.bytes);
+    }
   }
   const uint32_t crc = Crc32c(dest + 8, Size() - 8);
   std::memcpy(dest + 4, &crc, sizeof(crc));
@@ -178,7 +203,7 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
   in.Get<uint32_t>();
   LogRecord record;
   const auto type = in.Get<uint8_t>();
-  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kVacuum)) {
+  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kPageDiff)) {
     throw LogCorruptionException("log record: unknown type " + std::to_string(type));
   }
   record.type_ = static_cast<LogRecordType>(type);
@@ -202,6 +227,14 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
     for (uint32_t i = 0; i < n; i++) {
       record.active_.push_back(in.Get<int64_t>());
     }
+    if (record.type_ == LogRecordType::kCheckpoint) {
+      const auto pages = in.Get<uint32_t>();
+      for (uint32_t i = 0; i < pages; i++) {
+        const auto page = in.Get<int32_t>();
+        const auto rec_lsn = in.Get<int64_t>();
+        record.dirty_pages_.emplace_back(page, rec_lsn);
+      }
+    }
   } else if (record.type_ == LogRecordType::kTerm || record.type_ == LogRecordType::kTag) {
     record.term_id_ = in.Get<uint64_t>();
     const auto n = in.Get<uint32_t>();
@@ -209,6 +242,17 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
   } else if (record.type_ == LogRecordType::kPage) {
     record.page_id_ = in.Get<int32_t>();
     record.image_ = in.GetBytes(PAGE_SIZE - kPageLsnSize);
+  } else if (record.type_ == LogRecordType::kPageDiff) {
+    record.page_id_ = in.Get<int32_t>();
+    record.undo_next_ = in.Get<int64_t>();
+    const auto n = in.Get<uint32_t>();
+    for (uint32_t i = 0; i < n; i++) {
+      PageSpan span;
+      span.offset = in.Get<uint16_t>();
+      const auto len = in.Get<uint16_t>();
+      span.bytes = in.GetBytes(len);
+      record.spans_.push_back(std::move(span));
+    }
   }
   if (in.Offset() != size) {
     throw LogCorruptionException("log record: size does not match its fields");
@@ -226,7 +270,7 @@ auto LogRecord::ToString() const -> std::string {
       out << " undo_next " << undo_next_;
     }
   } else if (type_ == LogRecordType::kCheckpoint) {
-    out << " active " << active_.size();
+    out << " active " << active_.size() << " dirty " << dirty_pages_.size();
   } else if (type_ == LogRecordType::kVacuum) {
     out << " horizon " << term_id_ << " keeps " << active_.size();
   } else if (type_ == LogRecordType::kTag) {
@@ -235,6 +279,8 @@ auto LogRecord::ToString() const -> std::string {
     out << " " << term_id_ << " " << term_text_;
   } else if (type_ == LogRecordType::kPage) {
     out << " page " << page_id_;
+  } else if (type_ == LogRecordType::kPageDiff) {
+    out << " page " << page_id_ << " pred " << undo_next_ << " spans " << spans_.size();
   }
   return out.str();
 }
@@ -278,10 +324,12 @@ auto LogRecord::Clr(txn_id_t txn, page_id_t page, bool is_insert, const Triple& 
   record.undo_next_ = undo_next;
   return record;
 }
-auto LogRecord::Checkpoint(const std::vector<txn_id_t>& active) -> LogRecord {
+auto LogRecord::Checkpoint(const std::vector<txn_id_t>& active,
+                           const std::vector<std::pair<page_id_t, lsn_t>>& dirty) -> LogRecord {
   LogRecord record;
   record.type_ = LogRecordType::kCheckpoint;
   record.active_ = active;
+  record.dirty_pages_ = dirty;
   return record;
 }
 auto LogRecord::Term(txn_id_t txn, term_id_t id, const std::string& text) -> LogRecord {
@@ -314,6 +362,15 @@ auto LogRecord::Page(page_id_t page, const char* bytes) -> LogRecord {
   record.type_ = LogRecordType::kPage;
   record.page_id_ = page;
   record.image_.assign(bytes, PAGE_SIZE - kPageLsnSize);
+  return record;
+}
+
+auto LogRecord::PageDiff(page_id_t page, lsn_t pred, std::vector<PageSpan> spans) -> LogRecord {
+  LogRecord record;
+  record.type_ = LogRecordType::kPageDiff;
+  record.page_id_ = page;
+  record.undo_next_ = pred;
+  record.spans_ = std::move(spans);
   return record;
 }
 

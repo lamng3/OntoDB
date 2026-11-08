@@ -304,6 +304,80 @@ auto LogManager::DebugTail(size_t n) const -> std::string {
   return out.str();
 }
 
+void LogManager::Truncate(lsn_t keep_from) {
+  std::unique_lock<std::mutex> lock(mu_);
+  if (keep_from <= 0 || writing_ || !open_groups_.empty()) {
+    return;
+  }
+  if (!buffer_.empty()) {
+    writing_ = true;
+    std::vector<char> batch = buffer_;
+    const lsn_t upto = buffered_lsn_;
+    try {
+      WriteAll(fd_, batch.data(), batch.size());
+      if (::fsync(fd_) != 0) {
+        throw StorageException(std::string("log fsync failed: ") + std::strerror(errno));
+      }
+    } catch (...) {
+      writing_ = false;
+      durable_cv_.notify_all();
+      throw;
+    }
+    buffer_.clear();
+    ends_.clear();
+    writing_ = false;
+    persistent_lsn_ = upto;
+    flush_count_++;
+    durable_cv_.notify_all();
+  }
+  const LogScan scan = ScanLog(log_path_);
+  std::vector<char> fresh;
+  bool dropped = false;
+  for (const auto& record : scan.records) {
+    if (record.GetLsn() < keep_from) {
+      dropped = true;
+      continue;
+    }
+    const size_t at = fresh.size();
+    fresh.resize(at + record.Size());
+    record.SerializeTo(fresh.data() + at);
+  }
+  if (!dropped) {
+    return;
+  }
+  // An empty file would reopen at LSN 1. Keep the newest record so LSNs continue.
+  if (fresh.empty() && !scan.records.empty()) {
+    const auto& last = scan.records.back();
+    fresh.resize(last.Size());
+    last.SerializeTo(fresh.data());
+  }
+  const auto tmp = log_path_ + ".tmp";
+  const int out = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (out < 0) {
+    throw StorageException("cannot open " + tmp + ": " + std::strerror(errno));
+  }
+  try {
+    WriteAll(out, fresh.data(), fresh.size());
+    if (::fsync(out) != 0) {
+      throw StorageException(std::string("log fsync failed: ") + std::strerror(errno));
+    }
+  } catch (...) {
+    ::close(out);
+    ::unlink(tmp.c_str());
+    throw;
+  }
+  ::close(out);
+  if (::rename(tmp.c_str(), log_path_.c_str()) != 0) {
+    ::unlink(tmp.c_str());
+    throw StorageException("cannot replace log " + log_path_ + ": " + std::strerror(errno));
+  }
+  ::close(fd_);
+  fd_ = ::open(log_path_.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd_ < 0) {
+    throw StorageException("cannot reopen log " + log_path_ + ": " + std::strerror(errno));
+  }
+}
+
 auto LogManager::ReadAll() -> std::vector<LogRecord> {
   const lsn_t last = NextLsn() - 1;
   if (last > 0) {

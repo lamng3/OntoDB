@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <thread>
@@ -13,6 +15,7 @@
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
 #include "recovery/checkpoint_manager.h"
+#include "recovery/log_compactor.h"
 #include "recovery/log_manager.h"
 #include "recovery/log_recovery.h"
 #include "storage/env.h"
@@ -80,6 +83,25 @@ TEST(P8_1_LogRecord, RoundTrip) {
   checkpoint.SerializeTo(cp_buf.data());
   EXPECT_EQ(LogRecord::Deserialize(cp_buf.data(), cp_buf.size()).GetActiveTxns(),
             (std::vector<txn_id_t>{1, 2, 3}));
+  const auto marked = LogRecord::Checkpoint({1}, {{4, 9}});
+  std::vector<char> marked_buf(marked.Size());
+  marked.SerializeTo(marked_buf.data());
+  const auto marked_back = LogRecord::Deserialize(marked_buf.data(), marked_buf.size());
+  ASSERT_EQ(marked_back.GetDirtyPages().size(), 1u);
+  EXPECT_EQ(marked_back.GetDirtyPages()[0].first, 4);
+  EXPECT_EQ(marked_back.GetDirtyPages()[0].second, 9);
+  PageSpan span;
+  span.offset = 12;
+  span.bytes = "abcd";
+  const auto diff = LogRecord::PageDiff(3, 8, {span});
+  std::vector<char> diff_buf(diff.Size());
+  diff.SerializeTo(diff_buf.data());
+  const auto diff_back = LogRecord::Deserialize(diff_buf.data(), diff_buf.size());
+  EXPECT_EQ(diff_back.GetPredLsn(), 8);
+  ASSERT_EQ(diff_back.GetSpans().size(), 1u);
+  EXPECT_EQ(diff_back.GetSpans()[0].offset, 12);
+  EXPECT_EQ(diff_back.GetSpans()[0].bytes, "abcd");
+  EXPECT_LT(diff.Size(), static_cast<uint32_t>(PAGE_SIZE));
 }
 
 TEST(P8_2_LogManager, GroupCommit) {
@@ -145,6 +167,70 @@ TEST(P8_4_Undo, AbortWritesClrAndDropsTriple) {
     }
   }
   EXPECT_TRUE(saw_clr);
+}
+
+TEST(LogHousekeeping, LaterChangesAreDiffsAndAFuzzyCheckpointTruncates) {
+  test::TempDir dir;
+  const auto db_path = (dir.path() / "db").string();
+  const auto log_path = (dir.path() / "wal").string();
+  page_id_t id = INVALID_PAGE_ID;
+  {
+    DiskManager disk(db_path);
+    LogManager log(log_path);
+    log.StartFlushThread();
+    for (int i = 0; i < 40; i++) {
+      auto begin = LogRecord::Begin(i + 1);
+      auto commit = LogRecord::Commit(i + 1);
+      log.Append(&begin);
+      log.Append(&commit);
+    }
+    BufferPoolManager bpm(8, &disk, 2, &log);
+    LockManager locks;
+    MemStore store;
+    TransactionManager txns(&locks, &store, &log);
+    {
+      auto guard = bpm.NewPageGuarded(&id);
+      std::memset(guard.GetData() + 64, 0x11, 32);
+    }
+    {
+      auto guard = bpm.FetchPageWrite(id);
+      std::memset(guard.GetData() + 64, 0x22, 4);
+    }
+    bool saw_diff = false;
+    for (const auto& record : log.ReadAll()) {
+      if (record.GetType() == LogRecordType::kPageDiff && record.GetPageId() == id) {
+        saw_diff = true;
+        EXPECT_LT(record.Size(), static_cast<uint32_t>(PAGE_SIZE));
+      }
+    }
+    EXPECT_TRUE(saw_diff);
+    const auto before = std::filesystem::file_size(log_path);
+    LogCompactor compactor(&log, &bpm, &txns);
+    compactor.RunOnce();
+    const auto after = std::filesystem::file_size(log_path);
+    EXPECT_LT(after, before);
+    lsn_t oldest = 0;
+    for (const auto& record : log.ReadAll()) {
+      if (oldest == 0 || record.GetLsn() < oldest) {
+        oldest = record.GetLsn();
+      }
+      if (record.GetType() == LogRecordType::kCheckpoint) {
+        EXPECT_GE(record.GetLsn(), oldest);
+      }
+    }
+    log.StopFlushThread();
+  }
+  DiskManager disk(db_path);
+  LogManager log(log_path);
+  BufferPoolManager bpm(8, &disk, 2, &log);
+  LogRecovery recovery(&log, &bpm, &disk, nullptr);
+  recovery.Analyze();
+  recovery.Redo();
+  auto guard = bpm.FetchPageRead(id);
+  ASSERT_TRUE(guard.IsValid());
+  EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[64]), 0x22);
+  EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[68]), 0x11);
+  EXPECT_EQ(bpm.GetPinnedFrameCount(), 1u);
 }
 
 TEST(P8_5_Checkpoint, RecordsDurableLsn) {

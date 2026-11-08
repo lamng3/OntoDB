@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -99,6 +100,10 @@ class Database {
   auto LocksDebug() const -> std::string;
   auto LogDebug(size_t n) const -> std::string;
   auto Checkpoint() -> std::string;
+  // If the write-ahead log is at least `limit` bytes, write a snapshot and
+  // start a fresh log. A background thread calls this once a second with 1MiB,
+  // so a directory that stays open does not keep every commit in the log.
+  void CompactLogIfLarge(size_t limit);
   auto Verify() -> std::string;
   void Crash();
 
@@ -181,6 +186,13 @@ class Database {
   std::optional<commit_ts_t> hierarchy_at_;
   std::mutex statistics_mu_;
   std::shared_ptr<const Statistics> statistics_;
+
+  void StartHousekeeping();
+  void HousekeepingLoop();
+  std::mutex housekeeping_mu_;
+  std::condition_variable housekeeping_cv_;
+  std::thread housekeeping_;
+  bool housekeeping_stop_{false};
 };
 
 }  // namespace ontodb

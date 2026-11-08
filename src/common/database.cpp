@@ -90,7 +90,16 @@ Database::Database()
 #endif
 }
 
-Database::~Database() = default;
+Database::~Database() {
+  {
+    std::lock_guard<std::mutex> guard(housekeeping_mu_);
+    housekeeping_stop_ = true;
+  }
+  housekeeping_cv_.notify_all();
+  if (housekeeping_.joinable()) {
+    housekeeping_.join();
+  }
+}
 
 auto Database::CurrentTransaction() -> Transaction* {
   std::lock_guard<std::mutex> guard(sessions_mu_);
@@ -362,7 +371,51 @@ auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode, OpenRep
   if (report != nullptr) {
     *report = opened;
   }
+#ifndef __EMSCRIPTEN__
+  if (!read_only) {
+    db->StartHousekeeping();
+  }
+#endif
   return db;
+}
+
+void Database::StartHousekeeping() {
+  std::lock_guard<std::mutex> guard(housekeeping_mu_);
+  if (housekeeping_.joinable()) {
+    return;
+  }
+  housekeeping_stop_ = false;
+  housekeeping_ = std::thread([this] { HousekeepingLoop(); });
+}
+
+void Database::HousekeepingLoop() {
+  std::unique_lock<std::mutex> lock(housekeeping_mu_);
+  while (!housekeeping_stop_) {
+    if (housekeeping_cv_.wait_for(lock, std::chrono::seconds(1),
+                                  [this] { return housekeeping_stop_; })) {
+      return;
+    }
+    lock.unlock();
+    try {
+      CompactLogIfLarge(1 << 20);
+    } catch (const std::exception&) {
+      // The next pass tries again. A failed checkpoint leaves the old log.
+    }
+    lock.lock();
+  }
+}
+
+void Database::CompactLogIfLarge(size_t limit) {
+  if (read_only_ || durability_ == nullptr) {
+    return;
+  }
+  std::error_code error;
+  const auto bytes = std::filesystem::file_size(durability_->WalPath(), error);
+  if (error || bytes < limit) {
+    return;
+  }
+  std::lock_guard<std::mutex> guard(commit_mu_);
+  durability_->Checkpoint();
 }
 
 // A load locks the whole database exclusively for its length, rather than

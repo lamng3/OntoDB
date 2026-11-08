@@ -54,6 +54,20 @@ void WriteBytes(const std::filesystem::path& path, const std::vector<char>& byte
 
 // --- 9.1 Record checksums ----------------------------------------------------
 
+TEST(LogHousekeeping, CompactionRewritesTheWalAndKeepsTheTriples) {
+  test::TempDir dir;
+  auto db = Open(dir.path());
+  EXPECT_EQ(Rows(*db, kInsertA), 0u);
+  const auto before = std::filesystem::file_size(dir.path() / "wal");
+  EXPECT_GT(before, 0u);
+  db->CompactLogIfLarge(0);
+  EXPECT_LT(std::filesystem::file_size(dir.path() / "wal"), before);
+  EXPECT_EQ(Rows(*db, kAllP), 1u);
+  db.reset();
+  auto again = Open(dir.path());
+  EXPECT_EQ(Rows(*again, kAllP), 1u);
+}
+
 TEST(P9_1_Checksum, FlippedByteIsCorruptionShortBufferIsNot) {
   auto record = LogRecord::Term(7, 42, "<http://example.org/materials#Alloy>");
   std::vector<char> buf(record.Size());

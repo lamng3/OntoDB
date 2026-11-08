@@ -1,5 +1,6 @@
 #include "buffer/buffer_pool_manager.h"
 
+#include <cstring>
 #include <future>
 #include <limits>
 #include <sstream>
@@ -301,6 +302,11 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
     shard.page_table.erase(it);
   }
   shard.deleted.insert(page_id);
+  {
+    std::lock_guard<std::mutex> image(image_mu_);
+    logged_image_.erase(page_id);
+    full_since_checkpoint_.erase(page_id);
+  }
   Trace("delete page " + std::to_string(page_id));
   if (log_manager_ == nullptr) {
     disk_manager_->DeallocatePage(page_id);
@@ -358,12 +364,105 @@ auto BufferPoolManager::GetPinnedFrameCount() const -> size_t {
   return pinned;
 }
 
+namespace {
+
+auto DiffSpans(const std::string& before, const char* now, size_t n) -> std::vector<PageSpan> {
+  std::vector<PageSpan> spans;
+  size_t i = 0;
+  while (i < n) {
+    if (before[i] == now[i]) {
+      i++;
+      continue;
+    }
+    size_t j = i + 1;
+    while (j < n && before[j] != now[j]) {
+      j++;
+    }
+    PageSpan span;
+    span.offset = static_cast<uint16_t>(i);
+    span.bytes.assign(now + i, j - i);
+    spans.push_back(std::move(span));
+    i = j;
+  }
+  return spans;
+}
+
+}  // namespace
+
 void BufferPoolManager::LogPageWrite(Page* page) {
   if (log_manager_ == nullptr) {
     return;
   }
-  auto record = LogRecord::Page(page->GetPageId(), page->GetData() + kPageLsnSize);
-  page->SetLSN(log_manager_->Append(&record));
+  const page_id_t id = page->GetPageId();
+  const char* now = page->GetData() + kPageLsnSize;
+  const size_t n = PAGE_SIZE - kPageLsnSize;
+  std::string previous;
+  bool full = true;
+  {
+    std::lock_guard<std::mutex> image(image_mu_);
+    const auto it = logged_image_.find(id);
+    if (it != logged_image_.end() && it->second.size() == n &&
+        full_since_checkpoint_.contains(id)) {
+      previous = it->second;
+      full = false;
+    }
+  }
+  LogRecord record;
+  if (!full) {
+    auto spans = DiffSpans(previous, now, n);
+    if (spans.empty()) {
+      return;  // the guard was taken and the bytes did not change
+    }
+    size_t changed = 0;
+    for (const auto& span : spans) {
+      changed += span.bytes.size();
+    }
+    if (changed * 2 < n) {
+      record = LogRecord::PageDiff(id, page->GetLSN(), std::move(spans));
+    } else {
+      full = true;
+    }
+  }
+  if (full) {
+    record = LogRecord::Page(id, now);
+  }
+  const lsn_t lsn = log_manager_->Append(&record);
+  if (page->GetRecLsn() == INVALID_LSN) {
+    page->SetRecLsn(lsn);
+  }
+  page->SetLSN(lsn);
+  std::lock_guard<std::mutex> image(image_mu_);
+  logged_image_[id].assign(now, n);
+  if (full) {
+    full_since_checkpoint_.insert(id);
+  }
+}
+
+void BufferPoolManager::Reclaim() {
+  ReclaimRetired();
+}
+
+auto BufferPoolManager::DirtyPages() const -> std::vector<std::pair<page_id_t, lsn_t>> {
+  std::vector<std::pair<page_id_t, lsn_t>> dirty;
+  for (const auto& shard : shards_) {
+    std::lock_guard<std::mutex> guard(shard->mu);
+    for (const auto& page : shard->frames) {
+      if (page.GetPageId() == INVALID_PAGE_ID) {
+        continue;
+      }
+      if (!page.IsDirty() && page.GetRecLsn() == INVALID_LSN) {
+        continue;
+      }
+      const lsn_t rec = page.GetRecLsn() == INVALID_LSN ? page.GetLSN() : page.GetRecLsn();
+      dirty.emplace_back(page.GetPageId(), rec);
+    }
+  }
+  return dirty;
+}
+
+void BufferPoolManager::NoteCheckpoint() {
+  std::lock_guard<std::mutex> image(image_mu_);
+  full_since_checkpoint_.clear();
 }
 
 auto BufferPoolManager::BeginGroup() -> lsn_t {
@@ -529,6 +628,7 @@ void BufferPoolManager::WriteBack(Page* page) {
   CrashPoint::Reach("BufferPoolManager::FlushPage::before_disk_write");
   RunIo(true, page);
   page->SetDirty(false);
+  page->SetRecLsn(INVALID_LSN);
   Trace("flush page " + std::to_string(page->GetPageId()));
 }
 

@@ -136,6 +136,10 @@ class Page {
 
   auto GetLSN() const -> lsn_t;
   void SetLSN(lsn_t lsn);
+  // The LSN of the first log record that dirtied this frame since it was clean.
+  // INVALID_LSN when the frame is clean. Not stored on the page.
+  auto GetRecLsn() const -> lsn_t { return rec_lsn_.load(std::memory_order_relaxed); }
+  void SetRecLsn(lsn_t lsn) { rec_lsn_.store(lsn, std::memory_order_relaxed); }
 
   // Called only on an unpinned frame that is about to hold another page (or none). Guards pin
   // before they latch, so no thread holds or waits on the latch.
@@ -143,6 +147,7 @@ class Page {
     page_id_.store(INVALID_PAGE_ID, std::memory_order_release);
     pin_count_.store(0, std::memory_order_release);
     is_dirty_.store(false, std::memory_order_relaxed);
+    rec_lsn_.store(INVALID_LSN, std::memory_order_relaxed);
     referenced_.store(false, std::memory_order_relaxed);
     for (size_t i = 0; i < PAGE_SIZE; i++) {
       data_[i] = 0;
@@ -155,6 +160,7 @@ class Page {
   std::atomic<page_id_t> page_id_{INVALID_PAGE_ID};
   std::atomic<int> pin_count_{0};
   std::atomic<bool> is_dirty_{false};
+  std::atomic<lsn_t> rec_lsn_{INVALID_LSN};
   std::atomic<bool> referenced_{false};
   RwLatch latch_;
 };

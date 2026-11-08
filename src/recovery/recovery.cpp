@@ -32,16 +32,27 @@ CheckpointManager::CheckpointManager(LogManager* log, BufferPoolManager* bpm,
     : log_(log), bpm_(bpm), txn_mgr_(txn_mgr) {}
 
 // A blocking ("sharp") checkpoint: write every dirty page (the pool forces
-// the log first, by the write-ahead rule), then log the active transactions.
-// No page change older than the checkpoint record can be missing from disk,
-// so analysis starts its dirty page table there. Updates should not run
-// while it does; that is the blocking part.
+// the log first, by the write-ahead rule), then log the active transactions
+// and whatever is still dirty (a page whose writer has not dropped it yet).
+// Updates should not run while it does; that is the blocking part.
 void CheckpointManager::Checkpoint() {
   bpm_->FlushAllPages();
-  auto record = LogRecord::Checkpoint(txn_mgr_->ActiveTransactions());
+  auto record = LogRecord::Checkpoint(txn_mgr_->ActiveTransactions(), bpm_->DirtyPages());
   const lsn_t lsn = log_->Append(&record);
   log_->Flush(lsn, true);
   last_ = lsn;
+  bpm_->NoteCheckpoint();
+}
+
+// A fuzzy checkpoint: log the active transactions and the dirty page table,
+// and do not write pages or wait for writers. Redo starts at the oldest
+// recLSN in that table. The next change of each page is logged in full.
+void CheckpointManager::CheckpointFuzzy() {
+  auto record = LogRecord::Checkpoint(txn_mgr_->ActiveTransactions(), bpm_->DirtyPages());
+  const lsn_t lsn = log_->Append(&record);
+  log_->Flush(lsn, true);
+  last_ = lsn;
+  bpm_->NoteCheckpoint();
 }
 
 auto CheckpointManager::LastCheckpointLsn() const -> lsn_t {
@@ -54,6 +65,7 @@ LogRecovery::LogRecovery(LogManager* log, BufferPoolManager* bpm, DiskManager* d
 
 void LogRecovery::Analyze() {
   records_ = log_->ReadAll();
+  dirty_.clear();
   enum class Fate { kActive, kCommitted, kEnded };
   std::map<txn_id_t, Fate> fate;
   size_t start = 0;
@@ -76,6 +88,10 @@ void LogRecovery::Analyze() {
         for (const txn_id_t txn : r.GetActiveTxns()) {
           fate.emplace(txn, Fate::kActive);
         }
+        dirty_.clear();
+        for (const auto& [page, rec_lsn] : r.GetDirtyPages()) {
+          dirty_.emplace(page, rec_lsn);
+        }
         break;
       default:
         break;
@@ -90,9 +106,9 @@ void LogRecovery::Analyze() {
       losers_.push_back(txn);
     }
   }
-  dirty_.clear();
   for (size_t i = start; i < records_.size(); i++) {
-    if (records_[i].GetType() == LogRecordType::kPage) {
+    const auto type = records_[i].GetType();
+    if (type == LogRecordType::kPage || type == LogRecordType::kPageDiff) {
       dirty_.emplace(records_[i].GetPageId(), records_[i].GetLsn());
     }
   }
@@ -111,7 +127,9 @@ void LogRecovery::Redo() {
   size_t applied = 0;
   size_t skipped = 0;
   for (const LogRecord& r : records_) {
-    if (r.GetType() != LogRecordType::kPage || redo_lsn_ == INVALID_LSN || r.GetLsn() < redo_lsn_) {
+    const bool image = r.GetType() == LogRecordType::kPage;
+    const bool diff = r.GetType() == LogRecordType::kPageDiff;
+    if ((!image && !diff) || redo_lsn_ == INVALID_LSN || r.GetLsn() < redo_lsn_) {
       continue;
     }
     const auto entry = dirty_.find(r.GetPageId());
@@ -123,15 +141,30 @@ void LogRecovery::Redo() {
     if (page == nullptr) {
       throw StorageException("recovery could not fetch page " + std::to_string(r.GetPageId()));
     }
-    const bool stale = page->GetLSN() < r.GetLsn();
-    if (stale) {
+    bool wrote = false;
+    if (image && page->GetLSN() < r.GetLsn()) {
       std::memcpy(page->GetData() + kPageLsnSize, r.GetImage().data(), r.GetImage().size());
       page->SetLSN(r.GetLsn());
+      wrote = true;
+    } else if (diff && page->GetLSN() == r.GetPredLsn()) {
+      char* dest = page->GetData() + kPageLsnSize;
+      for (const auto& span : r.GetSpans()) {
+        const size_t end = static_cast<size_t>(span.offset) + span.bytes.size();
+        if (end > PAGE_SIZE - kPageLsnSize) {
+          bpm_->UnpinPage(r.GetPageId(), false);
+          throw StorageException("page diff runs off page " + std::to_string(r.GetPageId()));
+        }
+        std::memcpy(dest + span.offset, span.bytes.data(), span.bytes.size());
+      }
+      page->SetLSN(r.GetLsn());
+      wrote = true;
+    }
+    if (wrote) {
       applied++;
     } else {
       skipped++;
     }
-    bpm_->UnpinPage(r.GetPageId(), stale);
+    bpm_->UnpinPage(r.GetPageId(), wrote);
   }
   redo_ = "redo: " + std::to_string(applied) + " page images applied, " + std::to_string(skipped) +
           " already on disk";

@@ -54,6 +54,11 @@ class LogManager {
   auto GetPersistentLsn() const -> lsn_t;
   auto GetFlushCount() const -> uint64_t;
   auto DebugTail(size_t n) const -> std::string;
+  // Rewrites the log so it keeps records at or after `keep_from`, and nothing
+  // older. LSNs keep counting. Does nothing while a page group is open, or
+  // when a flush is in the middle of a write. The replacement is a new file
+  // renamed into place, so a crash keeps the old log.
+  void Truncate(lsn_t keep_from);
 
   // The next Append gets at least `lsn`. Used after a snapshot so LSNs never repeat.
   void AdvanceNextLsn(lsn_t lsn);
