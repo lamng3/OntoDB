@@ -1,5 +1,9 @@
 #include "recovery/durability.h"
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -188,7 +192,29 @@ Durability::Durability(std::filesystem::path dir, MemDictionary* dictionary, Mem
     , versions_(versions)
     , stats_(stats) {}
 
-Durability::~Durability() = default;
+Durability::~Durability() {
+  log_.reset();
+  if (lock_fd_ >= 0) {
+    ::close(lock_fd_);  // releases the lock
+  }
+}
+
+void Durability::TakeWriterLock() {
+#ifndef __EMSCRIPTEN__
+  const auto path = dir_ / "lock";
+  lock_fd_ = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
+  if (lock_fd_ < 0) {
+    throw StorageException("cannot open " + path.string());
+  }
+  if (::flock(lock_fd_, LOCK_EX | LOCK_NB) != 0) {
+    ::close(lock_fd_);
+    lock_fd_ = -1;
+    throw StorageException(dir_.string() +
+                           " is open for writing by another process; open it with --read-only "
+                           "to read it meanwhile");
+  }
+#endif
+}
 
 void Durability::StartLog(lsn_t next_lsn) {
   log_ = std::make_unique<LogManager>(WalPath().string(), stats_);
@@ -196,11 +222,25 @@ void Durability::StartLog(lsn_t next_lsn) {
   log_->StartFlushThread();
 }
 
-auto Durability::Open(RecoveryMode mode) -> OpenReport {
+auto Durability::Open(RecoveryMode mode, bool read_only) -> OpenReport {
   std::lock_guard<std::mutex> guard(mu_);
-  std::filesystem::create_directories(dir_);
   OpenReport report;
   report.dir = dir_;
+  if (read_only) {
+    if (!std::filesystem::exists(dir_)) {
+      throw StorageException(dir_.string() + " does not exist");
+    }
+    const lsn_t snapshot_lsn = LoadSnapshotIfAny(&report);
+    const LogScan scan = ScanLog(WalPath());
+    if (!scan.Clean()) {
+      report.stop = scan.stop;  // a writer may be mid-append: read what is whole, and cut nothing
+      report.discarded_bytes = scan.file_bytes - scan.valid_bytes;
+    }
+    ReplayLog(scan, snapshot_lsn, &report);
+    return report;
+  }
+  std::filesystem::create_directories(dir_);
+  TakeWriterLock();
   const lsn_t snapshot_lsn = LoadSnapshotIfAny(&report);
   LogScan scan = ScanLog(WalPath());
   if (!scan.Clean()) {

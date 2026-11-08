@@ -127,6 +127,7 @@ void Database::CommitTransaction(Transaction* txn) {
 }
 
 auto Database::Tag(const std::string& name) -> commit_ts_t {
+  RefuseIfReadOnly("\\tag");
   std::lock_guard<std::mutex> guard(commit_mu_);
   const bool had = versions_.FindTag(name).has_value();
   const commit_ts_t at = versions_.Tag(name);  // refuses a name another commit has
@@ -143,6 +144,12 @@ auto Database::CurrentAt() -> std::optional<commit_ts_t> {
     return std::nullopt;
   }
   return versions_.FindTag(it->second);
+}
+
+void Database::RefuseIfReadOnly(const char* what) const {
+  if (read_only_) {
+    throw std::runtime_error(std::string(what) + " cannot run on a database opened read-only");
+  }
 }
 
 void Database::RefuseAtAVersion(const char* what) {
@@ -316,12 +323,13 @@ void Database::SetBackend(BackendKind kind) {
   InvalidateStatistics();
 }
 
-auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode,
-                    OpenReport* report) -> std::unique_ptr<Database> {
+auto Database::Open(const std::filesystem::path& dir, RecoveryMode mode, OpenReport* report,
+                    bool read_only) -> std::unique_ptr<Database> {
   auto db = std::make_unique<Database>();
   db->durability_ = std::make_unique<Durability>(dir, db->dictionary_.get(), db->store_.get(),
                                                  &db->versions_, &db->stats_);
-  const OpenReport opened = db->durability_->Open(mode);
+  db->read_only_ = read_only;
+  const OpenReport opened = db->durability_->Open(mode, read_only);
   if (report != nullptr) {
     *report = opened;
   }
@@ -335,6 +343,7 @@ auto Database::Load(const std::string& path) -> LoadStats {
   if (CurrentTransaction() != nullptr) {
     throw std::runtime_error("\\load runs on its own, not inside a transaction");
   }
+  RefuseIfReadOnly("\\load");
   RefuseAtAVersion("\\load");
   Transaction* txn = BeginTransaction();
   LoadStats stats;
@@ -365,6 +374,7 @@ auto Database::Replace(const std::string& path) -> ReplaceStats {
   if (CurrentTransaction() != nullptr) {
     throw std::runtime_error("\\replace runs on its own, not inside a transaction");
   }
+  RefuseIfReadOnly("\\replace");
   RefuseAtAVersion("\\replace");
   const auto start = std::chrono::steady_clock::now();
   Transaction* txn = BeginTransaction();
@@ -445,6 +455,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   const bool is_update =
       bound.kind == BoundQuery::Kind::kInsert || bound.kind == BoundQuery::Kind::kDelete;
   if (is_update) {
+    RefuseIfReadOnly("an update");
     RefuseAtAVersion("an update");
   }
   Transaction* txn = CurrentTransaction();
@@ -635,6 +646,7 @@ auto Database::LocksDebug() const -> std::string {
 
 auto Database::LogDebug(size_t n) const -> std::string {
   if (durability_) {
+    RefuseIfReadOnly("\\log");
     return durability_->LogTail(n);
   }
   throw NotImplementedException("PLAN 8.2: LogManager::DebugTail");
@@ -642,6 +654,7 @@ auto Database::LogDebug(size_t n) const -> std::string {
 
 auto Database::Checkpoint() -> std::string {
   if (durability_) {
+    RefuseIfReadOnly("\\checkpoint");
     std::lock_guard<std::mutex> guard(commit_mu_);
     return durability_->Checkpoint();
   }
@@ -650,6 +663,7 @@ auto Database::Checkpoint() -> std::string {
 
 auto Database::Verify() -> std::string {
   if (durability_) {
+    RefuseIfReadOnly("\\verify");
     std::lock_guard<std::mutex> guard(commit_mu_);
     return durability_->Verify();
   }

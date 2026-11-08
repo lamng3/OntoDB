@@ -64,7 +64,9 @@ class Database {
   ~Database();
 
   static auto Open(const std::filesystem::path& dir, RecoveryMode mode = RecoveryMode::kPointInTime,
-                   OpenReport* report = nullptr) -> std::unique_ptr<Database>;
+                   OpenReport* report = nullptr,
+                   bool read_only = false) -> std::unique_ptr<Database>;
+  auto IsReadOnly() const -> bool { return read_only_; }
   auto IsDurable() const -> bool { return durability_ != nullptr; }
 
   auto Load(const std::string& path) -> LoadStats;
@@ -132,6 +134,7 @@ class Database {
   auto CurrentTransaction() -> Transaction*;       // this thread's explicit transaction, or null
   auto CurrentAt() -> std::optional<commit_ts_t>;  // the version this thread reads, if any
   void RefuseAtAVersion(const char* what);
+  void RefuseIfReadOnly(const char* what) const;
   auto BeginTransaction() -> Transaction*;
   // Makes the transaction's changes the next commit, then releases its locks.
   void CommitTransaction(Transaction* txn);
@@ -151,6 +154,7 @@ class Database {
   std::mutex config_mu_;
   BufferPoolManager* bpm_{nullptr};
   std::unique_ptr<Durability> durability_;
+  bool read_only_{false};
   std::unique_ptr<IndexedBackend> indexed_;
   std::unique_ptr<SemanticEngine> semantic_;
   // The RDFS entailment of rdf:type patterns (\set entail on): a snapshot of the hierarchy and the

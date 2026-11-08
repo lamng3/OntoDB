@@ -203,6 +203,67 @@ TEST(MvccDurable, ATornLogKeepsEveryVersionBeforeTheTear) {
   EXPECT_EQ(db->Tag("0.3.0"), 4U);  // and naming it again is what a retry does
 }
 
+TEST(MvccDurable, OneWriterAtATime) {
+  test::TempDir dir;
+  auto first = Database::Open(dir.path());
+  EXPECT_THROW(Database::Open(dir.path()), StorageException);
+  first.reset();
+  EXPECT_NO_THROW(Database::Open(dir.path()));
+}
+
+TEST(MvccDurable, AReaderOpensBesideAWriterAndSeesWhatWasCommitted) {
+  test::TempDir dir;
+  auto writer = Database::Open(dir.path());
+  Build(*writer);
+  writer->Begin();
+  Insert(*writer, kC);  // not committed, so not on disk
+  {
+    auto reader = Database::Open(dir.path(), RecoveryMode::kPointInTime, nullptr, true);
+    ExpectBuilt(*reader);
+    EXPECT_TRUE(reader->IsReadOnly());
+    reader->SetAt("0.1.0");
+    EXPECT_EQ(reader->Execute("SELECT ?s WHERE { ?s <http://ex/p> ?o }", nullptr).rows.size(), 1U);
+  }
+  writer->Commit();
+  writer->Tag("0.3.0");
+  EXPECT_TRUE(Verified(*writer));  // the reader left the writer's files as they were
+  EXPECT_EQ(writer->GetVersions().FindTag("0.3.0"), 4U);
+}
+
+TEST(MvccDurable, AReadOnlyDatabaseRefusesEveryWrite) {
+  test::TempDir dir;
+  Build(*Database::Open(dir.path()));
+  auto reader = Database::Open(dir.path(), RecoveryMode::kPointInTime, nullptr, true);
+  EXPECT_THROW(Insert(*reader, kC), std::runtime_error);
+  EXPECT_THROW(reader->Tag("x"), std::runtime_error);
+  EXPECT_THROW(reader->Load("/nowhere.nt"), std::runtime_error);
+  EXPECT_THROW(reader->Replace("/nowhere.nt"), std::runtime_error);
+  EXPECT_THROW(reader->Checkpoint(), std::runtime_error);
+  ExpectBuilt(*reader);
+}
+
+TEST(MvccDurable, AReaderOfATornLogCutsNothing) {
+  test::TempDir dir;
+  {
+    auto db = Database::Open(dir.path());
+    Build(*db);
+  }
+  const auto wal = dir.path() / "wal";
+  const auto size = std::filesystem::file_size(wal);
+  std::filesystem::resize_file(wal, size - 3);
+  OpenReport report;
+  auto reader = Database::Open(dir.path(), RecoveryMode::kPointInTime, &report, true);
+  EXPECT_FALSE(report.stop.empty());
+  EXPECT_EQ(std::filesystem::file_size(wal), size - 3);
+  EXPECT_EQ(reader->GetVersions().Clock(), 3U);
+  EXPECT_EQ(reader->GetVersions().FindTag("0.2.0"), std::nullopt);
+}
+
+TEST(MvccDurable, AReaderOfNothingSaysSo) {
+  EXPECT_THROW(Database::Open("/no/such/ontodb", RecoveryMode::kPointInTime, nullptr, true),
+               StorageException);
+}
+
 TEST(MvccDurable, ATagCannotMoveEvenAfterAReopen) {
   test::TempDir dir;
   {

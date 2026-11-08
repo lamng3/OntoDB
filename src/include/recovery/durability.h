@@ -55,6 +55,13 @@ struct OpenReport {
 // commit keeps its timestamp. A snapshot holds the index's whole history, so a
 // checkpoint loses no version. Tags are logged and forced like commits.
 //
+// One process writes a directory at a time, under an exclusive lock on its `lock` file, which the
+// system releases if the process dies. A read-only open takes no lock and changes nothing: it sees
+// the commits that were whole when it opened, however far a writer has got, so it never waits for a
+// writer and a writer never waits for it. A checkpoint can only make what it read older, never
+// inconsistent: replay starts past the snapshot's LSN, and the log is a prefix of what was
+// committed.
+//
 // Updates are logical (page_id is INVALID_PAGE_ID): the memory store has no
 // pages. The disk store's page-oriented recovery is PLAN 8.3 to 8.7.
 class Durability {
@@ -67,7 +74,7 @@ class Durability {
   auto operator=(const Durability&) -> Durability& = delete;
 
   // Call once, on an empty dictionary and store.
-  auto Open(RecoveryMode mode) -> OpenReport;
+  auto Open(RecoveryMode mode, bool read_only = false) -> OpenReport;
 
   // Logs one transaction's changes and forces them. The caller holds off other commits, so the
   // log's order is the order of the timestamps.
@@ -87,6 +94,7 @@ class Durability {
 
  private:
   void StartLog(lsn_t next_lsn);
+  void TakeWriterLock();
   // Open, in steps. Each returns the LSN it reached.
   auto LoadSnapshotIfAny(OpenReport* report) -> lsn_t;
   auto ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* report) -> lsn_t;
@@ -106,6 +114,7 @@ class Durability {
 
   std::mutex mu_;
   std::unique_ptr<LogManager> log_;
+  int lock_fd_{-1};
   size_t logged_terms_{0};
   txn_id_t next_txn_{1};
 };
