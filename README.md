@@ -3,7 +3,7 @@
 [![CI](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml/badge.svg)](https://github.com/lamng3/OntoDB/actions/workflows/ci.yml)
 [![License: BSD 3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-green.svg)](LICENSE)
 
-A database management system for ontologies. Data is RDF and the query language is SPARQL. The shell answers a SPARQL subset over B+ tree indexes with a cost-based optimizer, runs statements under strict two-phase locking, and recovers pages with ARIES after a crash. It also does semantic search: a class hierarchy becomes integer intervals in a B+ tree, and vectors are searched by exact, IVF, or HNSW indexes, optionally limited to the terms under a class.
+A database management system for ontologies. Data is RDF and the query language is SPARQL. The shell answers a SPARQL subset over B+ tree indexes with a cost-based optimizer, runs statements under strict two-phase locking with MVCC beside it, so snapshot readers never wait for writers, keeps every committed version of an ontology by name, and recovers pages with ARIES after a crash. It also does semantic search: a class hierarchy becomes integer intervals in a B+ tree, and vectors are searched by exact, IVF, or HNSW indexes, optionally limited to the terms under a class.
 
 ## Build
 
@@ -33,7 +33,7 @@ OntoDB> \verify
 verify: ok
 ```
 
-Pass a directory (`ontodb mydb`) to keep the database on disk: every update statement and every `\load` is a transaction, forced to a checksummed write-ahead log before the prompt returns, and reopening the directory replays the committed ones. Without a directory the shell is an in-memory database. A query may span lines and runs when its braces close; `\help` lists the commands and `\explain` prints the plan.
+Pass a directory (`ontodb mydb`) to keep the database on disk: every update statement and every `\load` is a transaction, forced to a checksummed write-ahead log before the prompt returns, and reopening the directory replays the committed ones. Without a directory the shell is an in-memory database. `\replace file` makes the database exactly a file's triples as one commit of what differs, `\tag 0.2.0` names that commit for good, and `\at 0.1.0` reads an earlier one without locks; versions share the triples they have in common. One process writes a directory; `ontodb --read-only mydb` reads beside it. A query may span lines and runs when its braces close; `\help` lists the commands and `\explain` prints the plan.
 
 ## Documentation
 
