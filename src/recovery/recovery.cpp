@@ -143,7 +143,7 @@ void LogRecovery::Redo() {
     }
     bool wrote = false;
     if (image && page->GetLSN() < r.GetLsn()) {
-      std::memcpy(page->GetData() + kPageLsnSize, r.GetImage().data(), r.GetImage().size());
+      std::copy(r.GetImage().begin(), r.GetImage().end(), page->GetData() + kPageLsnSize);
       page->SetLSN(r.GetLsn());
       wrote = true;
     } else if (diff && page->GetLSN() == r.GetPredLsn()) {
@@ -154,7 +154,7 @@ void LogRecovery::Redo() {
           bpm_->UnpinPage(r.GetPageId(), false);
           throw StorageException("page diff runs off page " + std::to_string(r.GetPageId()));
         }
-        std::memcpy(dest + span.offset, span.bytes.data(), span.bytes.size());
+        std::copy(span.bytes.begin(), span.bytes.end(), dest + span.offset);
       }
       page->SetLSN(r.GetLsn());
       wrote = true;

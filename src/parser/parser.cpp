@@ -603,18 +603,27 @@ void Parser::ParseTriplesSameSubject(std::vector<AstTriple>* out) {
     auto path = ParsePath();
     const std::vector<AstTerm> objects = ParseObjectList();
     const bool link = path->op == AstPath::Op::kLink && path->parts.empty();
-    for (size_t i = 0; i < objects.size(); i++) {
-      AstTriple triple;
-      triple.subject = subject;
-      triple.object = objects[i];
-      if (link) {
-        triple.predicate = path->link;
-      } else if (i + 1 == objects.size()) {
-        triple.path = std::move(path);
-      } else {
-        triple.path = ClonePath(*path);
+    if (link) {
+      const AstTerm predicate = path->link;
+      for (const auto& object : objects) {
+        AstTriple triple;
+        triple.subject = subject;
+        triple.predicate = predicate;
+        triple.object = object;
+        out->push_back(std::move(triple));
       }
-      out->push_back(std::move(triple));
+    } else {
+      for (size_t i = 0; i < objects.size(); i++) {
+        AstTriple triple;
+        triple.subject = subject;
+        triple.object = objects[i];
+        if (i + 1 == objects.size()) {
+          triple.path = std::move(path);
+        } else {
+          triple.path = ClonePath(*path);
+        }
+        out->push_back(std::move(triple));
+      }
     }
     any = true;
     if (!Match(TokenKind::kSemicolon)) {

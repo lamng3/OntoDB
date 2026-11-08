@@ -36,8 +36,9 @@ BufferPoolManager::BufferPoolManager(size_t pool_size, DiskManager* disk_manager
 BufferPoolManager::~BufferPoolManager() {
   try {
     ReclaimRetired();
-  } catch (const std::exception&) {
+  } catch (const std::exception& ex) {
     // Shutting down. A page left retired is a leak, not a torn write.
+    static_cast<void>(ex.what());
   }
 }
 

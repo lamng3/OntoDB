@@ -41,8 +41,9 @@ void LogCompactor::Loop() {
     lock.unlock();
     try {
       RunOnce();
-    } catch (const std::exception&) {
+    } catch (const std::exception& ex) {
       // The next pass tries again. A failed rewrite leaves the old log in place.
+      static_cast<void>(ex.what());
     }
     lock.lock();
   }

@@ -199,6 +199,8 @@ class Database {
   void KeepInference();
   void AbsorbInference(Transaction* txn, size_t mark);
   void Rematerialize(Transaction* txn);
+  // Sessions commit and abort at once, so the closure and its snapshot share this.
+  std::mutex inference_mu_;
   std::set<Triple> explicit_triples_;
   std::set<Triple> inferred_;
   bool explicit_ready_{false};

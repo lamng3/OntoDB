@@ -398,8 +398,9 @@ void Database::HousekeepingLoop() {
     lock.unlock();
     try {
       CompactLogIfLarge(1 << 20);
-    } catch (const std::exception&) {
+    } catch (const std::exception& ex) {
       // The next pass tries again. A failed checkpoint leaves the old log.
+      static_cast<void>(ex.what());
     }
     lock.lock();
   }
@@ -522,6 +523,7 @@ void Database::UpdateConfig(const Config& config) {
 }
 
 void Database::RememberInference() {
+  std::lock_guard<std::mutex> guard(inference_mu_);
   if (inference_saved_) {
     return;
   }
@@ -531,6 +533,7 @@ void Database::RememberInference() {
 }
 
 void Database::RestoreInference() {
+  std::lock_guard<std::mutex> guard(inference_mu_);
   if (!inference_saved_) {
     return;
   }
@@ -540,10 +543,12 @@ void Database::RestoreInference() {
 }
 
 void Database::KeepInference() {
+  std::lock_guard<std::mutex> guard(inference_mu_);
   inference_saved_ = false;
 }
 
 void Database::AbsorbInference(Transaction* txn, size_t mark) {
+  std::lock_guard<std::mutex> guard(inference_mu_);
   if (!explicit_ready_) {
     std::set<Triple> present;
     auto scan = GetStore()->Scan(TriplePattern{});
@@ -577,6 +582,19 @@ void Database::AbsorbInference(Transaction* txn, size_t mark) {
 }
 
 void Database::Rematerialize(Transaction* txn) {
+  std::lock_guard<std::mutex> guard(inference_mu_);
+  if (!explicit_ready_) {
+    auto scan = GetStore()->Scan(TriplePattern{});
+    scan->Init();
+    Triple triple;
+    while (scan->Next(&triple)) {
+      explicit_triples_.insert(triple);
+    }
+    for (const auto& triple : inferred_) {
+      explicit_triples_.erase(triple);
+    }
+    explicit_ready_ = true;
+  }
   TripleStore* store = GetStore();
   auto changed = [&](bool insert, const Triple& triple) {
     if (txn == nullptr) {
@@ -613,18 +631,6 @@ void Database::SetInference(bool on) {
   Transaction* txn = BeginTransaction();
   RememberInference();
   try {
-    if (!explicit_ready_) {
-      auto scan = GetStore()->Scan(TriplePattern{});
-      scan->Init();
-      Triple triple;
-      while (scan->Next(&triple)) {
-        explicit_triples_.insert(triple);
-      }
-      for (const auto& triple : inferred_) {
-        explicit_triples_.erase(triple);
-      }
-      explicit_ready_ = true;
-    }
     Rematerialize(txn);
     CommitTransaction(txn);
     KeepInference();
