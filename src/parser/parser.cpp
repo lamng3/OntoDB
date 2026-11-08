@@ -613,15 +613,19 @@ void Parser::ParseTriplesSameSubject(std::vector<AstTriple>* out) {
         out->push_back(std::move(triple));
       }
     } else {
+      // Clone every object but the last before the move, so the path is not
+      // used again after it is moved.
+      std::vector<std::unique_ptr<AstPath>> paths;
+      paths.reserve(objects.size());
+      for (size_t i = 1; i < objects.size(); i++) {
+        paths.push_back(ClonePath(*path));
+      }
+      paths.push_back(std::move(path));
       for (size_t i = 0; i < objects.size(); i++) {
         AstTriple triple;
         triple.subject = subject;
         triple.object = objects[i];
-        if (i + 1 == objects.size()) {
-          triple.path = std::move(path);
-        } else {
-          triple.path = ClonePath(*path);
-        }
+        triple.path = std::move(paths[i]);
         out->push_back(std::move(triple));
       }
     }
