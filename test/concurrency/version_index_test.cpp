@@ -224,3 +224,45 @@ TEST(VersionIndex, AReaderNeverSeesPartOfACommit) {
 
 }  // namespace
 }  // namespace ontodb
+
+namespace ontodb {
+namespace {
+
+TEST(VersionIndexVacuum, KeepsWhatATimestampItKeepsCanSeeAndDropsTheRest) {
+  VersionIndex index;
+  const Triple a{1, 2, 3};
+  const Triple b{1, 2, 4};
+  const Triple c{5, 2, 3};
+  index.Apply({{true, a}});  // 1
+  index.Tag("first");
+  index.Apply({{true, b}});              // 2: never named
+  index.Apply({{false, b}, {true, c}});  // 3
+  index.Apply({{false, a}});             // 4
+  const auto first = index.Scan({}, 1);
+  const auto latest = index.Scan({}, 4);
+  const auto stats = index.Vacuum({1, 4}, 4);
+  EXPECT_EQ(stats.spans_dropped, 1U);  // b, seen only by commit 2
+  EXPECT_EQ(stats.triples_dropped, 1U);
+  EXPECT_EQ(index.Scan({}, 1), first);
+  EXPECT_EQ(index.Scan({}, 4), latest);
+  EXPECT_EQ(index.Scan(TriplePattern{1, 2, std::nullopt}, 4).size(), 0U);
+  EXPECT_FALSE(index.Contains(b, 2));  // what commit 2 alone saw is gone
+  EXPECT_EQ(index.FindTag("first"), 1U);
+  EXPECT_EQ(index.Clock(), 4U);
+}
+
+TEST(VersionIndexVacuum, AChangeAfterTheOldestOpenSnapshotIsKeptForTheConflictCheck) {
+  VersionIndex index;
+  const Triple a{1, 2, 3};
+  index.Apply({{true, a}});   // 1
+  index.Apply({{false, a}});  // 2
+  index.Apply({{true, a}});   // 3
+  index.Apply({{false, a}});  // 4: a writer whose snapshot is 1 must still see a changed at 4
+  index.Vacuum({4}, 1);
+  EXPECT_EQ(index.LastChange(a), 4U);
+  index.Vacuum({4}, 4);
+  EXPECT_EQ(index.LastChange(a), 0U);  // no snapshot is that old any more
+}
+
+}  // namespace
+}  // namespace ontodb

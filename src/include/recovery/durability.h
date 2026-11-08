@@ -80,6 +80,7 @@ class Durability {
   // log's order is the order of the timestamps.
   void LogCommit(const std::vector<VersionChange>& changes);
   void LogTag(const std::string& name, commit_ts_t at);
+  void LogVacuum(const std::vector<commit_ts_t>& keep, commit_ts_t horizon);
 
   // Writes a snapshot of the current state and starts an empty log.
   auto Checkpoint() -> std::string;

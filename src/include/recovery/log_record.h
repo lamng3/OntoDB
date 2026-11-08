@@ -30,6 +30,7 @@ namespace ontodb {
 //     term        u64 term_id, u32 n, then n bytes of canonical spelling
 //     page        i32 page_id, then the page's PAGE_SIZE - 8 bytes after its pageLSN
 //     tag         u64 commit timestamp, u32 n, then n bytes of the version's name
+//     vacuum      u64 horizon, u32 n, then n x u64 timestamps kept
 //     begin, commit, abort: nothing
 //
 // A page record (PLAN 8.3) is a physical after-image: redo copies it back
@@ -45,7 +46,8 @@ enum class LogRecordType {
   kCheckpoint,
   kTerm,
   kPage,
-  kTag
+  kTag,
+  kVacuum
 };
 
 // A record whose bytes are all present but wrong: bad checksum, bad type, or
@@ -98,6 +100,8 @@ class LogRecord {
   // `bytes` is the page after its pageLSN: PAGE_SIZE - 8 bytes.
   static auto Page(page_id_t page, const char* bytes) -> LogRecord;
   static auto Tag(const std::string& name, uint64_t timestamp) -> LogRecord;
+  static auto Vacuum(uint64_t horizon, const std::vector<int64_t>& kept) -> LogRecord;
+  auto GetVacuumHorizon() const -> uint64_t { return term_id_; }
 
  private:
   LogRecordType type_{LogRecordType::kInvalid};

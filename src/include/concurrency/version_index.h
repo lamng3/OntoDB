@@ -54,8 +54,10 @@ struct VersionTag {
 // A tag names a timestamp, for good: it can never move to another, and a name given to the
 // timestamp it already has is not a change.
 //
-// History is kept until the database is deleted; nothing vacuums it. An ontology's history is small
-// next to its value, but a workload of many updates would want a retention policy.
+// History is kept until Vacuum drops what nothing needs: a span survives when a kept timestamp
+// falls in it (a tag, the latest commit, a reader's snapshot), or when it ends after `horizon`, the
+// oldest snapshot still open, so that LastChange still sees every change a writer must conflict
+// with.
 class VersionIndex {
  public:
   // Commits one transaction's changes, in the order they were made, and returns its timestamp.
@@ -84,6 +86,14 @@ class VersionIndex {
                commit_ts_t clock);
   // Gives every triple new ids, for a backend switch, where the dictionary's ids change.
   void Remap(const std::function<Triple(const Triple&)>& to);
+
+  struct VacuumStats {
+    size_t spans_dropped{0};
+    size_t triples_dropped{0};
+  };
+  // Drops every span no timestamp in `keep` falls in and that ended at or before `horizon`, and
+  // every triple left with none. Names, the clock, and the dictionary are untouched.
+  auto Vacuum(const std::vector<commit_ts_t>& keep, commit_ts_t horizon) -> VacuumStats;
 
   // How many triples have ever existed, and how many spans they have.
   auto TripleCount() const -> size_t;

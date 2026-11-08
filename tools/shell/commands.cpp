@@ -295,6 +295,15 @@ auto Replace(Database& db, const std::string& arg) -> CommandResult {
   return Text(out.str());
 }
 
+auto Vacuum(Database& db) -> CommandResult {
+  const auto stats = db.Vacuum();
+  std::ostringstream out;
+  out << "dropped " << stats.spans_dropped << " spans and " << stats.triples_dropped
+      << " triples no version needs; " << db.GetVersions().Tags().size()
+      << " versions and the latest kept";
+  return Text(out.str());
+}
+
 auto BuildCommands() -> std::vector<ShellCommand> {
   using Run = std::function<CommandResult(Database&, const std::string&)>;
   auto no_arg = [](auto fn) -> Run {
@@ -366,6 +375,11 @@ auto BuildCommands() -> std::vector<ShellCommand> {
       {"\\tag", "\\tag <name>", "name the newest commit as a version, for good", {}, Tag},
       {"\\at", "\\at <version>|latest", "read that version from now on, without locks", {}, At},
       {"\\versions", "\\versions", "the named versions", {}, no_arg(Versions)},
+      {"\\vacuum",
+       "\\vacuum",
+       "drop the history no named version, latest commit, or open reader needs",
+       {},
+       no_arg(Vacuum)},
       {"\\replace",
        "\\replace <file>",
        "make the database exactly this file, as one commit of what differs",

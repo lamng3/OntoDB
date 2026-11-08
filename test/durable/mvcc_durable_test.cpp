@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include "common/crash_point.h"
 #include "common/crc32c.h"
@@ -276,6 +277,60 @@ TEST(MvccDurable, ATagCannotMoveEvenAfterAReopen) {
   Insert(*db, kB);
   EXPECT_THROW(db->Tag("0.1.0"), std::invalid_argument);
   EXPECT_THROW(db->Tag("two words"), std::invalid_argument);
+}
+
+}  // namespace
+}  // namespace ontodb
+
+namespace ontodb {
+namespace {
+
+TEST(MvccVacuum, NamedVersionsTheLatestAndOpenSnapshotsSurviveAndSoDoesAReopen) {
+  test::TempDir dir;
+  const std::string all = "SELECT ?s WHERE { ?s <http://ex/p> ?o }";
+  {
+    auto db = Database::Open(dir.path());
+    db->Execute("INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/o> . }", nullptr);
+    db->Tag("1.0");
+    for (int i = 0; i < 5; i++) {  // churn no one names
+      db->Execute(
+          "INSERT DATA { <http://ex/t" + std::to_string(i) + "> <http://ex/p> <http://ex/o> . }",
+          nullptr);
+      db->Execute(
+          "DELETE DATA { <http://ex/t" + std::to_string(i) + "> <http://ex/p> <http://ex/o> . }",
+          nullptr);
+    }
+    db->Execute("INSERT DATA { <http://ex/b> <http://ex/p> <http://ex/o> . }", nullptr);
+    const auto stats = db->Vacuum();
+    EXPECT_EQ(stats.triples_dropped, 5U);
+    EXPECT_TRUE(db->Verify().find("verify: ok") != std::string::npos);
+    db->SetAt("1.0");
+    EXPECT_EQ(db->Execute(all, nullptr).rows.size(), 1U);
+    db->SetAt("latest");
+    EXPECT_EQ(db->Execute(all, nullptr).rows.size(), 2U);
+  }
+  auto db = Database::Open(dir.path());
+  EXPECT_EQ(db->GetVersions().TripleCount(), 2U);
+  db->SetAt("1.0");
+  EXPECT_EQ(db->Execute(all, nullptr).rows.size(), 1U);
+  EXPECT_THROW(Database::Open(dir.path(), RecoveryMode::kPointInTime, nullptr, true)->Vacuum(),
+               std::runtime_error);
+}
+
+TEST(MvccVacuum, AnOpenSnapshotStillReadsWhatItBeganWith) {
+  Database db;
+  auto config = db.GetConfig();
+  config.isolation = IsolationLevel::kSnapshot;
+  db.UpdateConfig(config);
+  db.Execute("INSERT DATA { <http://ex/a> <http://ex/p> <http://ex/o> . }", nullptr);
+  db.Begin();  // snapshot at commit 1
+  std::thread writer([&] {
+    db.Execute("DELETE DATA { <http://ex/a> <http://ex/p> <http://ex/o> . }", nullptr);
+    db.Vacuum();
+  });
+  writer.join();
+  EXPECT_EQ(db.Execute("SELECT ?s WHERE { ?s ?p ?o }", nullptr).rows.size(), 1U);
+  db.Commit();
 }
 
 }  // namespace

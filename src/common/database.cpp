@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -124,6 +125,28 @@ void Database::CommitTransaction(Transaction* txn) {
   }
   versions_.Apply(changes);
   txns_->Commit(txn);
+}
+
+auto Database::Vacuum() -> VersionIndex::VacuumStats {
+  RefuseIfReadOnly("\\vacuum");
+  std::lock_guard<std::mutex> guard(commit_mu_);
+  std::vector<commit_ts_t> keep{versions_.Clock()};
+  for (const auto& tag : versions_.Tags()) {
+    keep.push_back(tag.ts);
+  }
+  commit_ts_t horizon = versions_.Clock();
+  for (const txn_id_t id : txns_->ActiveTransactions()) {
+    if (const Transaction* txn = txns_->GetTransaction(id); txn != nullptr && txn->GetSnapshot()) {
+      keep.push_back(*txn->GetSnapshot());
+      horizon = std::min(horizon, *txn->GetSnapshot());
+    }
+  }
+  std::sort(keep.begin(), keep.end());
+  keep.erase(std::unique(keep.begin(), keep.end()), keep.end());
+  if (durability_) {
+    durability_->LogVacuum(keep, horizon);
+  }
+  return versions_.Vacuum(keep, horizon);
 }
 
 auto Database::Tag(const std::string& name) -> commit_ts_t {

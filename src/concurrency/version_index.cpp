@@ -217,6 +217,34 @@ void VersionIndex::Remap(const std::function<Triple(const Triple&)>& to) {
   }
 }
 
+auto VersionIndex::Vacuum(const std::vector<commit_ts_t>& keep,
+                          commit_ts_t horizon) -> VacuumStats {
+  std::unique_lock<std::shared_mutex> guard(mu_);
+  VacuumStats stats;
+  for (auto it = spo_.begin(); it != spo_.end();) {
+    auto& spans = it->second;
+    const auto needed = [&](const VersionSpan& s) {
+      return s.end > horizon || std::any_of(keep.begin(), keep.end(), [&](commit_ts_t k) {
+               return s.begin <= k && k < s.end;
+             });
+    };
+    const auto before = spans.size();
+    spans.erase(std::remove_if(spans.begin(), spans.end(),
+                               [&](const VersionSpan& s) { return !needed(s); }),
+                spans.end());
+    stats.spans_dropped += before - spans.size();
+    if (spans.empty()) {
+      pos_.erase(ToPos(it->first));
+      osp_.erase(ToOsp(it->first));
+      it = spo_.erase(it);
+      stats.triples_dropped++;
+    } else {
+      ++it;
+    }
+  }
+  return stats;
+}
+
 auto VersionIndex::TripleCount() const -> size_t {
   std::shared_lock<std::shared_mutex> guard(mu_);
   return spo_.size();

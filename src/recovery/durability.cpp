@@ -69,7 +69,11 @@ auto Replay(const std::vector<LogRecord>& records, lsn_t after_lsn, Dictionary& 
     if (record.GetLsn() <= after_lsn) {
       continue;
     }
-    if (record.GetType() == LogRecordType::kTag) {
+    if (record.GetType() == LogRecordType::kVacuum) {
+      const auto& kept = record.GetActiveTxns();
+      versions.Vacuum(std::vector<commit_ts_t>(kept.begin(), kept.end()),
+                      record.GetVacuumHorizon());
+    } else if (record.GetType() == LogRecordType::kTag) {
       try {
         versions.Tag(record.GetTagName(), record.GetTagTimestamp());
       } catch (const std::invalid_argument& ex) {
@@ -278,6 +282,12 @@ auto Durability::ReplayLog(const LogScan& scan, lsn_t snapshot_lsn, OpenReport* 
 void Durability::LogTag(const std::string& name, commit_ts_t at) {
   std::lock_guard<std::mutex> guard(mu_);
   auto record = LogRecord::Tag(name, at);
+  log_->Flush(log_->Append(&record), true);
+}
+
+void Durability::LogVacuum(const std::vector<commit_ts_t>& keep, commit_ts_t horizon) {
+  std::lock_guard<std::mutex> guard(mu_);
+  auto record = LogRecord::Vacuum(horizon, std::vector<int64_t>(keep.begin(), keep.end()));
   log_->Flush(log_->Append(&record), true);
 }
 

@@ -104,6 +104,10 @@ class Database {
 
   // Names the newest commit, for good, and returns its timestamp. Durable before it returns.
   auto Tag(const std::string& name) -> commit_ts_t;
+  // Drops the history nothing needs: every version stays readable by its name, the latest stays,
+  // and so does whatever an open snapshot or a session at a version reads. Durable before it
+  // returns.
+  auto Vacuum() -> VersionIndex::VacuumStats;
   // This thread reads the named version from now on, without locks, and may not write: a version
   // does not change. "latest" goes back. Refused inside a transaction.
   void SetAt(const std::string& name);

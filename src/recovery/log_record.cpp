@@ -80,6 +80,8 @@ auto TypeName(LogRecordType type) -> const char* {
       return "page";
     case LogRecordType::kTag:
       return "tag";
+    case LogRecordType::kVacuum:
+      return "vacuum";
     case LogRecordType::kInvalid:
       break;
   }
@@ -99,6 +101,9 @@ auto LogRecord::Size() const -> uint32_t {
       break;
     case LogRecordType::kCheckpoint:
       size += 4 + static_cast<uint32_t>(active_.size()) * 8;
+      break;
+    case LogRecordType::kVacuum:
+      size += 8 + 4 + static_cast<uint32_t>(active_.size()) * 8;
       break;
     case LogRecordType::kTerm:
     case LogRecordType::kTag:
@@ -130,7 +135,10 @@ void LogRecord::SerializeTo(char* dest) const {
     if (type_ == LogRecordType::kClr) {
       out.Put<int64_t>(undo_next_);
     }
-  } else if (type_ == LogRecordType::kCheckpoint) {
+  } else if (type_ == LogRecordType::kCheckpoint || type_ == LogRecordType::kVacuum) {
+    if (type_ == LogRecordType::kVacuum) {
+      out.Put<uint64_t>(term_id_);
+    }
     out.Put<uint32_t>(static_cast<uint32_t>(active_.size()));
     for (const txn_id_t txn : active_) {
       out.Put<int64_t>(txn);
@@ -170,7 +178,7 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
   in.Get<uint32_t>();
   LogRecord record;
   const auto type = in.Get<uint8_t>();
-  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kTag)) {
+  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kVacuum)) {
     throw LogCorruptionException("log record: unknown type " + std::to_string(type));
   }
   record.type_ = static_cast<LogRecordType>(type);
@@ -186,7 +194,10 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
     if (record.type_ == LogRecordType::kClr) {
       record.undo_next_ = in.Get<int64_t>();
     }
-  } else if (record.type_ == LogRecordType::kCheckpoint) {
+  } else if (record.type_ == LogRecordType::kCheckpoint || record.type_ == LogRecordType::kVacuum) {
+    if (record.type_ == LogRecordType::kVacuum) {
+      record.term_id_ = in.Get<uint64_t>();
+    }
     const auto n = in.Get<uint32_t>();
     for (uint32_t i = 0; i < n; i++) {
       record.active_.push_back(in.Get<int64_t>());
@@ -216,6 +227,8 @@ auto LogRecord::ToString() const -> std::string {
     }
   } else if (type_ == LogRecordType::kCheckpoint) {
     out << " active " << active_.size();
+  } else if (type_ == LogRecordType::kVacuum) {
+    out << " horizon " << term_id_ << " keeps " << active_.size();
   } else if (type_ == LogRecordType::kTag) {
     out << " " << term_text_ << " at " << term_id_;
   } else if (type_ == LogRecordType::kTerm) {
@@ -285,6 +298,14 @@ auto LogRecord::Tag(const std::string& name, uint64_t timestamp) -> LogRecord {
   record.type_ = LogRecordType::kTag;
   record.term_id_ = timestamp;
   record.term_text_ = name;
+  return record;
+}
+
+auto LogRecord::Vacuum(uint64_t horizon, const std::vector<int64_t>& kept) -> LogRecord {
+  LogRecord record;
+  record.type_ = LogRecordType::kVacuum;
+  record.term_id_ = horizon;
+  record.active_ = kept;
   return record;
 }
 
