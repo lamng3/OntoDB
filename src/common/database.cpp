@@ -136,10 +136,16 @@ auto Database::Vacuum() -> VersionIndex::VacuumStats {
   }
   commit_ts_t horizon = versions_.Clock();
   for (const txn_id_t id : txns_->ActiveTransactions()) {
-    if (const Transaction* txn = txns_->GetTransaction(id); txn != nullptr && txn->GetSnapshot()) {
-      keep.push_back(*txn->GetSnapshot());
-      horizon = std::min(horizon, *txn->GetSnapshot());
+    const Transaction* txn = txns_->GetTransaction(id);
+    if (txn == nullptr) {
+      continue;
     }
+    const auto snapshot = txn->GetSnapshot();
+    if (!snapshot.has_value()) {
+      continue;
+    }
+    keep.push_back(*snapshot);
+    horizon = std::min(horizon, *snapshot);
   }
   std::sort(keep.begin(), keep.end());
   keep.erase(std::unique(keep.begin(), keep.end()), keep.end());
