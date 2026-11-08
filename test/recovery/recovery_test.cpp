@@ -58,6 +58,7 @@ TEST(P8_1_LogRecord, RoundTrip) {
       LogRecord::Update(3, 9, true, triple),
       LogRecord::Clr(3, 9, false, triple, 12),
       LogRecord::Checkpoint({1, 2, 3}),
+      LogRecord::CheckpointBegin(),
   };
   for (auto record : records) {
     std::vector<char> buf(record.Size());
@@ -231,6 +232,69 @@ TEST(LogHousekeeping, LaterChangesAreDiffsAndAFuzzyCheckpointTruncates) {
   EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[64]), 0x22);
   EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[68]), 0x11);
   EXPECT_EQ(bpm.GetPinnedFrameCount(), 1u);
+}
+
+// A fuzzy checkpoint copies its tables while writers run. A page change
+// logged after the copy but before the checkpoint record is older than the
+// checkpoint and missing from its dirty page table. The begin record, written
+// before the copy, is what keeps recovery and truncation from losing it. This
+// replays that interleaving step by step.
+TEST(LogHousekeeping, AChangeDuringTheCheckpointCopyIsRedoneAndKept) {
+  test::TempDir dir;
+  const auto db_path = (dir.path() / "db").string();
+  const auto log_path = (dir.path() / "wal").string();
+  page_id_t id = INVALID_PAGE_ID;
+  lsn_t change_lsn = INVALID_LSN;
+  {
+    DiskManager disk(db_path);
+    LogManager log(log_path);
+    log.StartFlushThread();
+    BufferPoolManager bpm(8, &disk, 2, &log);
+    {
+      auto guard = bpm.NewPageGuarded(&id);
+      std::memset(guard.GetData() + 64, 0x11, 32);
+    }
+    bpm.FlushAllPages();  // the page on disk holds 0x11 and is clean
+
+    // CheckpointFuzzy, with a writer slipping in between the copy and the record.
+    auto begin = LogRecord::CheckpointBegin();
+    log.Append(&begin);
+    bpm.NoteCheckpoint();
+    const auto dirty = bpm.DirtyPages();  // the copy: the page is clean here
+    EXPECT_TRUE(std::none_of(dirty.begin(), dirty.end(),
+                             [&](const auto& entry) { return entry.first == id; }));
+    {
+      auto guard = bpm.FetchPageWrite(id);
+      std::memset(guard.GetData() + 64, 0x33, 4);
+    }
+    for (const auto& record : log.ReadAll()) {
+      if ((record.GetType() == LogRecordType::kPage ||
+           record.GetType() == LogRecordType::kPageDiff) &&
+          record.GetPageId() == id) {
+        change_lsn = record.GetLsn();
+      }
+    }
+    auto checkpoint = LogRecord::Checkpoint({}, dirty);
+    const lsn_t checkpoint_lsn = log.Append(&checkpoint);
+    log.Flush(checkpoint_lsn, true);
+    ASSERT_NE(change_lsn, INVALID_LSN);
+    ASSERT_LT(change_lsn, checkpoint_lsn);
+
+    // Truncation must keep the change.
+    EXPECT_LE(LogCompactor::OldestNeeded(log.ReadAll(), checkpoint_lsn), change_lsn);
+    log.StopFlushThread();
+    // The process dies here: the changed page was never written.
+  }
+  DiskManager disk(db_path);
+  LogManager log(log_path);
+  BufferPoolManager bpm(8, &disk, 2, &log);
+  LogRecovery recovery(&log, &bpm, &disk, nullptr);
+  recovery.Analyze();
+  recovery.Redo();
+  auto guard = bpm.FetchPageRead(id);
+  ASSERT_TRUE(guard.IsValid());
+  EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[64]), 0x33);
+  EXPECT_EQ(static_cast<unsigned char>(guard.GetData()[68]), 0x11);
 }
 
 TEST(P8_5_Checkpoint, RecordsDurableLsn) {

@@ -55,7 +55,8 @@ enum class LogRecordType {
   kPage,
   kTag,
   kVacuum,
-  kPageDiff
+  kPageDiff,
+  kCheckpointBegin
 };
 
 // One changed run in a page diff. `offset` is into the page after its pageLSN.
@@ -116,6 +117,10 @@ class LogRecord {
                   lsn_t undo_next) -> LogRecord;
   // `dirty` is the fuzzy checkpoint's dirty page table: each page's recLSN, the
   // first log record that dirtied it. A sharp checkpoint passes an empty one.
+  // Opens a fuzzy checkpoint, before its tables are copied. Recovery reads
+  // from here, not from the checkpoint record, so a change logged while the
+  // tables were being copied is not missed.
+  static auto CheckpointBegin() -> LogRecord;
   static auto Checkpoint(const std::vector<txn_id_t>& active,
                          const std::vector<std::pair<page_id_t, lsn_t>>& dirty = {}) -> LogRecord;
   static auto Term(txn_id_t txn, term_id_t id, const std::string& text) -> LogRecord;

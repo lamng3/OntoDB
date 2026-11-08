@@ -84,6 +84,8 @@ auto TypeName(LogRecordType type) -> const char* {
       return "tag";
     case LogRecordType::kVacuum:
       return "vacuum";
+    case LogRecordType::kCheckpointBegin:
+      return "checkpoint-begin";
     case LogRecordType::kInvalid:
       break;
   }
@@ -203,7 +205,7 @@ auto LogRecord::Deserialize(const char* src, size_t len) -> LogRecord {
   in.Get<uint32_t>();
   LogRecord record;
   const auto type = in.Get<uint8_t>();
-  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kPageDiff)) {
+  if (type == 0 || type > static_cast<uint8_t>(LogRecordType::kCheckpointBegin)) {
     throw LogCorruptionException("log record: unknown type " + std::to_string(type));
   }
   record.type_ = static_cast<LogRecordType>(type);
@@ -322,6 +324,11 @@ auto LogRecord::Clr(txn_id_t txn, page_id_t page, bool is_insert, const Triple& 
   record.is_insert_ = is_insert;
   record.triple_ = triple;
   record.undo_next_ = undo_next;
+  return record;
+}
+auto LogRecord::CheckpointBegin() -> LogRecord {
+  LogRecord record;
+  record.type_ = LogRecordType::kCheckpointBegin;
   return record;
 }
 auto LogRecord::Checkpoint(const std::vector<txn_id_t>& active,

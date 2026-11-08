@@ -3,6 +3,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "recovery/checkpoint_manager.h"
 
@@ -25,6 +26,11 @@ class LogCompactor {
   void Stop();
   // One pass, without the thread. Tests call this.
   void RunOnce();
+  // The LSN the log must keep from, given the checkpoint record at
+  // `checkpoint`: the smallest of its begin record (or the checkpoint itself
+  // when it has none), every dirty page's recLSN, and the first record of
+  // every transaction it lists as active.
+  static auto OldestNeeded(const std::vector<LogRecord>& records, lsn_t checkpoint) -> lsn_t;
 
  private:
   void Loop();

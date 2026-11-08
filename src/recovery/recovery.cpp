@@ -2,6 +2,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 
@@ -48,11 +49,19 @@ void CheckpointManager::Checkpoint() {
 // and do not write pages or wait for writers. Redo starts at the oldest
 // recLSN in that table. The next change of each page is logged in full.
 void CheckpointManager::CheckpointFuzzy() {
+  // The begin record comes before the tables are copied. A change logged
+  // between the copy and the checkpoint record is older than the checkpoint
+  // and may be missing from its tables, but it is newer than the begin
+  // record, and analysis reads forward from there. The next change of each
+  // page after the begin record is logged in full, so redo from the begin
+  // record never applies a diff to a torn page.
+  auto begin = LogRecord::CheckpointBegin();
+  log_->Append(&begin);
+  bpm_->NoteCheckpoint();
   auto record = LogRecord::Checkpoint(txn_mgr_->ActiveTransactions(), bpm_->DirtyPages());
   const lsn_t lsn = log_->Append(&record);
   log_->Flush(lsn, true);
   last_ = lsn;
-  bpm_->NoteCheckpoint();
 }
 
 auto CheckpointManager::LastCheckpointLsn() const -> lsn_t {
@@ -69,6 +78,7 @@ void LogRecovery::Analyze() {
   enum class Fate { kActive, kCommitted, kEnded };
   std::map<txn_id_t, Fate> fate;
   size_t start = 0;
+  std::optional<size_t> begun;  // the open fuzzy checkpoint's begin record
   for (size_t i = 0; i < records_.size(); i++) {
     const LogRecord& r = records_[i];
     switch (r.GetType()) {
@@ -83,8 +93,14 @@ void LogRecovery::Analyze() {
       case LogRecordType::kAbort:
         fate[r.GetTxnId()] = Fate::kEnded;
         break;
+      case LogRecordType::kCheckpointBegin:
+        begun = i;
+        break;
       case LogRecordType::kCheckpoint:
-        start = i;
+        // Read forward from the begin record when there is one: changes logged
+        // while the tables were copied lie between it and this record.
+        start = begun.value_or(i);
+        begun.reset();
         for (const txn_id_t txn : r.GetActiveTxns()) {
           fate.emplace(txn, Fate::kActive);
         }

@@ -56,9 +56,26 @@ void LogCompactor::RunOnce() {
   if (checkpoint == INVALID_LSN) {
     return;
   }
-  const auto records = log_->ReadAll();
+  log_->Truncate(OldestNeeded(log_->ReadAll(), checkpoint));
+}
+
+auto LogCompactor::OldestNeeded(const std::vector<LogRecord>& records, lsn_t checkpoint) -> lsn_t {
   std::set<txn_id_t> active;
   lsn_t keep = checkpoint;
+  lsn_t begun = INVALID_LSN;  // the latest begin record before the checkpoint
+  for (const auto& record : records) {
+    if (record.GetLsn() >= checkpoint) {
+      break;
+    }
+    if (record.GetType() == LogRecordType::kCheckpointBegin) {
+      begun = record.GetLsn();
+    } else if (record.GetType() == LogRecordType::kCheckpoint) {
+      begun = INVALID_LSN;
+    }
+  }
+  if (begun != INVALID_LSN) {
+    keep = begun;
+  }
   for (const auto& record : records) {
     if (record.GetLsn() != checkpoint || record.GetType() != LogRecordType::kCheckpoint) {
       continue;
@@ -81,7 +98,7 @@ void LogCompactor::RunOnce() {
     }
     keep = std::min(keep, record.GetLsn());
   }
-  log_->Truncate(keep);
+  return keep;
 }
 
 }  // namespace ontodb
