@@ -92,6 +92,7 @@ auto ShowSettings(const Config& config) -> CommandResult {
       << "lru_k " << config.lru_k << '\n'
       << "join " << JoinName(config.join) << '\n'
       << "entail " << (config.entail ? "on" : "off") << '\n'
+      << "inference " << (config.inference ? "rdfs" : "off") << '\n'
       << "isolation " << IsolationName(config.isolation);
   return Text(out.str());
 }
@@ -115,6 +116,11 @@ auto SetKnob(Config& config, const std::string& key, const std::string& value) -
       return "error: entail is on or off";
     }
     config.entail = value == "on";
+  } else if (key == "inference") {
+    if (value != "rdfs" && value != "off") {
+      return "error: inference is rdfs or off";
+    }
+    config.inference = value == "rdfs";
   } else if (key == "join") {
     for (const auto join : {JoinMethod::kAuto, JoinMethod::kNestedLoop,
                             JoinMethod::kIndexNestedLoop, JoinMethod::kHash}) {
@@ -157,7 +163,11 @@ auto Set(Database& db, const std::string& arg) -> CommandResult {
   if (config.backend != db.GetConfig().backend) {
     db.SetBackend(config.backend);  // moves the triples; may throw
   }
+  const bool inference_changed = config.inference != db.GetConfig().inference;
   db.UpdateConfig(config);
+  if (inference_changed) {
+    db.SetInference(config.inference);
+  }
   return Ok();
 }
 
@@ -352,7 +362,8 @@ auto BuildCommands() -> std::vector<ShellCommand> {
        "\\set",
        "show settings",
        {"\\set backend mem|indexed", "\\set pool_size N", "\\set lru_k K",
-        "\\set join auto|nlj|inlj|hash", "\\set isolation ru|rc|rr|ser|si"},
+        "\\set join auto|nlj|inlj|hash", "\\set isolation ru|rc|rr|ser|si",
+        "\\set inference rdfs|off"},
        Set},
       {"\\bpm", "\\bpm", "buffer pool frames", {}, no_arg([](Database& db) {
          return Text(db.BufferPoolDebug());

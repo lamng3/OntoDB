@@ -120,6 +120,13 @@ auto Estimate(const AbstractPlanNode* node, const CardinalityEstimator& estimato
     case PlanType::kDelete:
       result.rows = static_cast<double>(static_cast<const DeletePlan*>(node)->Triples().size());
       break;
+    case PlanType::kAlgebra:
+    case PlanType::kAggregate:
+    case PlanType::kUpdate:
+      if (!node->GetChildren().empty()) {
+        result = Estimate(node->GetChildAt(0), estimator, out);
+      }
+      break;
     default:
       result = Estimate(node->GetChildAt(0), estimator, out);
       if (node->GetType() == PlanType::kFilter) {
@@ -194,8 +201,10 @@ auto ExecutionEngine::Execute(const BoundQuery& query) -> StatementResult {
     executor->Init();
     Row count;
     const size_t changed = executor->Next(&count) ? static_cast<size_t>(count.at(0)) : 0;
-    result.message =
-        CountMessage(query.kind == BoundQuery::Kind::kInsert ? "inserted" : "deleted", changed);
+    const char* verb = query.update_where                        ? "changed"
+                       : query.kind == BoundQuery::Kind::kInsert ? "inserted"
+                                                                 : "deleted";
+    result.message = CountMessage(verb, changed);
   } else {
     auto executor = ExecutorFactory::Create(plan.get(), ctx_);
     executor->Init();

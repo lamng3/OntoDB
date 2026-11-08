@@ -23,6 +23,7 @@
 #include "execution/execution_engine.h"
 #include "loader/rdf_loader.h"
 #include "recovery/durability.h"
+#include "semantic/rdfs.h"
 #include "semantic/semantic_engine.h"
 #include "semantic/type_entailment_index.h"
 #include "stats/statistics.h"
@@ -88,6 +89,10 @@ class Database {
 
   auto GetConfig() -> Config;
   void UpdateConfig(const Config& config);
+  // Turns RDFS materialization on or off and brings the store in line with it.
+  // On, the closure of the stated triples is inserted. Off, those inferred
+  // triples are removed. The config flag is updated either way.
+  void SetInference(bool on);
   void SetTracing(bool enabled);
 
   auto BufferPoolDebug() const -> std::string;
@@ -186,6 +191,20 @@ class Database {
   std::optional<commit_ts_t> hierarchy_at_;
   std::mutex statistics_mu_;
   std::shared_ptr<const Statistics> statistics_;
+
+  // Stated triples, and the triples the RDFS closure added. A transaction
+  // remembers both at its start so abort can put them back with the store.
+  void RememberInference();
+  void RestoreInference();
+  void KeepInference();
+  void AbsorbInference(Transaction* txn, size_t mark);
+  void Rematerialize(Transaction* txn);
+  std::set<Triple> explicit_triples_;
+  std::set<Triple> inferred_;
+  bool explicit_ready_{false};
+  bool inference_saved_{false};
+  std::set<Triple> saved_explicit_;
+  std::set<Triple> saved_inferred_;
 
   void StartHousekeeping();
   void HousekeepingLoop();

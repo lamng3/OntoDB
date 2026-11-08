@@ -1,5 +1,6 @@
 #include "planner/planner.h"
 
+#include "execution/plans/algebra_plan.h"
 #include "execution/plans/filter_plan.h"
 #include "execution/plans/nested_loop_join_plan.h"
 #include "execution/plans/projection_plan.h"
@@ -35,15 +36,18 @@ auto CloneFilter(const BoundFilter& filter) -> std::unique_ptr<BoundFilter> {
 }  // namespace
 
 auto Planner::Plan(const BoundQuery& query) const -> PlanNodeRef {
-  if (query.kind == BoundQuery::Kind::kInsert) {
+  if (!query.update_where && query.kind == BoundQuery::Kind::kInsert) {
     return std::make_unique<InsertPlan>(query.ground_triples);
   }
-  if (query.kind == BoundQuery::Kind::kDelete) {
+  if (!query.update_where && query.kind == BoundQuery::Kind::kDelete) {
     return std::make_unique<DeletePlan>(query.ground_triples);
   }
 
   const Schema wide = FullSchema(query);
   PlanNodeRef plan;
+  if (query.pattern != nullptr) {
+    plan = std::make_unique<AlgebraPlan>(wide, query.pattern, query.var_names.size());
+  }
   for (const auto& pattern : query.patterns) {
     auto scan = std::make_unique<TripleScanPlan>(wide, pattern, query.var_names.size());
     if (plan == nullptr) {
@@ -58,6 +62,23 @@ auto Planner::Plan(const BoundQuery& query) const -> PlanNodeRef {
   }
   if (query.filter != nullptr) {
     plan = std::make_unique<FilterPlan>(wide, std::move(plan), CloneFilter(*query.filter));
+  }
+  if (query.update_where) {
+    return std::make_unique<UpdatePlan>(Schema{}, std::move(plan), query.delete_template,
+                                        query.insert_template, query.var_names.size());
+  }
+  if (!query.aggregates.empty() || !query.group_slots.empty()) {
+    Schema grouped;
+    size_t column = 0;
+    for (const size_t slot : query.group_slots) {
+      grouped.columns.push_back(Column{query.var_names[slot], static_cast<uint32_t>(column++)});
+    }
+    for (const auto& aggregate : query.aggregates) {
+      grouped.columns.push_back(Column{aggregate.alias, static_cast<uint32_t>(column++)});
+    }
+    plan = std::make_unique<AggregatePlan>(grouped, std::move(plan), query.aggregates,
+                                           query.group_slots,
+                                           query.having ? CloneFilter(*query.having) : nullptr);
   }
 
   Schema projected;

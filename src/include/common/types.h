@@ -96,6 +96,8 @@ struct Config {
   bool timing{false};
   // Answer `(x rdf:type C)` under RDFS subclass entailment, by interval scans (\set entail on).
   bool entail{false};
+  // Materialize the RDFS closure on each update (\set inference rdfs).
+  bool inference{false};
 };
 
 }  // namespace ontodb

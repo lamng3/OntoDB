@@ -22,6 +22,9 @@ class Binder {
   auto Intern(const std::string& canonical) -> term_id_t;
   auto BindTerm(const AstTerm& term, bool ground_only, bool intern) -> BoundTerm;
   auto BindFilter(const AstFilter& filter) -> std::unique_ptr<BoundFilter>;
+  auto BindPattern(const AstPattern& pattern) -> std::unique_ptr<BoundPattern>;
+  auto BindPath(const AstPath& path) -> std::unique_ptr<BoundPath>;
+  auto BindTriple(const AstTriple& triple, bool ground_only, bool intern) -> BoundTriplePattern;
   auto Slot(const std::string& name, int line, int column) -> size_t;
 
   Dictionary& dictionary_;

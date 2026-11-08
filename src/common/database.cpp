@@ -521,6 +521,122 @@ void Database::UpdateConfig(const Config& config) {
   config_ = config;
 }
 
+void Database::RememberInference() {
+  if (inference_saved_) {
+    return;
+  }
+  saved_explicit_ = explicit_triples_;
+  saved_inferred_ = inferred_;
+  inference_saved_ = true;
+}
+
+void Database::RestoreInference() {
+  if (!inference_saved_) {
+    return;
+  }
+  explicit_triples_ = saved_explicit_;
+  inferred_ = saved_inferred_;
+  inference_saved_ = false;
+}
+
+void Database::KeepInference() {
+  inference_saved_ = false;
+}
+
+void Database::AbsorbInference(Transaction* txn, size_t mark) {
+  if (!explicit_ready_) {
+    std::set<Triple> present;
+    auto scan = GetStore()->Scan(TriplePattern{});
+    scan->Init();
+    Triple triple;
+    while (scan->Next(&triple)) {
+      present.insert(triple);
+    }
+    const auto& writes = txn->GetWriteSet();
+    for (size_t i = writes.size(); i-- > mark;) {
+      if (writes[i].is_insert) {
+        present.erase(writes[i].triple);
+      } else {
+        present.insert(writes[i].triple);
+      }
+    }
+    for (const auto& triple : inferred_) {
+      present.erase(triple);
+    }
+    explicit_triples_ = std::move(present);
+    explicit_ready_ = true;
+  }
+  const auto& writes = txn->GetWriteSet();
+  for (size_t i = mark; i < writes.size(); i++) {
+    if (writes[i].is_insert) {
+      explicit_triples_.insert(writes[i].triple);
+    } else {
+      explicit_triples_.erase(writes[i].triple);
+    }
+  }
+}
+
+void Database::Rematerialize(Transaction* txn) {
+  TripleStore* store = GetStore();
+  auto changed = [&](bool insert, const Triple& triple) {
+    if (txn == nullptr) {
+      return;
+    }
+    txn->GetWriteSet().push_back({insert, triple});
+  };
+  for (const auto& triple : inferred_) {
+    if (!explicit_triples_.contains(triple) && store->Delete(triple)) {
+      changed(false, triple);
+    }
+  }
+  inferred_.clear();
+  if (!GetConfig().inference) {
+    return;
+  }
+  for (const auto& triple : RdfsClosure(explicit_triples_, *GetDictionary())) {
+    if (explicit_triples_.contains(triple)) {
+      continue;
+    }
+    inferred_.insert(triple);
+    if (store->Insert(triple)) {
+      changed(true, triple);
+    }
+  }
+}
+
+void Database::SetInference(bool on) {
+  RefuseIfReadOnly("\\set inference");
+  RefuseAtAVersion("\\set inference");
+  Config config = GetConfig();
+  config.inference = on;
+  UpdateConfig(config);
+  Transaction* txn = BeginTransaction();
+  RememberInference();
+  try {
+    if (!explicit_ready_) {
+      auto scan = GetStore()->Scan(TriplePattern{});
+      scan->Init();
+      Triple triple;
+      while (scan->Next(&triple)) {
+        explicit_triples_.insert(triple);
+      }
+      for (const auto& triple : inferred_) {
+        explicit_triples_.erase(triple);
+      }
+      explicit_ready_ = true;
+    }
+    Rematerialize(txn);
+    CommitTransaction(txn);
+    KeepInference();
+  } catch (...) {
+    txns_->Abort(txn);
+    RestoreInference();
+    throw;
+  }
+  data_version_++;
+  InvalidateStatistics();
+}
+
 void Database::SetTracing(bool enabled) {
   trace_.SetEnabled(enabled);
 }
@@ -572,8 +688,15 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
       ctx.SetEntailment(EntailmentFor(config));
     }
     const auto statistics = is_update ? nullptr : CurrentStatistics();
+    const size_t mark = txn->GetWriteSet().size();
     result = ExecutionEngine(&ctx, statistics.get()).Execute(bound);
+    if (is_update && GetConfig().inference) {
+      RememberInference();
+      AbsorbInference(txn, mark);
+      Rematerialize(txn);
+    }
   } catch (const TransactionAbortException&) {
+    RestoreInference();
     txns_->Abort(txn);
     InvalidateStatistics();
     if (!implicit) {
@@ -583,6 +706,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
     throw;
   } catch (...) {
     if (implicit) {
+      RestoreInference();
       txns_->Abort(txn);
       InvalidateStatistics();
     }
@@ -590,6 +714,7 @@ auto Database::Execute(const std::string& sparql, SessionState* session) -> Stat
   }
   if (implicit) {
     CommitTransaction(txn);
+    KeepInference();
   }
   if (is_update) {
     data_version_++;
@@ -702,7 +827,9 @@ void Database::Commit() {
   }
   try {
     CommitTransaction(txn);
+    KeepInference();
   } catch (...) {
+    RestoreInference();
     std::lock_guard<std::mutex> guard(sessions_mu_);
     current_.erase(std::this_thread::get_id());
     throw;
@@ -716,6 +843,7 @@ void Database::Abort() {
   if (txn == nullptr) {
     throw std::runtime_error("no transaction to abort");
   }
+  RestoreInference();
   txns_->Abort(txn);
   InvalidateStatistics();
   std::lock_guard<std::mutex> guard(sessions_mu_);

@@ -20,7 +20,10 @@ enum class PlanType {
   kLimit,
   kSort,
   kInsert,
-  kDelete
+  kDelete,
+  kAlgebra,
+  kAggregate,
+  kUpdate
 };
 
 class AbstractPlanNode;

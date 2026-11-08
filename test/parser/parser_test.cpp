@@ -57,23 +57,34 @@ TEST(Parser, BindsOrderLimitDistinctWithoutExecuting) {
   EXPECT_EQ(ast.offset, 1);
 }
 
-TEST(Parser, UnsupportedFeaturesNameThePlace) {
-  auto fails = [](const char* query, const char* needle) {
-    try {
-      Parser(query).Parse();
-      FAIL() << query;
-    } catch (const ParseException& ex) {
-      EXPECT_NE(std::string(ex.what()).find(needle), std::string::npos) << ex.what();
-      EXPECT_GE(ex.line(), 1);
-      EXPECT_GE(ex.column(), 1);
-    }
-  };
-  fails("SELECT ?a WHERE { ?a <p> ?b OPTIONAL { ?a <q> ?c } }", "OPTIONAL");
-  fails("SELECT ?a WHERE { ?a <p> ?b UNION ?a <q> ?c }", "UNION");
-  fails("SELECT ?a WHERE { ?a <p>/<q> ?b }", "property paths");
-  fails("SELECT (COUNT(?a) AS ?c) WHERE { ?a <p> ?b }", "aggregates");
-  fails("DELETE { ?a <p> ?b } WHERE { ?a <p> ?b }", "DELETE/INSERT WHERE");
-  fails("INSERT { ?a <p> ?b } WHERE { ?a <p> ?b }", "DELETE/INSERT WHERE");
+TEST(Parser, AcceptsTheFormsThatUsedToBeRejected) {
+  EXPECT_EQ(Parser("SELECT ?a WHERE { ?a <p> ?b OPTIONAL { ?a <q> ?c } }").Parse().pattern->kind,
+            AstPattern::Kind::kJoin);
+  EXPECT_EQ(Parser("SELECT ?a WHERE { { ?a <p> ?b } UNION { ?a <q> ?c } }").Parse().pattern->kind,
+            AstPattern::Kind::kUnion);
+  EXPECT_NE(Parser("SELECT ?a WHERE { ?a <p>/<q> ?b }").Parse().pattern, nullptr);
+  const auto agg = Parser("SELECT (COUNT(?a) AS ?c) WHERE { ?a <p> ?b }").Parse();
+  ASSERT_EQ(agg.aggregates.size(), 1u);
+  EXPECT_EQ(agg.aggregates[0].alias, "c");
+  const auto reduced = Parser("SELECT REDUCED ?a WHERE { ?a <p> ?b }").Parse();
+  EXPECT_TRUE(reduced.reduced);
+  const auto update =
+      Parser("DELETE { ?a <p> ?b } INSERT { ?a <q> ?b } WHERE { ?a <p> ?b }").Parse();
+  EXPECT_TRUE(update.update_where);
+  EXPECT_EQ(update.delete_template.size(), 1u);
+  EXPECT_EQ(update.insert_template.size(), 1u);
+  EXPECT_NE(Parser("SELECT ?a WHERE { ?a <p> ?b MINUS { ?a <q> ?c } }").Parse().pattern, nullptr);
+  EXPECT_NE(Parser("SELECT ?a WHERE { ?a <p> ?b . BIND(?a AS ?c) }").Parse().pattern, nullptr);
+  EXPECT_NE(Parser("SELECT ?a WHERE { VALUES ?a { <http://ex/a> } }").Parse().pattern, nullptr);
+  EXPECT_NE(Parser("SELECT ?a WHERE { GRAPH <urn:ontodb:graph> { ?a <p> ?b } }").Parse().pattern,
+            nullptr);
+  EXPECT_NE(
+      Parser("SELECT ?a WHERE { SERVICE SILENT <http://ex/sparql> { ?a <p> ?b } }").Parse().pattern,
+      nullptr);
+  EXPECT_NE(Parser("SELECT ?a WHERE { [ <p> ?a ] <q> <o> }").Parse().triples.size(), 0u);
+  EXPECT_EQ(
+      Parser("SELECT ?a WHERE { ?a <p> ( <http://ex/a> <http://ex/b> ) }").Parse().triples.size(),
+      5u);
 }
 
 TEST(Binder, ResolvesPrefixAndRejectsUnknown) {

@@ -90,6 +90,12 @@ auto Keyword(const std::string& ident) -> TokenKind {
     return TokenKind::kMax;
   if (word == "sample")
     return TokenKind::kSample;
+  if (word == "as")
+    return TokenKind::kAs;
+  if (word == "silent")
+    return TokenKind::kSilent;
+  if (word == "undef")
+    return TokenKind::kUndef;
   if (word == "base")
     return TokenKind::kBase;
   if (ident == "a")
@@ -189,6 +195,14 @@ auto Lexer::Scan() -> Token {
     take(TokenKind::kLBracket, "[", 1);
     return token;
   }
+  if (c == ']') {
+    take(TokenKind::kRBracket, "]", 1);
+    return token;
+  }
+  if (c == '^' && !(pos_ + 1 < input_.size() && input_[pos_ + 1] == '^')) {
+    take(TokenKind::kCaret, "^", 1);
+    return token;
+  }
   if (c == ';') {
     take(TokenKind::kSemicolon, ";", 1);
     return token;
@@ -268,6 +282,11 @@ auto Lexer::Scan() -> Token {
       }
     }
     if (end == pos_ + 1) {
+      // A bare '?' is the path operator, not a variable.
+      if (c == '?') {
+        take(TokenKind::kQuestion, "?", 1);
+        return token;
+      }
       token.kind = TokenKind::kError;
       token.text = "variable name expected";
       pos_ = end;

@@ -1,6 +1,8 @@
 #include "execution/executor_factory.h"
 
 #include "common/exception.h"
+#include "execution/executors/aggregate_executor.h"
+#include "execution/executors/algebra_executor.h"
 #include "execution/executors/distinct_limit_executor.h"
 #include "execution/executors/filter_executor.h"
 #include "execution/executors/hash_join_executor.h"
@@ -10,6 +12,8 @@
 #include "execution/executors/projection_executor.h"
 #include "execution/executors/sort_executor.h"
 #include "execution/executors/triple_scan_executor.h"
+#include "execution/executors/update_executor.h"
+#include "execution/plans/algebra_plan.h"
 #include "execution/plans/filter_plan.h"
 #include "execution/plans/nested_loop_join_plan.h"
 #include "execution/plans/projection_plan.h"
@@ -91,6 +95,14 @@ auto ExecutorFactory::Build(const AbstractPlanNode* plan, ExecutorContext* ctx,
       return std::make_unique<ModifyExecutor>(ctx, plan, true);
     case PlanType::kDelete:
       return std::make_unique<ModifyExecutor>(ctx, plan, false);
+    case PlanType::kAlgebra:
+      return std::make_unique<AlgebraExecutor>(ctx, static_cast<const AlgebraPlan*>(plan));
+    case PlanType::kAggregate:
+      return std::make_unique<AggregateExecutor>(ctx, Create(plan->GetChildAt(0), ctx, counts),
+                                                 static_cast<const AggregatePlan*>(plan));
+    case PlanType::kUpdate:
+      return std::make_unique<UpdateExecutor>(ctx, Create(plan->GetChildAt(0), ctx, counts),
+                                              static_cast<const UpdatePlan*>(plan));
   }
   throw NotImplementedException("PLAN 4.1: ExecutorFactory::Create");
 }
