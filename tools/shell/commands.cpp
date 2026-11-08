@@ -267,7 +267,8 @@ auto At(Database& db, const std::string& arg) -> CommandResult {
   if (arg == "latest") {
     return Text("reading latest");
   }
-  const commit_ts_t at = *db.GetVersions().FindTag(arg);
+  const commit_ts_t at =
+      db.GetVersions().FindTag(arg).value_or(0);  // SetAt refused a name it lacks
   return Text("reading version " + arg + ", commit " + std::to_string(at) + ", " +
               std::to_string(db.GetVersions().Count(at)) + " triples");
 }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 
 namespace ontodb {
@@ -75,7 +76,9 @@ auto VersionIndex::Scan(const TriplePattern& pattern, commit_ts_t at) const -> s
       found.push_back(triple);
     }
   };
-  const auto& [s, p, o] = pattern;
+  const std::optional<term_id_t>& s = pattern.subject;
+  const std::optional<term_id_t>& p = pattern.predicate;
+  const std::optional<term_id_t>& o = pattern.object;
   if (s.has_value()) {
     const Triple low{*s, p.value_or(0), p.has_value() ? o.value_or(0) : 0};
     for (auto it = spo_.lower_bound(low); it != spo_.end() && it->first.subject == *s; ++it) {
@@ -94,8 +97,9 @@ auto VersionIndex::Scan(const TriplePattern& pattern, commit_ts_t at) const -> s
       keep(triple, spo_.at(triple));
     }
   } else if (o.has_value()) {
-    for (auto it = osp_.lower_bound(Triple{*o, 0, 0}); it != osp_.end() && it->subject == *o;
-         ++it) {
+    const term_id_t object = *o;
+    for (auto it = osp_.lower_bound(Triple{object, 0, 0});
+         it != osp_.end() && it->subject == object; ++it) {
       const Triple triple = FromOsp(*it);
       keep(triple, spo_.at(triple));
     }
